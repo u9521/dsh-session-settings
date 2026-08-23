@@ -70,33 +70,35 @@ jobs:
 
           # Generate minimal README pointing to main GitHub repository
           cat << 'EOF' > "$STAGE_DIR/README.md"
-          # dsh-subagent-custom-model (Release Branch)
+          # dsh-session-settings (Release Branch)
 
-          Prebuilt runtime distribution artifacts for **[dsh-subagent-custom-model](https://github.com/u9521/dsh-subagent-custom-model)**.
+          Prebuilt runtime distribution artifacts for **[dsh-session-settings](https://github.com/u9521/dsh-session-settings)**.
 
           ## 🚀 Quick Install
 
           ```sh
-          dsh plugin --profile web add github:u9521/dsh-subagent-custom-model#dist
+          dsh plugin --profile web add github:u9521/dsh-session-settings#dist
           ```
 
           ## 📖 Documentation & Source Code
 
           For full documentation, usage instructions, source code, and issue tracker, please visit the main repository:
 
-          👉 **[https://github.com/u9521/dsh-subagent-custom-model](https://github.com/u9521/dsh-subagent-custom-model)**
+          👉 **[https://github.com/u9521/dsh-session-settings](https://github.com/u9521/dsh-session-settings)**
 
           ## 📄 License
 
           [MIT License](LICENSE)
           EOF
 
-          # Switch to an orphan release branch
+          # Switch to an orphan release branch and clean all untracked/ignored files
           git checkout --orphan dist
           git rm -rf . > /dev/null 2>&1 || true
+          git clean -fdx
 
           # Move staged files into the root
           cp -r "$STAGE_DIR"/* .
+          rm -rf "$STAGE_DIR"
 
           # Commit and force push to dist branch
           git add -A
