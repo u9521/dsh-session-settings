@@ -31,9 +31,11 @@ export function normalizeSubagentModelConfig(
   const mode =
     raw.mode === 'custom'
       ? 'custom'
-      : raw.mode === 'inherit'
-        ? 'inherit'
-        : 'default'
+      : raw.mode === 'workspace'
+        ? 'workspace'
+        : raw.mode === 'inherit'
+          ? 'inherit'
+          : 'default'
   if (mode === 'custom') {
     const provider = typeof raw.provider === 'string' ? raw.provider.trim() : ''
     const model = typeof raw.model === 'string' ? raw.model.trim() : ''
@@ -64,7 +66,12 @@ export function normalizeSkillsConfig(
       disabledUserSkills: [],
     }
   }
-  const mode = raw.mode === 'custom' ? 'custom' : 'default'
+  const mode =
+    raw.mode === 'custom'
+      ? 'custom'
+      : raw.mode === 'workspace'
+        ? 'workspace'
+        : 'default'
 
   let disabledModelSkills: string[] = []
   if (Array.isArray(raw.disabledModelSkills)) {
@@ -100,7 +107,12 @@ export function normalizeSessionSettings(
 
   const subagentModel = normalizeSubagentModelConfig(raw.subagentModel)
   const rawMcp = raw.mcp
-  const mcpMode = rawMcp?.mode === 'custom' ? 'custom' : 'default'
+  const mcpMode =
+    rawMcp?.mode === 'custom'
+      ? 'custom'
+      : rawMcp?.mode === 'workspace'
+        ? 'workspace'
+        : 'default'
   const enabledServerIds = Array.isArray(rawMcp?.enabledServerIds)
     ? rawMcp.enabledServerIds.filter(
         (id): id is string => typeof id === 'string',
@@ -148,6 +160,14 @@ export function loadSessionSettingsStore(): SessionSettingsStore {
       const data = JSON.parse(fs.readFileSync(file, 'utf8'))
       if (data && typeof data === 'object') {
         const def = normalizeSessionSettings(data.default)
+        const workspaces: Record<string, SessionSettingsConfig> = {}
+        if (data.workspaces && typeof data.workspaces === 'object') {
+          for (const [id, w] of Object.entries(data.workspaces)) {
+            if (w && typeof w === 'object') {
+              workspaces[id] = normalizeSessionSettings(w as any)
+            }
+          }
+        }
         const sessions: Record<string, SessionSettingsConfig> = {}
         if (data.sessions && typeof data.sessions === 'object') {
           for (const [id, s] of Object.entries(data.sessions)) {
@@ -156,13 +176,14 @@ export function loadSessionSettingsStore(): SessionSettingsStore {
             }
           }
         }
-        return { default: def, sessions }
+        return { default: def, workspaces, sessions }
       }
     }
   } catch {}
 
   return {
     default: { ...DEFAULT_SESSION_SETTINGS },
+    workspaces: {},
     sessions: {},
   }
 }
@@ -179,20 +200,50 @@ export function saveSessionSettingsStore(store: SessionSettingsStore): void {
 export function resolveEffectiveSubagentModel(
   store: SessionSettingsStore,
   sessionId?: string,
+  workspaceId?: string,
 ): SubagentModelConfig {
+  const globalDefault = store.default?.subagentModel || { mode: 'inherit' }
+
+  // 1. Check session override
   if (sessionId && store.sessions?.[sessionId]) {
     const entry = store.sessions[sessionId]
-    if (entry.subagentModel?.mode !== 'default') {
-      return entry.subagentModel
+    if (entry.subagentModel) {
+      if (entry.subagentModel.mode === 'custom') {
+        return entry.subagentModel
+      }
+      if (entry.subagentModel.mode === 'inherit') {
+        return { mode: 'inherit' }
+      }
+      if (entry.subagentModel.mode === 'workspace') {
+        if (workspaceId && store.workspaces?.[workspaceId]?.subagentModel) {
+          const wsModel = store.workspaces[workspaceId].subagentModel
+          if (wsModel.mode === 'custom') return wsModel
+          if (wsModel.mode === 'inherit') return { mode: 'inherit' }
+        }
+        return globalDefault
+      }
+      if (entry.subagentModel.mode === 'default') {
+        return globalDefault
+      }
     }
   }
-  return store.default?.subagentModel || { mode: 'inherit' }
+
+  // 2. Check workspace default if no session override or unconfigured
+  if (workspaceId && store.workspaces?.[workspaceId]?.subagentModel) {
+    const wsModel = store.workspaces[workspaceId].subagentModel
+    if (wsModel.mode === 'custom') return wsModel
+    if (wsModel.mode === 'inherit') return { mode: 'inherit' }
+  }
+
+  // 3. Fall back to global default
+  return globalDefault
 }
 
 export function resolveEffectiveMcp(
   store: SessionSettingsStore,
   mcpStore: McpServerStore,
   sessionId?: string,
+  workspaceId?: string,
 ): {
   mode: 'default' | 'custom'
   enabledServerIds: string[]
@@ -205,35 +256,70 @@ export function resolveEffectiveMcp(
   let toolsMode: Record<string, 'default' | 'custom'> = {}
   let disabledTools: Record<string, string[]> = {}
 
-  if (sessionId && store.sessions?.[sessionId]) {
-    const entry = store.sessions[sessionId]
-    if (entry.mcp?.mode === 'custom') {
+  const defaultMcpIds = Object.values(mcpStore.servers)
+    .filter((s) => s.enabledByDefault)
+    .map((s) => s.id)
+  const globalMcpMode =
+    store.default?.mcp?.mode === 'custom' ? 'custom' : 'default'
+  const globalEnabledIds =
+    globalMcpMode === 'custom'
+      ? store.default.mcp.enabledServerIds || []
+      : defaultMcpIds
+  const globalToolsMode = store.default?.mcp?.toolsMode || {}
+  const globalDisabledTools = store.default?.mcp?.disabledTools || {}
+
+  let resolved = false
+
+  // 1. Session level
+  if (sessionId && store.sessions?.[sessionId]?.mcp) {
+    const sMcp = store.sessions[sessionId].mcp
+    if (sMcp.mode === 'custom') {
       mode = 'custom'
-      enabledServerIds = entry.mcp.enabledServerIds || []
-      toolsMode = entry.mcp.toolsMode || {}
-      disabledTools = entry.mcp.disabledTools || {}
-    } else {
-      if (store.default?.mcp?.mode === 'custom') {
-        enabledServerIds = store.default.mcp.enabledServerIds || []
-      } else {
-        enabledServerIds = Object.values(mcpStore.servers)
-          .filter((s) => s.enabledByDefault)
-          .map((s) => s.id)
+      enabledServerIds = sMcp.enabledServerIds || []
+      toolsMode = sMcp.toolsMode || {}
+      disabledTools = sMcp.disabledTools || {}
+      resolved = true
+    } else if (sMcp.mode === 'workspace') {
+      if (
+        workspaceId &&
+        store.workspaces?.[workspaceId]?.mcp?.mode === 'custom'
+      ) {
+        const wsMcp = store.workspaces[workspaceId].mcp
+        mode = 'custom'
+        enabledServerIds = wsMcp.enabledServerIds || []
+        toolsMode = wsMcp.toolsMode || {}
+        disabledTools = wsMcp.disabledTools || {}
+        resolved = true
       }
-      toolsMode = store.default?.mcp?.toolsMode || {}
-      disabledTools = store.default?.mcp?.disabledTools || {}
+    } else if (sMcp.mode === 'default') {
+      mode = globalMcpMode
+      enabledServerIds = globalEnabledIds
+      toolsMode = globalToolsMode
+      disabledTools = globalDisabledTools
+      resolved = true
     }
-  } else {
-    if (store.default?.mcp?.mode === 'custom') {
-      mode = 'custom'
-      enabledServerIds = store.default.mcp.enabledServerIds || []
-    } else {
-      enabledServerIds = Object.values(mcpStore.servers)
-        .filter((s) => s.enabledByDefault)
-        .map((s) => s.id)
-    }
-    toolsMode = store.default?.mcp?.toolsMode || {}
-    disabledTools = store.default?.mcp?.disabledTools || {}
+  }
+
+  // 2. Workspace level
+  if (
+    !resolved &&
+    workspaceId &&
+    store.workspaces?.[workspaceId]?.mcp?.mode === 'custom'
+  ) {
+    const wsMcp = store.workspaces[workspaceId].mcp
+    mode = 'custom'
+    enabledServerIds = wsMcp.enabledServerIds || []
+    toolsMode = wsMcp.toolsMode || {}
+    disabledTools = wsMcp.disabledTools || {}
+    resolved = true
+  }
+
+  // 3. Global level
+  if (!resolved) {
+    mode = globalMcpMode
+    enabledServerIds = globalEnabledIds
+    toolsMode = globalToolsMode
+    disabledTools = globalDisabledTools
   }
 
   // Calculate effective disabled tools per server
@@ -243,7 +329,6 @@ export function resolveEffectiveMcp(
     if (isCustomTools && disabledTools[server.id]) {
       effectiveDisabledTools[server.id] = disabledTools[server.id]
     } else {
-      // Default: follow server.disabledTools
       effectiveDisabledTools[server.id] = server.disabledTools || []
     }
   }
@@ -260,6 +345,7 @@ export function resolveEffectiveMcp(
 export function resolveEffectiveSkills(
   store: SessionSettingsStore,
   sessionId?: string,
+  workspaceId?: string,
 ): {
   mode: 'default' | 'custom'
   disabledSkills: string[]
@@ -273,29 +359,64 @@ export function resolveEffectiveSkills(
   let disabledModelSkills: string[] = []
   let disabledUserSkills: string[] = []
 
-  if (sessionId && store.sessions?.[sessionId]) {
-    const entry = store.sessions[sessionId]
-    if (entry.skills?.mode === 'custom') {
+  const globalMode =
+    store.default?.skills?.mode === 'custom' ? 'custom' : 'default'
+  const globalModelSkills =
+    store.default?.skills?.disabledModelSkills ||
+    store.default?.skills?.disabledSkills ||
+    []
+  const globalUserSkills = store.default?.skills?.disabledUserSkills || []
+
+  let resolved = false
+
+  // 1. Session level
+  if (sessionId && store.sessions?.[sessionId]?.skills) {
+    const sSkills = store.sessions[sessionId].skills
+    if (sSkills.mode === 'custom') {
       mode = 'custom'
       disabledModelSkills =
-        entry.skills.disabledModelSkills || entry.skills.disabledSkills || []
-      disabledUserSkills = entry.skills.disabledUserSkills || []
-    } else {
-      disabledModelSkills =
-        store.default?.skills?.disabledModelSkills ||
-        store.default?.skills?.disabledSkills ||
-        []
-      disabledUserSkills = store.default?.skills?.disabledUserSkills || []
+        sSkills.disabledModelSkills || sSkills.disabledSkills || []
+      disabledUserSkills = sSkills.disabledUserSkills || []
+      resolved = true
+    } else if (sSkills.mode === 'workspace') {
+      if (
+        workspaceId &&
+        store.workspaces?.[workspaceId]?.skills?.mode === 'custom'
+      ) {
+        const wsSkills = store.workspaces[workspaceId].skills
+        mode = 'custom'
+        disabledModelSkills =
+          wsSkills.disabledModelSkills || wsSkills.disabledSkills || []
+        disabledUserSkills = wsSkills.disabledUserSkills || []
+        resolved = true
+      }
+    } else if (sSkills.mode === 'default') {
+      mode = globalMode
+      disabledModelSkills = globalModelSkills
+      disabledUserSkills = globalUserSkills
+      resolved = true
     }
-  } else {
-    if (store.default?.skills?.mode === 'custom') {
-      mode = 'custom'
-    }
+  }
+
+  // 2. Workspace level
+  if (
+    !resolved &&
+    workspaceId &&
+    store.workspaces?.[workspaceId]?.skills?.mode === 'custom'
+  ) {
+    const wsSkills = store.workspaces[workspaceId].skills
+    mode = 'custom'
     disabledModelSkills =
-      store.default?.skills?.disabledModelSkills ||
-      store.default?.skills?.disabledSkills ||
-      []
-    disabledUserSkills = store.default?.skills?.disabledUserSkills || []
+      wsSkills.disabledModelSkills || wsSkills.disabledSkills || []
+    disabledUserSkills = wsSkills.disabledUserSkills || []
+    resolved = true
+  }
+
+  // 3. Global level
+  if (!resolved) {
+    mode = globalMode
+    disabledModelSkills = globalModelSkills
+    disabledUserSkills = globalUserSkills
   }
 
   return {
@@ -313,10 +434,11 @@ export function resolveEffectiveSessionSettings(
   store: SessionSettingsStore,
   mcpStore: McpServerStore,
   sessionId?: string,
+  workspaceId?: string,
 ): SessionSettingsConfig {
   return {
-    subagentModel: resolveEffectiveSubagentModel(store, sessionId),
-    mcp: resolveEffectiveMcp(store, mcpStore, sessionId),
-    skills: resolveEffectiveSkills(store, sessionId),
+    subagentModel: resolveEffectiveSubagentModel(store, sessionId, workspaceId),
+    mcp: resolveEffectiveMcp(store, mcpStore, sessionId, workspaceId),
+    skills: resolveEffectiveSkills(store, sessionId, workspaceId),
   }
 }

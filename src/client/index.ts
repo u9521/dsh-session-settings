@@ -1,22 +1,30 @@
 import * as React from 'react'
-import * as i18n from './i18n.ts'
-import { LOCALE_NS } from './types.ts'
-import { SessionSettingsViewPage } from './SessionSettingsViewPage.ts'
-import { McpServersSettingsTab } from './McpServersSettingsTab.ts'
-import { SkillsSettingsTab } from './SkillsSettingsTab.ts'
-import { CSS } from './styles.ts'
+import { createRoot, type Root } from 'react-dom/client'
+import * as locales from './locales/index.ts'
+import { LOCALE_NS } from './types/index.ts'
+import { SessionSettingsViewPage } from './session/index.ts'
+import { McpServersSettingsTab } from './mcp/index.ts'
+import { SkillsSettingsTab } from './skills/index.ts'
+import { SessionSettingsHeroChip } from './hero/index.ts'
+import { CSS } from './styles/index.ts'
 
 const e = React.createElement
 
-export const inject = ['slots', 'connection', 'locale']
+export const inject = [
+  'slots',
+  'connection',
+  'locale',
+  'sessions',
+  'workspaces',
+]
 
 export function apply(ctx: any) {
   // 1. Register Locale
   ctx.effect(
     () =>
       ctx.locale.register(LOCALE_NS, {
-        zh: i18n.flattenDictionary(i18n.zh),
-        en: i18n.flattenDictionary(i18n.en),
+        zh: locales.flattenDictionary(locales.zh),
+        en: locales.flattenDictionary(locales.en),
       }),
     'session-settings: locale',
   )
@@ -145,10 +153,20 @@ export function apply(ctx: any) {
           },
           [],
         )
+        const sessionsService = ctx.get('sessions')
+        const workspacesService = ctx.get('workspaces')
         return e(SessionSettingsViewPage, {
           ...props,
           api: ctx.connection.api,
           t,
+          useSessions: (selector?: any) => {
+            const snap = sessionsService?.list?.getSnapshot?.() || {}
+            return typeof selector === 'function' ? selector(snap) : snap
+          },
+          useWorkspaces: (selector?: any) => {
+            const snap = workspacesService?.list?.getSnapshot?.() || {}
+            return typeof selector === 'function' ? selector(snap) : snap
+          },
         })
       },
     ),
@@ -198,4 +216,72 @@ export function apply(ctx: any) {
 
     return () => observer.disconnect()
   }, 'session-settings: sidebar nav icons')
+
+  // 7. Mount Hero Session Settings Chip (in New Conversation Hero right after agent preset selector)
+  ctx.effect(() => {
+    let currentRoot: Root | null = null
+    let currentContainer: HTMLElement | null = null
+
+    const checkMount = () => {
+      const heroRow = document.querySelector('div[class*="heroWorkspaceRow"]')
+      if (!heroRow) {
+        if (currentRoot) {
+          currentRoot.unmount()
+          currentRoot = null
+          currentContainer = null
+        }
+        return
+      }
+
+      // If container already mounted in this row and connected, do not touch DOM or call render
+      if (currentContainer && heroRow.contains(currentContainer)) {
+        return
+      }
+
+      if (currentRoot) {
+        currentRoot.unmount()
+        currentRoot = null
+        currentContainer = null
+      }
+
+      const container = document.createElement('div')
+      container.setAttribute('data-dsh-hero-session-settings', '')
+      container.className = 'dsh-hero-session-settings-seat'
+
+      // Insert directly after Agent Preset selector (button[class*="seat"]) if present, else append
+      const seatBtn = heroRow.querySelector(
+        'button[class*="seat"], div[class*="seat"]',
+      )
+      if (seatBtn && seatBtn.parentNode === heroRow) {
+        seatBtn.after(container)
+      } else {
+        heroRow.appendChild(container)
+      }
+
+      currentContainer = container
+      currentRoot = createRoot(container)
+
+      currentRoot.render(
+        e(SessionSettingsHeroChip, {
+          api: ctx.connection.api,
+          locale: ctx.locale,
+          sessions: ctx.get('sessions'),
+          workspaces: ctx.get('workspaces'),
+        }),
+      )
+    }
+
+    const observer = new MutationObserver(() => checkMount())
+    observer.observe(document.body, { childList: true, subtree: true })
+    checkMount()
+
+    return () => {
+      observer.disconnect()
+      if (currentRoot) {
+        currentRoot.unmount()
+        currentRoot = null
+        currentContainer = null
+      }
+    }
+  }, 'session-settings: hero chip')
 }

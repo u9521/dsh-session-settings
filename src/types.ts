@@ -1,4 +1,4 @@
-export type SubagentModelMode = 'default' | 'inherit' | 'custom'
+export type SubagentModelMode = 'default' | 'workspace' | 'inherit' | 'custom'
 
 export interface SubagentModelConfig {
   mode: SubagentModelMode
@@ -95,7 +95,7 @@ export interface McpServerStore {
   servers: Record<string, GlobalMcpServerConfig>
 }
 
-export type SessionMcpMode = 'default' | 'custom'
+export type SessionMcpMode = 'default' | 'workspace' | 'custom'
 
 export interface SessionMcpConfig {
   mode: SessionMcpMode
@@ -105,7 +105,7 @@ export interface SessionMcpConfig {
   effectiveDisabledTools?: Record<string, string[]>
 }
 
-export type SessionSkillsMode = 'default' | 'custom'
+export type SessionSkillsMode = 'default' | 'workspace' | 'custom'
 
 export interface SessionSkillsConfig {
   mode: SessionSkillsMode
@@ -138,5 +138,6 @@ export interface SessionSettingsConfig {
 
 export interface SessionSettingsStore {
   default: SessionSettingsConfig
+  workspaces?: Record<string, SessionSettingsConfig>
   sessions: Record<string, SessionSettingsConfig>
 }

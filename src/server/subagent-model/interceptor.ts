@@ -1,6 +1,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { SessionSettingsStore } from '../../types.ts'
 import { resolveEffectiveSubagentModel } from '../session/storage.ts'
+import { resolveWorkspaceForSession } from '../session/routes.ts'
 
 export function registerSubagentModelInterceptor(
   ctx: Context,
@@ -13,10 +14,15 @@ export function registerSubagentModelInterceptor(
       return proposal
     }
 
+    const parentId = session.header.parentSession
+    const workspaceId =
+      session.header.workspaceId || resolveWorkspaceForSession(ctx, parentId)
+
     const sessionSettingsStore = getSessionSettingsStore()
     const effectiveCfg = resolveEffectiveSubagentModel(
       sessionSettingsStore,
-      session.header.parentSession,
+      parentId,
+      workspaceId,
     )
 
     if (

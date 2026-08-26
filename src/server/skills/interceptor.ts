@@ -1,6 +1,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { SessionSettingsStore } from '../../types.ts'
 import { resolveEffectiveSkills } from '../session/storage.ts'
+import { resolveWorkspaceForSession } from '../session/routes.ts'
 
 export function registerSkillsInterceptors(
   ctx: Context,
@@ -24,11 +25,15 @@ export function registerSkillsInterceptors(
           options?.scope?.session?.id ||
           options?.scope?.session?.header?.parentSession ||
           options?.scope?.id
+        const workspaceId =
+          options?.scope?.session?.header?.workspaceId ||
+          resolveWorkspaceForSession(ctx, sessionId)
 
         const sessionSettingsStore = getSessionSettingsStore()
         const effectiveSkills = resolveEffectiveSkills(
           sessionSettingsStore,
           sessionId,
+          workspaceId,
         )
         const disabledModelSet = new Set(
           effectiveSkills.effectiveDisabledModelSkills ||
@@ -74,11 +79,15 @@ export function registerSkillsInterceptors(
           options?.scope?.session?.id ||
           options?.scope?.session?.header?.parentSession ||
           options?.scope?.id
+        const workspaceId =
+          options?.scope?.session?.header?.workspaceId ||
+          resolveWorkspaceForSession(ctx, sessionId)
 
         const sessionSettingsStore = getSessionSettingsStore()
         const effectiveSkills = resolveEffectiveSkills(
           sessionSettingsStore,
           sessionId,
+          workspaceId,
         )
         const disabledModelSet = new Set(
           effectiveSkills.effectiveDisabledModelSkills ||
@@ -129,11 +138,15 @@ export function registerSkillsInterceptors(
         exec?.agent?.session?.id ||
         exec?.agent?.session?.header?.parentSession ||
         exec?.agent?.id
+      const workspaceId =
+        exec?.agent?.session?.header?.workspaceId ||
+        resolveWorkspaceForSession(ctx, sessionId)
 
       const sessionSettingsStore = getSessionSettingsStore()
       const effectiveSkills = resolveEffectiveSkills(
         sessionSettingsStore,
         sessionId,
+        workspaceId,
       )
       const disabledModelSkills =
         effectiveSkills.effectiveDisabledModelSkills ||

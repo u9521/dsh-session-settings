@@ -3,6 +3,7 @@ import type { McpServerStore, SessionSettingsStore } from '../../types.ts'
 import type { McpManager } from './manager.ts'
 import { publicToolName } from './naming.ts'
 import { resolveEffectiveMcp } from '../session/storage.ts'
+import { resolveWorkspaceForSession } from '../session/routes.ts'
 
 export function registerMcpInterceptors(
   ctx: Context,
@@ -27,6 +28,9 @@ export function registerMcpInterceptors(
         context?.agent?.session?.id ||
         context?.agent?.session?.header?.parentSession ||
         context?.agent?.id
+      const workspaceId =
+        context?.agent?.session?.header?.workspaceId ||
+        resolveWorkspaceForSession(ctx, sessionId)
 
       const sessionSettingsStore = getSessionSettingsStore()
       const mcpStore = getMcpStore()
@@ -34,6 +38,7 @@ export function registerMcpInterceptors(
         sessionSettingsStore,
         mcpStore,
         sessionId,
+        workspaceId,
       )
       const enabledServerIds = new Set(effectiveMcp.enabledServerIds)
       const allServers = Object.values(mcpStore.servers)
@@ -113,6 +118,9 @@ export function registerMcpInterceptors(
         exec?.agent?.session?.id ||
         exec?.agent?.session?.header?.parentSession ||
         exec?.agent?.id
+      const workspaceId =
+        exec?.agent?.session?.header?.workspaceId ||
+        resolveWorkspaceForSession(ctx, sessionId)
 
       const sessionSettingsStore = getSessionSettingsStore()
       const mcpStore = getMcpStore()
@@ -120,6 +128,7 @@ export function registerMcpInterceptors(
         sessionSettingsStore,
         mcpStore,
         sessionId,
+        workspaceId,
       )
       const enabledServerIds = new Set(effectiveMcp.enabledServerIds)
 
