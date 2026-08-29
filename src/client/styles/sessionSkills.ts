@@ -13,12 +13,6 @@ export const SESSION_SKILLS_CSS = `
   justify-content: space-between;
   margin-bottom: 4px;
 }
-.dsh-skills-search-wrap {
-  display: flex;
-  flex: 1;
-  min-width: 200px;
-  position: relative;
-}
 .dsh-skills-search-input {
   background: var(--dsw-alias-bg-layer-2);
   border: 1px solid var(--dsw-alias-border-l1);
@@ -35,95 +29,13 @@ export const SESSION_SKILLS_CSS = `
 .dsh-skills-search-input:focus {
   border-color: var(--dsw-alias-brand-primary);
 }
-.dsh-skills-search-icon {
-  color: var(--dsw-alias-label-secondary);
-  left: 8px;
-  pointer-events: none;
-  position: absolute;
-  top: 50%;
-  transform: translateY(-50%);
-}
-.dsh-skills-btn-group {
-  align-items: center;
-  display: flex;
-  gap: 8px;
-}
 .dsh-session-skills-list {
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
-.dsh-session-skill-item {
-  background: var(--dsw-alias-bg-layer-1);
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 8px;
-  box-sizing: border-box;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 12px 16px;
-  transition: background-color 0.15s, border-color 0.15s;
-  width: 100%;
-}
-.dsh-session-skill-item:hover:not(.readonly) {
-  background: var(--dsw-alias-bg-layer-2);
-  border-color: var(--dsw-alias-border-l1);
-}
-.dsh-session-skill-item.active {
-  background: var(--dsw-alias-bg-layer-1);
-  border-color: var(--dsw-alias-border-l2);
-}
-.dsh-session-skill-item.active:hover:not(.readonly) {
-  background: var(--dsw-alias-bg-layer-2);
-  border-color: var(--dsw-alias-border-l1);
-}
-.dsh-session-skill-item.disabled {
-  opacity: 0.7;
-}
-.dsh-session-skill-item.readonly {
-  cursor: default;
-}
-.dsh-session-skill-main {
-  align-items: center;
-  box-sizing: border-box;
-  cursor: pointer;
-  display: flex;
-  gap: 16px;
-  justify-content: space-between;
-  user-select: none;
-  width: 100%;
-}
-.dsh-session-skill-info {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-}
-.dsh-session-skill-row1 {
-  align-items: center;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-.dsh-session-skill-title-wrap {
-  align-items: center;
-  display: inline-flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.dsh-session-skill-name {
-  color: var(--dsw-alias-label-primary);
-  font-family: monospace;
-  font-size: 13px;
-  font-weight: 600;
-}
-.dsh-session-skill-desc {
-  color: var(--dsw-alias-label-secondary);
-  font-size: 12px;
-  line-height: 18px;
-  margin: 0;
-}
+
+/* Skill Badges */
 .dsh-skill-badge {
   border-radius: 4px;
   font-size: 11px;
@@ -147,10 +59,6 @@ export const SESSION_SKILLS_CSS = `
   background: rgba(107, 114, 128, 0.15);
   color: var(--dsw-alias-label-secondary);
 }
-.dsh-skill-badge.inv-model {
-  background: rgba(245, 158, 11, 0.12);
-  color: #f59e0b;
-}
 .dsh-skill-badge.status-disabled {
   background: rgba(218, 54, 51, 0.12);
   color: var(--dsw-alias-state-error-primary, #da3633);
@@ -158,32 +66,6 @@ export const SESSION_SKILLS_CSS = `
 .dsh-skill-badge.status-enabled {
   background: rgba(16, 185, 129, 0.12);
   color: #10b981;
-}
-.dsh-skill-actions {
-  align-items: center;
-  display: flex;
-  flex-shrink: 0;
-  gap: 8px;
-}
-.dsh-skill-config-btn {
-  align-items: center;
-  background: var(--dsw-alias-bg-layer-2);
-  border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 6px;
-  color: var(--dsw-alias-label-primary);
-  cursor: pointer;
-  display: inline-flex;
-  font-size: 12px;
-  font-weight: 500;
-  gap: 4px;
-  line-height: 16px;
-  padding: 5px 12px;
-  transition: all 0.15s ease;
-}
-.dsh-skill-config-btn:hover {
-  background: var(--dsw-alias-bg-layer-3);
-  border-color: var(--dsw-alias-brand-primary);
-  color: var(--dsw-alias-brand-primary);
 }
 
 /* Standalone Skill Modal */

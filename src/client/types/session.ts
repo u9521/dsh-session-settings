@@ -30,11 +30,6 @@ export interface ModelProviderGroup {
   models: ModelCatalogItem[]
 }
 
-export interface ModelCatalogResponse {
-  groups?: ModelProviderGroup[]
-  failures?: Array<{ id: string; name: string; message: string }>
-}
-
 export interface ClientPageProps {
   api: any
   t: (key: string, vars?: Record<string, string | number>) => string
@@ -50,4 +45,3 @@ export interface ClientPageProps {
 }
 
 export type NavSection = 'model' | 'mcp' | 'skills'
-export type SetDefaultTargetScope = 'global' | 'workspace'

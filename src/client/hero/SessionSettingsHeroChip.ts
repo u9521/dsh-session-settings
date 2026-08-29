@@ -3,10 +3,6 @@ import { createPortal } from 'react-dom'
 import { IconSettingsOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { SessionSettingsViewPage } from '../session/index.ts'
 import { LOCALE_NS } from '../types/index.ts'
-import {
-  getLocalSessionSettingsStore,
-  getSessionRawSettings,
-} from '../storage/index.ts'
 
 const e = React.createElement
 
@@ -24,19 +20,11 @@ export function SessionSettingsHeroChip({
   workspaces,
 }: SessionSettingsHeroChipProps) {
   const [modalOpen, setModalOpen] = React.useState<boolean>(false)
-  const [storeVer, setStoreVer] = React.useState<number>(0)
-  const [localeVer, setLocaleVer] = React.useState<number>(0)
-
-  // Subscribe to locale updates for dynamic re-translation
-  React.useEffect(() => {
-    if (!locale?.subscribe) return
-    return locale.subscribe(() => setLocaleVer((v) => v + 1))
-  }, [locale])
+  const [hasOverride, setHasOverride] = React.useState<boolean>(false)
 
   const translator = React.useMemo(
     () => (locale?.bind ? locale.bind(LOCALE_NS) : (k: string) => k),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [locale, localeVer],
+    [locale],
   )
 
   const t = React.useCallback(
@@ -92,18 +80,27 @@ export function SessionSettingsHeroChip({
   const currentWorkspaceTitle =
     currentWorkspace?.title || currentWorkspace?.name || currentWorkspace?.path
 
-  // Check if current session has custom override
-  const hasOverride = React.useMemo(() => {
-    // Reference storeVer to trigger re-computation on save
-    void storeVer
-    const localStore = getLocalSessionSettingsStore()
-    const raw = getSessionRawSettings(
-      localStore,
-      currentSessionId,
-      currentWorkspaceId,
+  // Fetch whether current session has an override
+  const checkOverride = React.useCallback(() => {
+    if (!currentSessionId) {
+      setHasOverride(false)
+      return
+    }
+    fetch(
+      `/api/session-settings?sessionId=${encodeURIComponent(currentSessionId)}`,
     )
-    return raw.hasOverride
-  }, [currentSessionId, currentWorkspaceId, storeVer])
+      .then((res) => res.json())
+      .then((data) => {
+        if (data?.ok) {
+          setHasOverride(Boolean(data.hasSessionOverride))
+        }
+      })
+      .catch(() => {})
+  }, [currentSessionId])
+
+  React.useEffect(() => {
+    checkOverride()
+  }, [checkOverride])
 
   // ESC key listener to close modal
   React.useEffect(() => {
@@ -125,7 +122,7 @@ export function SessionSettingsHeroChip({
       {
         type: 'button',
         className: `dsh-hero-session-settings-chip ${modalOpen ? 'active' : ''} ${hasOverride ? 'customized' : ''}`,
-        title: t('sessionSettings.heroChipHint') || t('sessionSettings.desc'),
+        title: t('sessionSettings.heroChipHint'),
         onClick: () => setModalOpen(true),
         'aria-haspopup': 'dialog',
         'aria-expanded': modalOpen,
@@ -183,7 +180,7 @@ export function SessionSettingsHeroChip({
                     : workspacesState,
                 onClose: () => setModalOpen(false),
                 onSave: () => {
-                  setStoreVer((v) => v + 1)
+                  checkOverride()
                 },
               }),
             ),

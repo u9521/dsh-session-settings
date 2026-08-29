@@ -1,6 +1,5 @@
 import * as React from 'react'
 import type { GlobalMcpServerConfig } from '../../types/index.ts'
-import { saveLocalMcpServers } from '../../storage/index.ts'
 
 export function useMcpServers(
   t: (key: string, vars?: Record<string, string | number>) => string,
@@ -25,7 +24,6 @@ export function useMcpServers(
         const data = await res.json()
         if (data.ok && Array.isArray(data.servers)) {
           setServers(data.servers)
-          saveLocalMcpServers(data.servers)
         }
       } else {
         setError(`Failed to load MCP servers: ${res.statusText}`)
@@ -59,7 +57,6 @@ export function useMcpServers(
         const data = await res.json()
         if (data.ok) {
           setServers(data.servers || [])
-          saveLocalMcpServers(data.servers || [])
           setSuccessMsg(t('notices.deleted'))
           setTimeout(() => setSuccessMsg(''), 3000)
         }
@@ -89,24 +86,20 @@ export function useMcpServers(
       }))
       if (data.servers) {
         setServers(data.servers)
-        saveLocalMcpServers(data.servers)
       } else if (data.ok && server.id) {
-        setServers((prev) => {
-          const next = prev.map((s) =>
+        setServers((prev) =>
+          prev.map((s) =>
             s.id === server.id
               ? {
                   ...s,
                   detectedTransport:
                     data.detectedTransport || s.detectedTransport,
                   serverInfo: data.serverInfo || s.serverInfo,
-                  compatibility: data.compatibility || s.compatibility,
                   lastTestedAt: Date.now(),
                 }
               : s,
-          )
-          saveLocalMcpServers(next)
-          return next
-        })
+          ),
+        )
       }
     } catch (err: any) {
       setTestResults((prev) => ({
@@ -133,25 +126,26 @@ export function useMcpServers(
       const data = await res.json()
       if (res.ok && data.ok) {
         setServers(data.servers || [])
-        saveLocalMcpServers(data.servers || [])
       }
     } catch (err: any) {
       setError(t('notices.error') + (err?.message || String(err)))
     }
   }
 
-  // Save server payload directly
-  const executeSave = async (payload: GlobalMcpServerConfig) => {
+  // Save server payload directly (supports rename via optional originalId)
+  const executeSave = async (
+    payload: GlobalMcpServerConfig,
+    originalId?: string,
+  ) => {
     try {
       const res = await fetch('/api/mcp-servers', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ server: payload }),
+        body: JSON.stringify({ server: payload, originalId }),
       })
       const data = await res.json()
       if (res.ok && data.ok) {
         setServers(data.servers || [])
-        saveLocalMcpServers(data.servers || [])
         setSuccessMsg(t('notices.saved'))
         setTimeout(() => setSuccessMsg(''), 3000)
         return { ok: true }

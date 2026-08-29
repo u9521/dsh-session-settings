@@ -6,7 +6,6 @@ import { McpManager } from './mcp/manager.ts'
 import { registerMcpRoutes } from './mcp/routes.ts'
 import { registerSessionSettingsRoutes } from './session/routes.ts'
 import { registerSkillsRoutes } from './skills/routes.ts'
-import { registerLegacySubagentModelRoutes } from './subagent-model/routes.ts'
 import { registerSubagentModelInterceptor } from './subagent-model/interceptor.ts'
 import { registerMcpInterceptors } from './mcp/interceptor.ts'
 import { registerSkillsInterceptors } from './skills/interceptor.ts'
@@ -37,6 +36,10 @@ export function apply(ctx: Context): void {
         mcpStore = s
       },
       mcpManager,
+      () => sessionSettingsStore,
+      (s) => {
+        sessionSettingsStore = s
+      },
     )
     const unregisterSessionSettings = registerSessionSettingsRoutes(
       ctx,
@@ -49,20 +52,12 @@ export function apply(ctx: Context): void {
       mcpManager,
     )
     const unregisterSkills = registerSkillsRoutes(ctx, webServer)
-    const unregisterLegacySubagent = registerLegacySubagentModelRoutes(
-      webServer,
-      () => sessionSettingsStore,
-      (s) => {
-        sessionSettingsStore = s
-      },
-    )
 
     ctx.effect(() => {
       return () => {
         unregisterMcp()
         unregisterSessionSettings()
         unregisterSkills()
-        unregisterLegacySubagent()
       }
     }, 'session-settings: webServer routes')
   }
@@ -95,7 +90,6 @@ export * from './mcp/naming.ts'
 export * from './mcp/manager.ts'
 export * from './mcp/routes.ts'
 export * from './mcp/interceptor.ts'
-export * from './mcp/compatibility/index.ts'
 export * from './mcp/tester/index.ts'
 export * from './session/storage.ts'
 export * from './session/routes.ts'
@@ -103,4 +97,3 @@ export * from './skills/discovery.ts'
 export * from './skills/interceptor.ts'
 export * from './skills/routes.ts'
 export * from './subagent-model/interceptor.ts'
-export * from './subagent-model/routes.ts'

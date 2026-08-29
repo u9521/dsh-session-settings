@@ -11,6 +11,7 @@ import {
   EmptyState,
   Badge,
   SchemaViewer,
+  ServerIcon,
 } from '../../components/index.ts'
 
 const e = React.createElement
@@ -19,18 +20,12 @@ export interface SessionMcpToolsModalProps {
   server: GlobalMcpServerConfig | null
   toolsMode: 'default' | 'custom'
   disabledToolsSet: Set<string>
-  search: string
-  expandedSchemas: Set<string>
-  schemaModes: Record<string, 'list' | 'raw'>
   fetching: boolean
   toolsList: McpDiscoveredTool[]
   onToolsModeChange: (mode: 'default' | 'custom') => void
-  onSearchChange: (search: string) => void
   onToggleTool: (toolName: string) => void
   onToggleAllTools: (enableAll: boolean) => void
   onResetToDefault: () => void
-  onToggleSchema: (toolName: string) => void
-  onSchemaModeChange: (toolName: string, mode: 'list' | 'raw') => void
   onFetchTools: () => void
   onClose: () => void
   onApply: () => void
@@ -41,23 +36,25 @@ export function SessionMcpToolsModal({
   server,
   toolsMode,
   disabledToolsSet,
-  search,
-  expandedSchemas,
-  schemaModes,
   fetching,
   toolsList,
   onToolsModeChange,
-  onSearchChange,
   onToggleTool,
   onToggleAllTools,
   onResetToDefault,
-  onToggleSchema,
-  onSchemaModeChange,
   onFetchTools,
   onClose,
   onApply,
   t,
 }: SessionMcpToolsModalProps) {
+  const [search, setSearch] = React.useState<string>('')
+  const [expandedSchemas, setExpandedSchemas] = React.useState<Set<string>>(
+    new Set(),
+  )
+  const [schemaModes, setSchemaModes] = React.useState<
+    Record<string, 'list' | 'raw'>
+  >({})
+
   if (!server) return null
 
   const protoLabel =
@@ -85,6 +82,19 @@ export function SessionMcpToolsModal({
     )
   })
 
+  const handleToggleSchema = (toolName: string) => {
+    setExpandedSchemas((prev) => {
+      const next = new Set(prev)
+      if (next.has(toolName)) next.delete(toolName)
+      else next.add(toolName)
+      return next
+    })
+  }
+
+  const handleSchemaModeChange = (toolName: string, mode: 'list' | 'raw') => {
+    setSchemaModes((prev) => ({ ...prev, [toolName]: mode }))
+  }
+
   return e(
     ModalDialog,
     {
@@ -93,6 +103,12 @@ export function SessionMcpToolsModal({
       title: `${server.name} - ${t('sessionSettings.toolsModal.title')}`,
       panelClassName: 'dsh-sam-modal-panel dsh-mcp-tools-modal',
       headerExtra: [
+        e(ServerIcon, {
+          key: 'icon',
+          server,
+          transport: server.transport,
+          size: 16,
+        }),
         server.id && server.id !== server.name
           ? e('span', { key: 'id', className: 'dsh-mcp-card-id' }, server.id)
           : null,
@@ -181,7 +197,7 @@ export function SessionMcpToolsModal({
     // Toolbar
     e(SearchToolbar, {
       value: search,
-      onChange: onSearchChange,
+      onChange: setSearch,
       placeholder: t('sessionSettings.toolsModal.searchPlaceholder'),
       className: 'dsh-mcp-tools-toolbar',
       actions:
@@ -355,7 +371,7 @@ export function SessionMcpToolsModal({
                         {
                           type: 'button',
                           className: `dsh-mcp-tool-schema-btn ${isSchemaExpanded ? 'active' : ''}`,
-                          onClick: () => onToggleSchema(tool.name),
+                          onClick: () => handleToggleSchema(tool.name),
                         },
                         isSchemaExpanded
                           ? t('sessionSettings.toolsModal.hideParameters')
@@ -367,7 +383,7 @@ export function SessionMcpToolsModal({
                   ? e(SchemaViewer, {
                       schema: tool.inputSchema,
                       mode: schemaModes[tool.name] || 'list',
-                      onModeChange: (m) => onSchemaModeChange(tool.name, m),
+                      onModeChange: (m) => handleSchemaModeChange(tool.name, m),
                       t,
                     })
                   : null,

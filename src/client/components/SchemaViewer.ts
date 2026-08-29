@@ -24,13 +24,7 @@ export function SchemaViewer({
     return e(
       'div',
       { className: 'dsh-mcp-tool-expanded-box' },
-      e(
-        'div',
-        { className: 'dsh-mcp-param-desc' },
-        t('sessionSettings.toolsModal.noParams') ||
-          t('mcpServers.toolsModal.noParams') ||
-          '无入参',
-      ),
+      e('div', { className: 'dsh-mcp-param-desc' }, t('toolsModal.noParams')),
     )
   }
 
@@ -47,17 +41,10 @@ export function SchemaViewer({
       e(
         'span',
         { className: 'dsh-mcp-tool-param-stats' },
-        (
-          t('sessionSettings.toolsModal.paramsCount', {
-            total: params.length,
-            required: requiredCount,
-          }) ||
-          t('mcpServers.toolsModal.paramsCount', {
-            total: params.length,
-            required: requiredCount,
-          }) ||
-          `${params.length} 个参数 (${requiredCount} 必填)`
-        ).trim(),
+        t('toolsModal.paramsCount', {
+          total: params.length,
+          required: requiredCount,
+        }),
       ),
       e(
         'div',
@@ -72,9 +59,7 @@ export function SchemaViewer({
               setMode('list')
             },
           },
-          t('sessionSettings.toolsModal.viewList') ||
-            t('mcpServers.toolsModal.viewList') ||
-            '列表',
+          t('toolsModal.viewList'),
         ),
         e(
           'button',
@@ -86,9 +71,7 @@ export function SchemaViewer({
               setMode('raw')
             },
           },
-          t('sessionSettings.toolsModal.viewRaw') ||
-            t('mcpServers.toolsModal.viewRaw') ||
-            'Raw JSON',
+          t('toolsModal.viewRaw'),
         ),
       ),
     ),
@@ -106,7 +89,7 @@ export function SchemaViewer({
             ? e(
                 'div',
                 { className: 'dsh-mcp-param-desc' },
-                t('mcpServers.toolsModal.noParameters') || '该工具无参数定义',
+                t('toolsModal.noParameters'),
               )
             : params.map((param) =>
                 e(
@@ -121,22 +104,18 @@ export function SchemaViewer({
                       ? e(
                           'span',
                           { className: 'dsh-mcp-param-badge required' },
-                          t('sessionSettings.toolsModal.required') ||
-                            t('mcpServers.toolsModal.required') ||
-                            '必填',
+                          t('toolsModal.required'),
                         )
                       : e(
                           'span',
                           { className: 'dsh-mcp-param-badge optional' },
-                          t('sessionSettings.toolsModal.optional') ||
-                            t('mcpServers.toolsModal.optional') ||
-                            '可选',
+                          t('toolsModal.optional'),
                         ),
                     param.default !== undefined &&
                       e(
                         'span',
                         { className: 'dsh-mcp-param-default' },
-                        `${t('sessionSettings.toolsModal.defaultVal') || '默认: '}${JSON.stringify(param.default)}`,
+                        `${t('toolsModal.defaultVal')}${JSON.stringify(param.default)}`,
                       ),
                   ),
                   param.description &&
@@ -150,7 +129,7 @@ export function SchemaViewer({
                     e(
                       'div',
                       { className: 'dsh-mcp-param-enum' },
-                      `${t('sessionSettings.toolsModal.enumVal') || '可选值: '}${param.enum.join(' | ')}`,
+                      `${t('toolsModal.enumVal')}${param.enum.join(' | ')}`,
                     ),
                 ),
               ),

@@ -158,6 +158,51 @@ export const GLOBAL_MCP_TAB_CSS = `
   font-weight: 500;
   padding: 2px 6px;
 }
+.dsh-mcp-proto-badge.website {
+  background: rgba(88, 166, 255, 0.12);
+  color: #58a6ff;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background-color 0.15s;
+}
+.dsh-mcp-proto-badge.website:hover {
+  background: rgba(88, 166, 255, 0.22);
+  text-decoration: underline;
+}
+.dsh-mcp-custom-icon {
+  border-radius: 4px;
+  display: inline-block;
+  object-fit: contain;
+  vertical-align: middle;
+}
+.dsh-mcp-label-row {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+.dsh-mcp-label-row .dsh-sam-field-label {
+  margin-bottom: 0;
+}
+.dsh-mcp-autofill-btn {
+  align-items: center;
+  background: rgba(88, 166, 255, 0.1);
+  border: 1px solid rgba(88, 166, 255, 0.25);
+  border-radius: 4px;
+  color: var(--dsw-alias-brand-primary, #58a6ff);
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 11px;
+  font-weight: 500;
+  gap: 3px;
+  line-height: 14px;
+  padding: 2px 6px;
+  transition: background-color 0.15s, border-color 0.15s;
+}
+.dsh-mcp-autofill-btn:hover {
+  background: rgba(88, 166, 255, 0.2);
+  border-color: var(--dsw-alias-brand-primary, #58a6ff);
+}
 .dsh-mcp-card-desc {
   color: var(--dsw-alias-label-secondary);
   font-size: 13px;

@@ -1,25 +1,9 @@
 export const zh = {
-  compatibility: {
-    incompatibleBadge: '2026-07-28 官方暂不支持',
-    incompatibleDesc:
-      '该服务仅支持 2026-07-28 无状态协议（不支持向下降级），官方 @deepseek-ai/dsh-mcp-client 暂未支持，禁止启用。',
-    downgradedBadge: '已降级至 {version}',
-    downgradedDesc: '服务端支持降级，已自动协商为兼容模式接入官方客户端。',
-  },
   // Session Settings view page (tab in conversation.view after 轨迹)
   sessionSettings: {
-    compatibility: {
-      incompatibleBadge: '2026-07-28 官方暂不支持',
-      incompatibleDesc:
-        '该服务仅支持 2026-07-28 无状态协议（不支持向下降级），官方 @deepseek-ai/dsh-mcp-client 暂未支持，禁止启用。',
-      downgradedBadge: '已降级至 {version}',
-      downgradedDesc: '服务端支持降级，已自动协商为兼容模式接入官方客户端。',
-    },
     title: '会话设置',
     heroChipHint: '配置此会话的子代理模型、MCP服务器与技能',
     desc: '当前会话定制子代理执行模型与可用的 MCP 工具服务器。',
-    sessionIdLabel: '会话 ID',
-    copyIdBtn: '复制 ID',
     idCopied: '已复制',
     nav: {
       modelTitle: '子代理模型',
@@ -57,9 +41,9 @@ export const zh = {
       workspace: '工作区',
     },
     preview: {
-      effectiveModelTitle: '生效模型配置',
-      fromWorkspace: '来源于工作区默认',
-      fromGlobal: '来源于全局默认',
+      effectiveModelTitle: '生效配置预览',
+      fromWorkspace: '来自工作区默认',
+      fromGlobal: '来自全局默认',
     },
     status: {
       title: '生效配置',
@@ -67,7 +51,6 @@ export const zh = {
       inherit: '继承',
       custom: '自定义',
       workspace: '工作区',
-      activeCount: '已启用 {count} 个',
       none: '未启用',
     },
     clone: {
@@ -78,15 +61,6 @@ export const zh = {
       success: '已成功克隆会话「{name}」的预设！请确认后点击下方「保存」生效。',
       error: '克隆失败：未找到该会话 ID 或无法读取其配置',
       cannotCloneSelf: '不能复制自己的预设',
-      btn: '克隆预设',
-      title: '克隆会话预设',
-      desc: '从已有会话快速导入子代理模型、MCP服务器和技能设置。',
-      cancel: '收起',
-      selectLabel: '从现有会话中选择：',
-      selectPlaceholder: '-- 选择要克隆的会话 --',
-      manualLabel: '或手动输入会话 ID：',
-      manualPlaceholder: '例如 session-xxxx',
-      loadBtn: '载入配置',
     },
     mode: {
       workspace: {
@@ -109,10 +83,13 @@ export const zh = {
     mcpMode: {
       workspace: {
         title: '使用工作区默认规则',
+        badgeCustom: '工作区: {count} 个启用',
+        badgeInherit: '继承全局',
         desc: '使用当前工作区统一设定的 MCP 服务器与工具状态。',
       },
       default: {
         title: '使用全局默认规则',
+        badge: '{count} 个服务器',
         desc: '使用全局设置中标记为“默认开启”的所有 MCP 服务器。',
       },
       custom: {
@@ -123,10 +100,13 @@ export const zh = {
     skillsMode: {
       workspace: {
         title: '使用工作区默认规则',
+        badgeCustom: '工作区: {count} 个禁用',
+        badgeInherit: '继承全局',
         desc: '使用当前工作区统一设定的技能启用/禁用配置。',
       },
       default: {
         title: '使用全局默认规则',
+        badge: '{count} 个禁用',
         desc: '使用全局设置中定义的技能启用/禁用配置。',
       },
       custom: {
@@ -147,26 +127,16 @@ export const zh = {
       refresh: '刷新技能',
       refreshing: '正在刷新技能列表...',
       expand: '展开',
-      collapse: '折叠',
       modelInvocableTitle: '模型调用',
       modelInvocableDesc:
         '允许模型通过 skill 工具按需加载该技能并在提示词目录中展示',
       userInvocableTitle: '用户快捷调用',
       userInvocableDesc:
         '允许用户在对话输入框中通过 /技能名 快捷注入完整技能指令',
-      instructionsAccordionExpand: '展开 指令与规则',
-      instructionsAccordionCollapse: '折叠 指令与规则',
-      viewInstructions: '查看指令与定义',
       runtimeBadge: '运行时预设',
       runtimeNotice:
         '此技能由当前会话的预设或运行时提供，仅在当前会话生效，不可设为全局默认。',
       noInstructions: '（暂无详细指令内容）',
-      viewDetails: '配置 / 详情',
-      hideDetails: '关闭',
-      openModalBtn: '配置 / 详情',
-      modalTitle: '技能详情与管控配置',
-      modalDesc:
-        '查看技能定义信息，并配置其模型自动调用与用户快捷调用的权限规则。',
       rulesSectionTitle: '调用权限管控',
       instructionsSectionTitle: '指令与规则',
       modalDoneBtn: '完成',
@@ -183,27 +153,16 @@ export const zh = {
       userInvocableDisabled: '快捷指令: 禁用',
       pathLabel: '文件路径：',
       whenToUseLabel: '使用时机：',
-      instructionsTitle: '指令与规则',
       loadingContent: '正在加载技能内容...',
-      loadFailed: '加载技能内容失败',
-      statusActive: '已启用',
       statusDisabled: '已禁用',
-      activeCountBadge: '已启用 {enabled} / {total}',
-      allEnabledBadge: '全部启用',
-      allDisabledBadge: '全部禁用',
-      defaultBadge: '全局默认开启',
       effectiveInfoDefault:
         '当前跟随全局默认配置（共 {total} 个技能，已启用 {enabled} 个）',
-      effectiveInfoCustom:
-        '当前会话独立自定义（共 {total} 个技能，已启用 {enabled} 个）',
     },
     mcp: {
       empty:
         '暂无已配置的 MCP 服务器。可在「设置 -> 插件配置 -> MCP 服务器」中集中添加。',
       selectAll: '全选',
       deselectAll: '全不选',
-      serverType: '协议',
-      defaultBadge: '全局默认开启',
       toolsBtn: '配置工具',
       toolsModeDefaultBadge: '工具: 跟随默认',
       toolsModeCustomBadge: '工具: 单独配置 ({count} 禁用)',
@@ -224,7 +183,6 @@ export const zh = {
       noToolsAvailable: '该服务器暂未发现工具，或尚未成功连接获取。',
       loading: '正在获取工具列表...',
       toolEnabled: '已启用',
-      toolDisabled: '已禁用',
       toolGlobalDisabledBadge: '全局默认禁用',
       toolCustomDisabledBadge: '当前会话禁用',
       save: '应用工具设置',
@@ -234,23 +192,23 @@ export const zh = {
       allEnabledCount: '全部工具可用 (共 {total} 个)',
       parameters: '展开',
       hideParameters: '收起',
-      expandSchema: '展开',
-      collapseSchema: '收起',
       paramsCount: '{total} 个参数 ({required} 必填)',
       noParams: '无入参',
+      noParameters: '该工具无参数定义',
       viewList: '列表',
       viewRaw: 'Raw JSON',
       required: '必填',
       optional: '可选',
       defaultVal: '默认值: ',
       enumVal: '枚举: ',
-      noDesc: '暂无工具描述',
       fetchToolsBtn: '获取工具列表',
       fetchingTools: '正在连接获取工具...',
     },
     field: {
       provider: '模型提供方 (Provider)',
       providerPlaceholder: '请选择提供方...',
+      loadingModels: '正在获取模型列表...',
+      noModelsFound: '未发现可用模型提供方',
       model: '模型名称 (Model)',
       modelPlaceholder: '请选择模型...',
       reasoningEffort: '思考等级 (Reasoning Effort)',
@@ -267,13 +225,10 @@ export const zh = {
       save: '保存配置',
       saveSession: '保存此会话配置',
       setDefault: '设为默认',
-      saveDefault: '设为全局默认',
-      saveWorkspaceDefault: '设为工作区默认',
       applyWorkspaceDefault: '应用为工作区默认',
       restoreWorkspaceToGlobal: '恢复为跟随全局默认',
       saving: '保存中...',
       savingDefault: '设为默认中...',
-      savingWorkspaceDefault: '保存工作区默认中...',
       reset: '清除独立设置 (恢复默认)',
       copyId: '复制会话 ID',
       close: '关闭',
@@ -288,7 +243,6 @@ export const zh = {
       targetScope: '应用目标：',
       scopeWorkspace: '工作区默认',
       scopeGlobal: '全局默认',
-      diffTitle: '配置前后变化对比',
       diffBefore: '当前目标默认 (变更前)',
       diffAfter: '即将应用的新配置 (变更后)',
       diffBeforeWorkspace: '当前工作区默认 (变更前)',
@@ -296,6 +250,7 @@ export const zh = {
       diffBeforeGlobal: '当前全局默认 (变更前)',
       diffAfterGlobal: '即将应用的新全局默认 (变更后)',
       unchanged: '（无变动）',
+      changed: '已变动',
       modelSection: '子代理模型',
       mcpSection: 'MCP 服务器',
       skillsSection: '技能',
@@ -347,6 +302,7 @@ export const zh = {
       transport: '传输协议',
       target: '目标命令 / 地址',
       enabledDefault: '默认开启',
+      website: '官网',
       actions: '操作',
       empty:
         '暂未添加任何 MCP 服务器。点击上方「添加 MCP 服务器」或「导入配置」开始。',
@@ -356,11 +312,12 @@ export const zh = {
       editTitle: '编辑 MCP 服务器',
       id: '服务器标识 (ID)',
       idPlaceholder: '如 github_mcp, local_fs, sqlite',
-      idHint: '仅限英文字母、数字、下划线和短横线',
       name: '显示名称',
       namePlaceholder: '如 GitHub 官方工具',
       description: '描述 (可选)',
       descriptionPlaceholder: '简要说明此 MCP 提供的工具与功能',
+      autoFill: '自动填充',
+      autoFillHint: '填入检测到的值',
       transport: '传输协议',
       transportStdio: 'stdio (本地命令行子进程)',
       transportHttp: 'HTTP / SSE (远程或本地服务地址)',
@@ -390,7 +347,6 @@ export const zh = {
       failOnStartupError: '启动失败时拒绝激活',
       failOnStartupErrorDesc:
         '初始连接或工具同步失败时直接拒绝插件激活 (默认关闭)',
-      reconnectGroup: '自动重连策略',
       reconnectEnabled: '启用自动重连',
       reconnectEnabledDesc: '连接丢失后以指数退避策略自动重连 (默认开启)',
       reconnectInitialDelayMs: '首次重连延迟 (毫秒)',
@@ -412,16 +368,12 @@ export const zh = {
     },
     toolsModal: {
       title: 'MCP 工具管理',
-      serverPrefix: '所属服务器：',
       searchPlaceholder: '搜索工具名称或描述...',
       enableAll: '全部开启',
       disableAll: '全部禁用',
       summary: '共 {total} 个工具：已启用 {enabled} 个，已禁用 {disabled} 个',
-      filteredSummary: '匹配到 {count} 个工具',
       parameters: '展开',
       hideParameters: '收起',
-      expandSchema: '展开',
-      collapseSchema: '收起',
       viewList: '参数列表',
       viewRaw: '原始 Schema',
       required: '必填',
@@ -452,16 +404,7 @@ export const zh = {
       saveAnyway: '仍然保存',
       cancel: '返回修改',
     },
-    compatibility: {
-      incompatibleBadge: '2026-07-28 官方暂不支持',
-      incompatibleDesc:
-        '该服务仅支持 2026-07-28 无状态协议（不支持向下降级），官方 @deepseek-ai/dsh-mcp-client 暂未支持，禁止启用。',
-      downgradedBadge: '已降级至 {version}',
-      downgradedDesc: '服务端支持降级，已自动协商为兼容模式接入官方客户端。',
-    },
     notices: {
-      testSuccess: '连接测试成功：',
-      testFail: '连接测试失败：',
       deleteConfirm: '确定要删除 MCP 服务器「{name}」吗？',
       saved: 'MCP 服务器保存成功！',
       deleted: 'MCP 服务器已删除！',
@@ -482,8 +425,6 @@ export const zh = {
       saving: '保存中...',
       refresh: '刷新技能列表',
       refreshing: '刷新中...',
-      viewDetails: '展开',
-      hideDetails: '折叠',
     },
     summary:
       '共发现 {total} 个可用技能：全局默认启用 {enabled} 个，全局默认禁用 {disabled} 个',
@@ -494,7 +435,6 @@ export const zh = {
     notices: {
       saved: '全局技能默认配置已保存！',
       saveError: '保存失败：',
-      refreshSuccess: '已刷新技能列表！',
     },
   },
 }

@@ -29,20 +29,16 @@ export function SkillCard({
     !isRuntime
       ? {
           label: !isModelDisabled
-            ? t('sessionSettings.skills.modelInvocableEnabled') ||
-              '模型调用: 开启'
-            : t('sessionSettings.skills.modelInvocableDisabled') ||
-              '模型调用: 禁用',
+            ? t('sessionSettings.skills.modelInvocableEnabled')
+            : t('sessionSettings.skills.modelInvocableDisabled'),
           variant: !isModelDisabled ? 'status-enabled' : 'status-disabled',
         }
       : null,
     !isRuntime
       ? {
           label: !isUserDisabled
-            ? t('sessionSettings.skills.userInvocableEnabled') ||
-              '快捷指令: 开启'
-            : t('sessionSettings.skills.userInvocableDisabled') ||
-              '快捷指令: 禁用',
+            ? t('sessionSettings.skills.userInvocableEnabled')
+            : t('sessionSettings.skills.userInvocableDisabled'),
           variant: !isUserDisabled ? 'status-enabled' : 'status-disabled',
         }
       : null,

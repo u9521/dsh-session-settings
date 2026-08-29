@@ -1,7 +1,6 @@
 import * as React from 'react'
 import {
   IconRefreshOutline16,
-  IconSkillOutline16,
   IconLoadingOutline16,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {
@@ -14,9 +13,8 @@ import {
   ModeSelector,
   EmptyState,
   SearchToolbar,
-  ItemToggleCard,
 } from '../../components/index.ts'
-import { getSkillSourceMeta } from '../../utils/index.ts'
+import { SkillCard } from '../../skills/components/SkillCard.ts'
 
 const e = React.createElement
 
@@ -93,10 +91,19 @@ export function SessionSkillsSection({
           badges: [
             workspaceSettings?.skills?.mode === 'custom'
               ? {
-                  label: `工作区: ${(workspaceSettings?.skills?.disabledModelSkills || workspaceSettings?.skills?.disabledSkills || []).length}个禁用`,
+                  label: t('sessionSettings.skillsMode.workspace.badgeCustom', {
+                    count: (
+                      workspaceSettings?.skills?.disabledModelSkills ||
+                      workspaceSettings?.skills?.disabledSkills ||
+                      []
+                    ).length,
+                  }),
                   variant: 'custom',
                 }
-              : { label: '继承全局', variant: 'inherit' },
+              : {
+                  label: t('sessionSettings.skillsMode.workspace.badgeInherit'),
+                  variant: 'inherit',
+                },
           ],
           desc: t('sessionSettings.skillsMode.workspace.desc'),
         },
@@ -105,7 +112,13 @@ export function SessionSkillsSection({
           title: t('sessionSettings.skillsMode.default.title'),
           badges: [
             {
-              label: `${(defaultSettings?.skills?.disabledModelSkills || defaultSettings?.skills?.disabledSkills || []).length} 个禁用`,
+              label: t('sessionSettings.skillsMode.default.badge', {
+                count: (
+                  defaultSettings?.skills?.disabledModelSkills ||
+                  defaultSettings?.skills?.disabledSkills ||
+                  []
+                ).length,
+              }),
               variant: 'custom',
             },
           ],
@@ -157,62 +170,16 @@ export function SessionSkillsSection({
             : e(
                 'div',
                 { className: 'dsh-session-skills-list' },
-                filteredSkills.map((skill) => {
-                  const isModelDisabled = effectiveDisabledModelSet.has(
-                    skill.name,
-                  )
-                  const isUserDisabled = effectiveDisabledUserSet.has(
-                    skill.name,
-                  )
-                  const isRuntime = Boolean(skill.isRuntime)
-
-                  const { sourceClass, sourceLabel } = getSkillSourceMeta(
-                    skill,
-                    t,
-                  )
-
-                  const badges: any[] = [
-                    { label: sourceLabel, variant: sourceClass },
-                    !isRuntime
-                      ? {
-                          label: !isModelDisabled
-                            ? t(
-                                'sessionSettings.skills.modelInvocableEnabled',
-                              ) || '模型调用: 开启'
-                            : t(
-                                'sessionSettings.skills.modelInvocableDisabled',
-                              ) || '模型调用: 禁用',
-                          variant: !isModelDisabled
-                            ? 'status-enabled'
-                            : 'status-disabled',
-                        }
-                      : null,
-                    !isRuntime
-                      ? {
-                          label: !isUserDisabled
-                            ? t(
-                                'sessionSettings.skills.userInvocableEnabled',
-                              ) || '快捷指令: 开启'
-                            : t(
-                                'sessionSettings.skills.userInvocableDisabled',
-                              ) || '快捷指令: 禁用',
-                          variant: !isUserDisabled
-                            ? 'status-enabled'
-                            : 'status-disabled',
-                        }
-                      : null,
-                  ].filter(Boolean)
-
-                  return e(ItemToggleCard, {
+                filteredSkills.map((skill) =>
+                  e(SkillCard, {
                     key: skill.name,
-                    id: skill.name,
-                    icon: e(IconSkillOutline16, { size: 14 }),
-                    title: skill.name,
-                    badges,
-                    description: skill.description,
+                    skill,
+                    isModelDisabled: effectiveDisabledModelSet.has(skill.name),
+                    isUserDisabled: effectiveDisabledUserSet.has(skill.name),
                     onClick: () => onOpenSessionSkillModal(skill),
-                  })
-                }),
+                    t,
+                  }),
+                ),
               ),
         ),
   )

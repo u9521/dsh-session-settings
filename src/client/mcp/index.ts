@@ -13,7 +13,6 @@ import type {
   McpServerInfo,
   EnvEntry,
 } from '../types/index.ts'
-import { saveLocalMcpServers } from '../storage/index.ts'
 import { EmptyState } from '../components/index.ts'
 import { useMcpServers } from './hooks/useMcpServers.ts'
 import { McpServerCard } from './components/McpServerCard.ts'
@@ -48,6 +47,9 @@ export function McpServersSettingsTab({
   // Form modal state
   const [formOpen, setFormOpen] = React.useState<boolean>(false)
   const [isEditing, setIsEditing] = React.useState<boolean>(false)
+  const [editingOriginalId, setEditingOriginalId] = React.useState<
+    string | null
+  >(null)
   const [formServer, setFormServer] = React.useState<
     Partial<GlobalMcpServerConfig>
   >({
@@ -99,6 +101,7 @@ export function McpServersSettingsTab({
   // Open add form
   const handleOpenAdd = () => {
     setIsEditing(false)
+    setEditingOriginalId(null)
     setShowAdvanced(false)
     setFormServer({
       id: '',
@@ -130,6 +133,7 @@ export function McpServersSettingsTab({
   // Open edit form
   const handleOpenEdit = (server: GlobalMcpServerConfig) => {
     setIsEditing(true)
+    setEditingOriginalId(server.id)
     setShowAdvanced(
       Boolean(
         server.toolCallTimeoutMs ||
@@ -218,13 +222,39 @@ export function McpServersSettingsTab({
         message: data.message || (data.ok ? 'Connection OK' : 'Failed'),
       })
       if (data.ok) {
-        setFormServer((prev) => ({
-          ...prev,
-          detectedTransport: data.detectedTransport || prev.detectedTransport,
-          serverInfo: data.serverInfo || prev.serverInfo,
-          compatibility: data.compatibility || prev.compatibility,
-          lastTestedAt: Date.now(),
-        }))
+        setFormServer((prev) => {
+          const updated = {
+            ...prev,
+            detectedTransport: data.detectedTransport || prev.detectedTransport,
+            serverInfo: data.serverInfo || prev.serverInfo,
+            lastTestedAt: Date.now(),
+          }
+
+          // If in "add server" mode, automatically populate empty fields
+          if (!isEditing) {
+            const detectedId = data.serverInfo?.name
+              ? data.serverInfo.name
+                  .toLowerCase()
+                  .replace(/[^a-zA-Z0-9_-]/g, '_')
+                  .slice(0, 64)
+              : ''
+            const detectedName =
+              data.serverInfo?.title || data.serverInfo?.name || ''
+            const detectedDesc = data.serverInfo?.description || ''
+
+            if (!updated.id?.trim() && detectedId) {
+              updated.id = detectedId
+            }
+            if (!updated.name?.trim() && detectedName) {
+              updated.name = detectedName
+            }
+            if (!updated.description?.trim() && detectedDesc) {
+              updated.description = detectedDesc
+            }
+          }
+
+          return updated
+        })
       }
     } catch (err: any) {
       setFormTestResult({
@@ -258,10 +288,9 @@ export function McpServersSettingsTab({
         }
         if (data.servers) {
           setServers(data.servers)
-          saveLocalMcpServers(data.servers)
         } else if (server.id) {
-          setServers((prev) => {
-            const next = prev.map((s) =>
+          setServers((prev) =>
+            prev.map((s) =>
               s.id === server.id
                 ? {
                     ...s,
@@ -271,10 +300,8 @@ export function McpServersSettingsTab({
                     lastTestedAt: Date.now(),
                   }
                 : s,
-            )
-            saveLocalMcpServers(next)
-            return next
-          })
+            ),
+          )
         }
         if (Array.isArray(data.toolDetails)) {
           setToolsList(data.toolDetails)
@@ -398,7 +425,6 @@ export function McpServersSettingsTab({
       const data = await res.json()
       if (res.ok && data.ok) {
         setServers(data.servers || [])
-        saveLocalMcpServers(data.servers || [])
         setToolsModalOpen(false)
         setSuccessMsg(t('toolsModal.saveSuccess'))
         setTimeout(() => setSuccessMsg(''), 3000)
@@ -425,12 +451,12 @@ export function McpServersSettingsTab({
       )
       return
     }
-    if (
-      !isEditing &&
-      servers.some(
-        (s) => s.id.toLowerCase() === formServer.id?.trim().toLowerCase(),
-      )
-    ) {
+    const conflict = servers.some(
+      (s) =>
+        s.id.toLowerCase() === formServer.id?.trim().toLowerCase() &&
+        (!isEditing || s.id.toLowerCase() !== editingOriginalId?.toLowerCase()),
+    )
+    if (conflict) {
       setFormError(`Server ID "${formServer.id}" already exists`)
       return
     }
@@ -487,7 +513,6 @@ export function McpServersSettingsTab({
       disabledTools: formServer.disabledTools || [],
       detectedTransport: formServer.detectedTransport,
       serverInfo: formServer.serverInfo,
-      compatibility: formServer.compatibility,
     }
 
     // Pre-save test connection check
@@ -503,9 +528,11 @@ export function McpServersSettingsTab({
         payload.detectedTransport =
           testData.detectedTransport || payload.detectedTransport
         payload.serverInfo = testData.serverInfo || payload.serverInfo
-        payload.compatibility = testData.compatibility || payload.compatibility
         payload.lastTestedAt = Date.now()
-        const saveRes = await executeSave(payload)
+        const saveRes = await executeSave(
+          payload,
+          isEditing && editingOriginalId ? editingOriginalId : undefined,
+        )
         if (saveRes.ok) setFormOpen(false)
         else setFormError(saveRes.error || 'Failed to save server')
       } else {
@@ -531,7 +558,10 @@ export function McpServersSettingsTab({
   const handleConfirmSave = async (payload: GlobalMcpServerConfig) => {
     setFormSaving(true)
     setSaveConfirm(null)
-    const saveRes = await executeSave(payload)
+    const saveRes = await executeSave(
+      payload,
+      isEditing && editingOriginalId ? editingOriginalId : undefined,
+    )
     setFormSaving(false)
     if (saveRes.ok) setFormOpen(false)
     else setFormError(saveRes.error || 'Failed to save server')
@@ -579,7 +609,6 @@ export function McpServersSettingsTab({
       const data = await res.json()
       if (res.ok && data.ok) {
         setServers(data.servers || [])
-        saveLocalMcpServers(data.servers || [])
         setImportOpen(false)
         setSuccessMsg(t('importModal.success', { count: data.count || 0 }))
         setTimeout(() => setSuccessMsg(''), 3000)

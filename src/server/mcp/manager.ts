@@ -5,11 +5,6 @@ import type {
   SessionSettingsStore,
 } from '../../types.ts'
 import { publicToolName } from './naming.ts'
-import { saveMcpStore } from './storage.ts'
-import {
-  checkMcpCompatibility,
-  type McpCompatibilityResult,
-} from './compatibility/index.ts'
 
 export interface ToolMeta {
   serverId: string
@@ -20,20 +15,19 @@ let cachedOfficialPlugin: any = null
 let officialPluginChecked = false
 
 /**
- * Resolve the official @deepseek-ai/dsh-mcp-client Cordis plugin module from DSH.
+ * Resolve the official @deepseek-ai/dsh-mcp-client Cordis plugin module directly via ctx.loader.
  */
-export async function loadOfficialMcpClientPlugin(): Promise<any> {
+export async function loadOfficialMcpClientPlugin(ctx: Context): Promise<any> {
   if (officialPluginChecked) return cachedOfficialPlugin
   officialPluginChecked = true
 
-  const candidates = [
-    '@deepseek-ai/dsh-mcp-client',
-    '/home/multiply/.bun/install/global/node_modules/@deepseek-ai/dsh-mcp-client/lib/index.js',
-  ]
-
-  for (const candidate of candidates) {
+  const loader = ctx.get('loader' as any) as any
+  if (loader && typeof loader.import === 'function') {
     try {
-      const mod = await import(candidate)
+      const raw = await loader.import('@deepseek-ai/dsh-mcp-client')
+      const mod = loader.unwrapExports
+        ? loader.unwrapExports(raw)
+        : (raw?.default ?? raw)
       if (
         mod &&
         (typeof mod.apply === 'function' ||
@@ -42,7 +36,12 @@ export async function loadOfficialMcpClientPlugin(): Promise<any> {
         cachedOfficialPlugin = mod
         return mod
       }
-    } catch {}
+    } catch (err) {
+      console.warn(
+        '[session-settings] Failed to load @deepseek-ai/dsh-mcp-client via ctx.loader:',
+        err,
+      )
+    }
   }
 
   return null
@@ -131,15 +130,6 @@ export class McpManager {
   }
 
   /**
-   * Check compatibility for an MCP server against the official client.
-   */
-  public async checkCompatibility(
-    server: Partial<GlobalMcpServerConfig>,
-  ): Promise<McpCompatibilityResult> {
-    return checkMcpCompatibility(server)
-  }
-
-  /**
    * Mount official @deepseek-ai/dsh-mcp-client plugin instance dynamically in memory.
    */
   public async mountOfficialClient(
@@ -221,10 +211,7 @@ export class McpManager {
   }
 
   /**
-   * Synchronize tool registrations for a single server:
-   * 1. Checks protocol compatibility with 2-stage probe.
-   * 2. If compatible (or downgrade supported), mounts official client.
-   * 3. If incompatible (e.g. 2026-07-28 without downgrade), prohibits enabling and issues warning.
+   * Synchronize tool registrations for a single server by mounting/unmounting official client fork.
    */
   public async syncServer(server: GlobalMcpServerConfig): Promise<void> {
     if (!server || !server.id) return
@@ -241,25 +228,11 @@ export class McpManager {
 
     const syncPromise = (async () => {
       try {
-        // Step 1: Compatibility check
-        const compat = await checkMcpCompatibility(server)
         const store = this.getMcpStore()
         const liveServer = store.servers[server.id] || server
 
-        liveServer.compatibility = compat
-        if (!compat.canEnable) {
-          console.warn(
-            `[session-settings] MCP server "${server.name || server.id}" is incompatible with official client: ${compat.warning || compat.message}`,
-          )
-          this.unmountOfficialClient(server.id)
-          store.servers[server.id] = liveServer
-          saveMcpStore(store)
-          this.setMcpStore(store)
-          return
-        }
-
-        // Step 2: Mount official @deepseek-ai/dsh-mcp-client dynamically
-        const officialPlugin = await loadOfficialMcpClientPlugin()
+        // Mount official @deepseek-ai/dsh-mcp-client dynamically
+        const officialPlugin = await loadOfficialMcpClientPlugin(this.ctx)
         if (officialPlugin) {
           await this.mountOfficialClient(liveServer, officialPlugin)
         } else {

@@ -1,24 +1,26 @@
 import * as React from 'react'
 import type { SkillItem, SessionSettingsConfig } from '../../types/index.ts'
-import {
-  getLocalSessionSettingsStore,
-  saveLocalSessionSettingsStore,
-} from '../../storage/index.ts'
 
 export function useGlobalSkills(
   t: (key: string, vars?: Record<string, string | number>) => string,
 ) {
-  const localStore = getLocalSessionSettingsStore()
   const [skills, setSkills] = React.useState<SkillItem[]>([])
+  const [defaultSettings, setDefaultSettings] =
+    React.useState<SessionSettingsConfig>({
+      subagentModel: { mode: 'inherit' },
+      mcp: { mode: 'default', enabledServerIds: [] },
+      skills: {
+        mode: 'default',
+        disabledSkills: [],
+        disabledModelSkills: [],
+        disabledUserSkills: [],
+      },
+    })
   const [defaultDisabledModelList, setDefaultDisabledModelList] =
-    React.useState<string[]>(
-      localStore.default?.skills?.disabledModelSkills ||
-        localStore.default?.skills?.disabledSkills ||
-        [],
-    )
+    React.useState<string[]>([])
   const [defaultDisabledUserList, setDefaultDisabledUserList] = React.useState<
     string[]
-  >(localStore.default?.skills?.disabledUserSkills || [])
+  >([])
 
   const [loading, setLoading] = React.useState<boolean>(true)
   const [saving, setSaving] = React.useState<boolean>(false)
@@ -68,19 +70,17 @@ export function useGlobalSkills(
           if (Array.isArray(data.availableSkills)) {
             setSkills(data.availableSkills)
           }
-          if (data.defaultConfig?.skills) {
-            const mList =
-              data.defaultConfig.skills.disabledModelSkills ||
-              data.defaultConfig.skills.disabledSkills ||
-              []
-            const uList = data.defaultConfig.skills.disabledUserSkills || []
-            setDefaultDisabledModelList(mList)
-            setDefaultDisabledUserList(uList)
-          }
-          const freshStore = getLocalSessionSettingsStore()
           if (data.defaultConfig) {
-            freshStore.default = data.defaultConfig
-            saveLocalSessionSettingsStore(freshStore)
+            setDefaultSettings(data.defaultConfig)
+            if (data.defaultConfig.skills) {
+              const mList =
+                data.defaultConfig.skills.disabledModelSkills ||
+                data.defaultConfig.skills.disabledSkills ||
+                []
+              const uList = data.defaultConfig.skills.disabledUserSkills || []
+              setDefaultDisabledModelList(mList)
+              setDefaultDisabledUserList(uList)
+            }
           }
         }
       } else {
@@ -125,10 +125,9 @@ export function useGlobalSkills(
     setError('')
     setSuccessMsg('')
 
-    const curStore = getLocalSessionSettingsStore()
     const payloadConfig: SessionSettingsConfig = {
-      subagentModel: curStore.default.subagentModel || { mode: 'inherit' },
-      mcp: curStore.default.mcp || { mode: 'default', enabledServerIds: [] },
+      subagentModel: defaultSettings.subagentModel || { mode: 'inherit' },
+      mcp: defaultSettings.mcp || { mode: 'default', enabledServerIds: [] },
       skills: {
         mode: 'default',
         disabledSkills: defaultDisabledModelList,
@@ -149,8 +148,7 @@ export function useGlobalSkills(
 
       const data = await res.json()
       if (res.ok && data?.ok) {
-        curStore.default = payloadConfig
-        saveLocalSessionSettingsStore(curStore)
+        setDefaultSettings(payloadConfig)
         setSuccessMsg(t('notices.saved'))
         setTimeout(() => setSuccessMsg(''), 3500)
       } else {
@@ -179,32 +177,10 @@ export function useGlobalSkills(
               ...prev,
               [skillName]: data.skill,
             }))
-          } else {
-            setSkillsContentMap((prev) => ({
-              ...prev,
-              [skillName]: {
-                ...skill,
-                content: '（暂未获取到该技能的详细指令内容）',
-              },
-            }))
           }
-        } else {
-          setSkillsContentMap((prev) => ({
-            ...prev,
-            [skillName]: {
-              ...skill,
-              content: '（加载技能详细指令失败）',
-            },
-          }))
         }
-      } catch (err: any) {
-        setSkillsContentMap((prev) => ({
-          ...prev,
-          [skillName]: {
-            ...skill,
-            content: `（加载出错: ${err?.message || String(err)}）`,
-          },
-        }))
+      } catch {
+        // ignore
       } finally {
         setSkillsLoadingMap((prev) => ({ ...prev, [skillName]: false }))
       }

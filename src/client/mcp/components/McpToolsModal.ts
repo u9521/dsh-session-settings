@@ -8,7 +8,12 @@ import type {
   McpDiscoveredTool,
   McpServerInfo,
 } from '../../types/index.ts'
-import { ModalDialog, SchemaViewer } from '../../components/index.ts'
+import {
+  ModalDialog,
+  SchemaViewer,
+  ServerIcon,
+} from '../../components/index.ts'
+import { formatProtocolTitle } from '../../utils/string.ts'
 
 const e = React.createElement
 
@@ -75,11 +80,20 @@ export function McpToolsModal({
     )
   })
 
+  const effectiveInfo = serverInfo || server.serverInfo
   const headerMeta = e(
     'div',
     { className: 'dsh-mcp-tools-header-meta' },
+    e(ServerIcon, {
+      server,
+      serverInfo: effectiveInfo,
+      transport: server.transport,
+      size: 16,
+    }),
     e('span', { className: 'dsh-mcp-card-name' }, server.name || server.id),
-    e('span', { className: 'dsh-mcp-card-id' }, server.id),
+    server.id && server.id !== server.name
+      ? e('span', { className: 'dsh-mcp-card-id' }, server.id)
+      : null,
     e(
       'span',
       {
@@ -93,29 +107,41 @@ export function McpToolsModal({
             ? 'Streamable HTTP'
             : 'HTTP / SSE',
     ),
-    serverInfo?.version
+    effectiveInfo?.websiteUrl
+      ? e(
+          'a',
+          {
+            key: 'website',
+            href: effectiveInfo.websiteUrl,
+            target: '_blank',
+            rel: 'noopener noreferrer',
+            className: 'dsh-mcp-proto-badge website',
+            title: effectiveInfo.websiteUrl,
+          },
+          '🔗 ' + t('table.website'),
+        )
+      : null,
+    effectiveInfo?.version
       ? e(
           'span',
           {
             className: 'dsh-mcp-proto-badge server-version',
-            title: serverInfo.protocolVersion
-              ? `MCP Protocol: ${serverInfo.protocolVersion}${serverInfo.name ? ` (${serverInfo.name})` : ''}`
-              : serverInfo.name || undefined,
+            title: formatProtocolTitle(effectiveInfo),
           },
-          serverInfo.name &&
-            serverInfo.name !== server.id &&
-            serverInfo.name !== server.name
-            ? `${serverInfo.name} ${serverInfo.version}`
-            : serverInfo.version,
+          effectiveInfo.name &&
+            effectiveInfo.name !== server.id &&
+            effectiveInfo.name !== server.name
+            ? `${effectiveInfo.name} ${effectiveInfo.version}`
+            : effectiveInfo.version,
         )
-      : serverInfo?.protocolVersion
+      : effectiveInfo?.protocolVersion
         ? e(
             'span',
             {
               className: 'dsh-mcp-proto-badge server-version',
-              title: serverInfo.name || undefined,
+              title: formatProtocolTitle(effectiveInfo),
             },
-            `MCP ${serverInfo.protocolVersion}`,
+            `MCP ${effectiveInfo.protocolVersion}`,
           )
         : null,
   )

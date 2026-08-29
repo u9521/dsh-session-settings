@@ -58,6 +58,22 @@ export function McpServerFormModal({
 }: McpServerFormModalProps) {
   if (!open) return null
 
+  const detectedInfo = server.serverInfo
+  const detectedId = detectedInfo?.name
+    ? detectedInfo.name
+        .toLowerCase()
+        .replace(/[^a-zA-Z0-9_-]/g, '_')
+        .slice(0, 64)
+    : ''
+  const detectedName = detectedInfo?.title || detectedInfo?.name || ''
+  const detectedDesc = detectedInfo?.description || ''
+
+  const canAutofillId = Boolean(detectedId && detectedId !== server.id)
+  const canAutofillName = Boolean(detectedName && detectedName !== server.name)
+  const canAutofillDesc = Boolean(
+    detectedDesc && detectedDesc !== server.description,
+  )
+
   return e(
     ModalDialog,
     {
@@ -130,10 +146,7 @@ export function McpServerFormModal({
       ],
     },
     // Banner / Notices
-    error ||
-      testResult ||
-      server.compatibility?.status === 'incompatible-2026-07-28' ||
-      server.compatibility?.status === 'downgrade-supported'
+    error || testResult
       ? e(
           'div',
           { className: 'dsh-sam-notices-block' },
@@ -147,20 +160,6 @@ export function McpServerFormModal({
                 testResult.message,
               )
             : null,
-          server.compatibility?.canEnable === false ||
-            server.compatibility?.status === 'incompatible-2026-07-28'
-            ? e(
-                'div',
-                { className: 'dsh-sam-notice error' },
-                `⚠️ ${t('compatibility.incompatibleBadge')}: ${server.compatibility?.warning || t('compatibility.incompatibleDesc')}`,
-              )
-            : server.compatibility?.status === 'downgrade-supported'
-              ? e(
-                  'div',
-                  { className: 'dsh-sam-notice info' },
-                  `ℹ️ ${t('compatibility.downgradedBadge', { version: server.compatibility.negotiatedVersion || '2025-11-25' })}: ${server.compatibility?.warning || t('compatibility.downgradedDesc')}`,
-                )
-              : null,
         )
       : null,
 
@@ -221,12 +220,27 @@ export function McpServerFormModal({
         e(
           'div',
           { className: 'dsh-sam-field-group flex-1' },
-          e('label', { className: 'dsh-sam-field-label' }, t('form.id')),
+          e(
+            'div',
+            { className: 'dsh-mcp-label-row' },
+            e('label', { className: 'dsh-sam-field-label' }, t('form.id')),
+            canAutofillId
+              ? e(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'dsh-mcp-autofill-btn',
+                    title: `填入: ${detectedId}`,
+                    onClick: () => onChange({ ...server, id: detectedId }),
+                  },
+                  t('form.autoFill'),
+                )
+              : null,
+          ),
           e('input', {
             type: 'text',
             className: 'dsh-sam-select',
             placeholder: t('form.idPlaceholder'),
-            disabled: isEditing,
             value: server.id || '',
             onChange: (evt: React.ChangeEvent<HTMLInputElement>) =>
               onChange({ ...server, id: evt.target.value }),
@@ -235,7 +249,23 @@ export function McpServerFormModal({
         e(
           'div',
           { className: 'dsh-sam-field-group flex-1' },
-          e('label', { className: 'dsh-sam-field-label' }, t('form.name')),
+          e(
+            'div',
+            { className: 'dsh-mcp-label-row' },
+            e('label', { className: 'dsh-sam-field-label' }, t('form.name')),
+            canAutofillName
+              ? e(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'dsh-mcp-autofill-btn',
+                    title: `填入: ${detectedName}`,
+                    onClick: () => onChange({ ...server, name: detectedName }),
+                  },
+                  t('form.autoFill'),
+                )
+              : null,
+          ),
           e('input', {
             type: 'text',
             className: 'dsh-sam-select',
@@ -251,7 +281,28 @@ export function McpServerFormModal({
       e(
         'div',
         { className: 'dsh-sam-field-group' },
-        e('label', { className: 'dsh-sam-field-label' }, t('form.description')),
+        e(
+          'div',
+          { className: 'dsh-mcp-label-row' },
+          e(
+            'label',
+            { className: 'dsh-sam-field-label' },
+            t('form.description'),
+          ),
+          canAutofillDesc
+            ? e(
+                'button',
+                {
+                  type: 'button',
+                  className: 'dsh-mcp-autofill-btn',
+                  title: `填入: ${detectedDesc}`,
+                  onClick: () =>
+                    onChange({ ...server, description: detectedDesc }),
+                },
+                t('form.autoFill'),
+              )
+            : null,
+        ),
         e('input', {
           type: 'text',
           className: 'dsh-sam-select',

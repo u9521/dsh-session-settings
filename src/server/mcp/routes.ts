@@ -3,8 +3,14 @@ import type {
   McpServerStore,
   McpTransportType,
   McpReconnectConfig,
+  SessionSettingsStore,
 } from '../../types.ts'
 import { loadMcpStore, saveMcpStore } from './storage.ts'
+import {
+  loadSessionSettingsStore,
+  saveSessionSettingsStore,
+  renameServerIdInSessionStore,
+} from '../session/storage.ts'
 import { testMcpConnection } from './tester/index.ts'
 import type { McpManager } from './manager.ts'
 import { readRequestBody } from '../common/http.ts'
@@ -14,6 +20,8 @@ export function registerMcpRoutes(
   getMcpStore: () => McpServerStore,
   setMcpStore: (s: McpServerStore) => void,
   mcpManager?: McpManager,
+  getSessionSettingsStore?: () => SessionSettingsStore,
+  setSessionSettingsStore?: (s: SessionSettingsStore) => void,
 ): () => void {
   const unregisterMcpRoute = webServer.register({
     kind: 'exact',
@@ -64,9 +72,6 @@ export function registerMcpRoutes(
                 }
                 if (testResult.serverInfo) {
                   s.serverInfo = testResult.serverInfo
-                }
-                if (testResult.compatibility) {
-                  s.compatibility = testResult.compatibility
                 }
                 s.lastTestedAt = Date.now()
                 saveMcpStore(mcpStore)
@@ -136,7 +141,16 @@ export function registerMcpRoutes(
           }
 
           const mcpStore = getMcpStore()
-          const existing = mcpStore.servers[id]
+          const originalId =
+            typeof parsed.originalId === 'string'
+              ? parsed.originalId.trim()
+              : ''
+          const isRename = Boolean(
+            originalId && originalId !== id && mcpStore.servers[originalId],
+          )
+          const existing = isRename
+            ? mcpStore.servers[originalId]
+            : mcpStore.servers[id]
           const now = Date.now()
 
           const toolCallTimeoutMs =
@@ -218,10 +232,28 @@ export function registerMcpRoutes(
             detectedTransport:
               incoming.detectedTransport || existing?.detectedTransport,
             serverInfo: incoming.serverInfo || existing?.serverInfo,
-            compatibility: incoming.compatibility || existing?.compatibility,
             lastTestedAt: incoming.lastTestedAt || existing?.lastTestedAt,
             createdAt: existing?.createdAt || now,
             updatedAt: now,
+          }
+
+          if (isRename) {
+            delete mcpStore.servers[originalId]
+            mcpManager?.unregisterServer(originalId)
+
+            const currentSessionSettings = getSessionSettingsStore
+              ? getSessionSettingsStore()
+              : loadSessionSettingsStore()
+            if (
+              renameServerIdInSessionStore(
+                currentSessionSettings,
+                originalId,
+                id,
+              )
+            ) {
+              saveSessionSettingsStore(currentSessionSettings)
+              setSessionSettingsStore?.(currentSessionSettings)
+            }
           }
 
           mcpStore.servers[id] = serverConfig

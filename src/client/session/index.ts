@@ -17,7 +17,7 @@ import { SessionMcpSection } from './sections/SessionMcpSection.ts'
 import { SessionSkillsSection } from './sections/SessionSkillsSection.ts'
 import { SetDefaultModal } from './modals/SetDefaultModal.ts'
 import { SessionMcpToolsModal } from './modals/SessionMcpToolsModal.ts'
-import { SessionSkillDetailModal } from './modals/SessionSkillDetailModal.ts'
+import { SkillDetailModal } from '../skills/components/SkillDetailModal.ts'
 
 export * from './sections/HeaderBar.ts'
 export * from './sections/NavigationSidebar.ts'
@@ -26,12 +26,11 @@ export * from './sections/SessionMcpSection.ts'
 export * from './sections/SessionSkillsSection.ts'
 export * from './modals/SetDefaultModal.ts'
 export * from './modals/SessionMcpToolsModal.ts'
-export * from './modals/SessionSkillDetailModal.ts'
 
 const e = React.createElement
 
 export function SessionSettingsViewPage(props: ClientPageProps) {
-  const { api, t, sessionId, onClose, onSave } = props
+  const { t, sessionId, onClose, onSave } = props
 
   const data = useSessionData(props)
   const actions = useSessionActions({
@@ -190,9 +189,6 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
         data.mcpConfig.disabledTools?.[server.id] || server.disabledTools || [],
       ),
     )
-    data.setSessionToolsSearch('')
-    data.setSessionToolsExpandedSchemas(new Set())
-    data.setSessionToolSchemaModes({})
 
     if (Array.isArray(server.toolDetails) && server.toolDetails.length > 0) {
       data.setSessionToolsList(server.toolDetails)
@@ -281,15 +277,6 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
     data.setSessionDisabledToolsSet(
       new Set(data.sessionToolsModalServer?.disabledTools || []),
     )
-  }
-
-  const handleToggleSessionSchema = (toolName: string) => {
-    data.setSessionToolsExpandedSchemas((prev) => {
-      const next = new Set(prev)
-      if (next.has(toolName)) next.delete(toolName)
-      else next.add(toolName)
-      return next
-    })
   }
 
   const handleApplySessionTools = () => {
@@ -593,6 +580,7 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
           ? e(SubagentModelSection, {
               modelConfig: data.modelConfig,
               providers: data.providers,
+              loadingModels: data.loadingModels,
               currentWorkspaceId: data.currentWorkspaceId,
               workspaceSettings: data.workspaceSettings,
               defaultSettings: data.defaultSettings,
@@ -727,9 +715,6 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
       server: data.sessionToolsModalServer,
       toolsMode: data.sessionToolsMode,
       disabledToolsSet: data.sessionDisabledToolsSet,
-      search: data.sessionToolsSearch,
-      expandedSchemas: data.sessionToolsExpandedSchemas,
-      schemaModes: data.sessionToolSchemaModes,
       fetching: data.sessionToolsFetching,
       toolsList: data.sessionToolsList,
       onToolsModeChange: (val) => {
@@ -740,30 +725,22 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
           )
         }
       },
-      onSearchChange: data.setSessionToolsSearch,
       onToggleTool: handleToggleSessionTool,
       onToggleAllTools: handleToggleAllSessionTools,
       onResetToDefault: handleResetSessionToolsToDefault,
-      onToggleSchema: handleToggleSessionSchema,
-      onSchemaModeChange: (toolName, mode) =>
-        data.setSessionToolSchemaModes((prev) => ({
-          ...prev,
-          [toolName]: mode,
-        })),
       onFetchTools: handleFetchSessionTools,
       onClose: () => data.setSessionToolsModalServer(null),
       onApply: handleApplySessionTools,
       t,
     }),
 
-    // Session Skill Detail Modal
-    e(SessionSkillDetailModal, {
+    // Skill Detail Modal
+    e(SkillDetailModal, {
       skill: data.sessionSkillModalTarget,
       detail: data.sessionSkillModalTarget
         ? data.skillsContentMap[data.sessionSkillModalTarget.name] ||
           data.sessionSkillModalTarget
         : null,
-      skillsConfig: data.skillsConfig,
       isModelDisabled: data.sessionSkillModalTarget
         ? effectiveDisabledModelSet.has(data.sessionSkillModalTarget.name)
         : false,
@@ -773,9 +750,18 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
       loadingContent: data.sessionSkillModalTarget
         ? Boolean(data.skillsLoadingMap[data.sessionSkillModalTarget.name])
         : false,
-      onToggleModelInvocable: handleToggleModelInvocable,
-      onToggleUserInvocable: handleToggleUserInvocable,
-      onSkillsModeChange: (mode) => handleSkillsModeChange(mode),
+      onToggleModelInvocable: (name) => {
+        if (data.skillsConfig.mode !== 'custom') {
+          handleSkillsModeChange('custom')
+        }
+        handleToggleModelInvocable(name)
+      },
+      onToggleUserInvocable: (name) => {
+        if (data.skillsConfig.mode !== 'custom') {
+          handleSkillsModeChange('custom')
+        }
+        handleToggleUserInvocable(name)
+      },
       onClose: () => data.setSessionSkillModalTarget(null),
       t,
     }),

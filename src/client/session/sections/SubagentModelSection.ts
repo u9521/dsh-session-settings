@@ -14,6 +14,7 @@ const e = React.createElement
 export interface SubagentModelSectionProps {
   modelConfig: SubagentModelConfig
   providers: ModelProviderGroup[]
+  loadingModels?: boolean
   currentWorkspaceId?: string
   workspaceSettings?: SessionSettingsConfig
   defaultSettings: SessionSettingsConfig
@@ -27,6 +28,7 @@ export interface SubagentModelSectionProps {
 export function SubagentModelSection({
   modelConfig,
   providers,
+  loadingModels = false,
   currentWorkspaceId,
   workspaceSettings,
   defaultSettings,
@@ -89,17 +91,23 @@ export function SubagentModelSection({
           badges: [
             workspaceSettings?.subagentModel?.mode === 'custom'
               ? {
-                  label: `自定义: ${workspaceSettings?.subagentModel?.provider || ''} / ${workspaceSettings?.subagentModel?.model || ''}`,
+                  label: `${t('sessionSettings.badge.custom')}: ${workspaceSettings?.subagentModel?.provider || ''} / ${workspaceSettings?.subagentModel?.model || ''}`,
                   variant: 'custom',
                 }
               : workspaceSettings?.subagentModel?.mode === 'inherit'
-                ? { label: '继承', variant: 'inherit' }
+                ? {
+                    label: t('sessionSettings.badge.inherit'),
+                    variant: 'inherit',
+                  }
                 : defaultSettings?.subagentModel?.mode === 'custom'
                   ? {
-                      label: `自定义: ${defaultSettings?.subagentModel?.provider || ''} / ${defaultSettings?.subagentModel?.model || ''}`,
+                      label: `${t('sessionSettings.badge.custom')}: ${defaultSettings?.subagentModel?.provider || ''} / ${defaultSettings?.subagentModel?.model || ''}`,
                       variant: 'custom',
                     }
-                  : { label: '继承', variant: 'inherit' },
+                  : {
+                      label: t('sessionSettings.badge.inherit'),
+                      variant: 'inherit',
+                    },
           ],
           desc: t('sessionSettings.mode.workspace.desc'),
         },
@@ -109,10 +117,13 @@ export function SubagentModelSection({
           badges: [
             defaultSettings?.subagentModel?.mode === 'custom'
               ? {
-                  label: `自定义: ${defaultSettings?.subagentModel?.provider || ''} / ${defaultSettings?.subagentModel?.model || ''}`,
+                  label: `${t('sessionSettings.badge.custom')}: ${defaultSettings?.subagentModel?.provider || ''} / ${defaultSettings?.subagentModel?.model || ''}`,
                   variant: 'custom',
                 }
-              : { label: '继承', variant: 'inherit' },
+              : {
+                  label: t('sessionSettings.badge.inherit'),
+                  variant: 'inherit',
+                },
           ],
           desc: t('sessionSettings.mode.default.desc'),
         },
@@ -147,16 +158,29 @@ export function SubagentModelSection({
               {
                 className: 'dsh-sam-select',
                 value: modelConfig.provider || '',
+                disabled: loadingModels || providers.length === 0,
                 onChange: (evt: React.ChangeEvent<HTMLSelectElement>) =>
                   onProviderChange(evt.target.value),
               },
-              !modelConfig.provider
+              loadingModels
                 ? e(
                     'option',
                     { value: '', disabled: true },
-                    t('sessionSettings.field.providerPlaceholder'),
+                    t('sessionSettings.field.loadingModels'),
                   )
-                : null,
+                : providers.length === 0
+                  ? e(
+                      'option',
+                      { value: '', disabled: true },
+                      t('sessionSettings.field.noModelsFound'),
+                    )
+                  : !modelConfig.provider
+                    ? e(
+                        'option',
+                        { value: '', disabled: true },
+                        t('sessionSettings.field.providerPlaceholder'),
+                      )
+                    : null,
               providers.map((p) =>
                 e(
                   'option',
@@ -166,6 +190,14 @@ export function SubagentModelSection({
                     : p.name || p.id,
                 ),
               ),
+              modelConfig.provider &&
+                !providers.some((p) => p.id === modelConfig.provider)
+                ? e(
+                    'option',
+                    { key: modelConfig.provider, value: modelConfig.provider },
+                    modelConfig.provider,
+                  )
+                : null,
             ),
           ),
 
@@ -183,6 +215,7 @@ export function SubagentModelSection({
                 className: 'dsh-sam-select',
                 value: modelConfig.model || '',
                 disabled:
+                  loadingModels ||
                   !modelConfig.provider ||
                   !currentProviderGroup?.models?.length,
                 onChange: (evt: React.ChangeEvent<HTMLSelectElement>) =>
@@ -198,6 +231,16 @@ export function SubagentModelSection({
               (currentProviderGroup?.models || []).map((m) =>
                 e('option', { key: m.id, value: m.id }, m.name || m.id),
               ),
+              modelConfig.model &&
+                !currentProviderGroup?.models?.some(
+                  (m) => m.id === modelConfig.model,
+                )
+                ? e(
+                    'option',
+                    { key: modelConfig.model, value: modelConfig.model },
+                    modelConfig.model,
+                  )
+                : null,
             ),
           ),
 
@@ -249,16 +292,16 @@ export function SubagentModelSection({
               'span',
               { className: 'dsh-sam-effective-model-title' },
               e(IconAgentPresetOutline16, { size: 14 }),
-              '生效配置预览',
+              t('sessionSettings.preview.effectiveModelTitle'),
             ),
             e(
               'span',
               { className: 'dsh-sam-effective-model-source' },
               modelConfig.mode === 'workspace'
                 ? workspaceSettings?.subagentModel?.mode === 'custom'
-                  ? '来自工作区默认'
-                  : '来自全局默认'
-                : '来自全局默认',
+                  ? t('sessionSettings.preview.fromWorkspace')
+                  : t('sessionSettings.preview.fromGlobal')
+                : t('sessionSettings.preview.fromGlobal'),
             ),
           ),
           e(

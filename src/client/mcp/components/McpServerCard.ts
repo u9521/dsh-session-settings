@@ -1,13 +1,13 @@
 import * as React from 'react'
 import {
-  IconCodeOutline16,
-  IconLinkOutline16,
   IconLoadingOutline16,
   IconEditOutline16,
   IconTrashOutline16,
   IconWarningOutline16,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { GlobalMcpServerConfig } from '../../types/index.ts'
+import { ServerIcon } from '../../components/index.ts'
+import { formatProtocolTitle } from '../../utils/string.ts'
 
 const e = React.createElement
 
@@ -63,9 +63,7 @@ export function McpServerCard({
         e(
           'div',
           { className: 'dsh-mcp-transport-icon' },
-          server.transport === 'stdio'
-            ? e(IconCodeOutline16, { size: 16 })
-            : e(IconLinkOutline16, { size: 16 }),
+          e(ServerIcon, { server, size: 18 }),
         ),
         e(
           'div',
@@ -82,14 +80,27 @@ export function McpServerCard({
           { className: `dsh-mcp-proto-badge ${protoClass}` },
           protoLabel,
         ),
+        server.serverInfo?.websiteUrl
+          ? e(
+              'a',
+              {
+                key: 'website',
+                href: server.serverInfo.websiteUrl,
+                target: '_blank',
+                rel: 'noopener noreferrer',
+                className: 'dsh-mcp-proto-badge website',
+                title: server.serverInfo.websiteUrl,
+                onClick: (evt: React.MouseEvent) => evt.stopPropagation(),
+              },
+              '🔗 ' + t('table.website'),
+            )
+          : null,
         server.serverInfo?.version
           ? e(
               'span',
               {
                 className: 'dsh-mcp-proto-badge server-version',
-                title: server.serverInfo.protocolVersion
-                  ? `MCP Protocol: ${server.serverInfo.protocolVersion}`
-                  : server.serverInfo.name || undefined,
+                title: formatProtocolTitle(server.serverInfo),
               },
               server.serverInfo.name &&
                 server.serverInfo.name !== server.id &&
@@ -102,7 +113,7 @@ export function McpServerCard({
                 'span',
                 {
                   className: 'dsh-mcp-proto-badge server-version',
-                  title: server.serverInfo.name || undefined,
+                  title: formatProtocolTitle(server.serverInfo),
                 },
                 `MCP ${server.serverInfo.protocolVersion}`,
               )
@@ -123,33 +134,6 @@ export function McpServerCard({
               }),
             )
           : null,
-        server.compatibility?.status === 'incompatible-2026-07-28' ||
-          server.compatibility?.canEnable === false
-          ? e(
-              'span',
-              {
-                className: 'dsh-mcp-proto-badge incompatible',
-                title:
-                  server.compatibility?.warning ||
-                  t('compatibility.incompatibleDesc'),
-              },
-              t('compatibility.incompatibleBadge'),
-            )
-          : server.compatibility?.status === 'downgrade-supported'
-            ? e(
-                'span',
-                {
-                  className: 'dsh-mcp-proto-badge downgrade',
-                  title:
-                    server.compatibility?.warning ||
-                    t('compatibility.downgradedDesc'),
-                },
-                t('compatibility.downgradedBadge', {
-                  version:
-                    server.compatibility?.negotiatedVersion || '2025-11-25',
-                }),
-              )
-            : null,
         server.enabledByDefault
           ? e(
               'span',
@@ -161,8 +145,12 @@ export function McpServerCard({
     ),
 
     // Description
-    server.description
-      ? e('p', { className: 'dsh-mcp-card-desc' }, server.description)
+    server.description || server.serverInfo?.description
+      ? e(
+          'p',
+          { className: 'dsh-mcp-card-desc' },
+          server.description || server.serverInfo?.description,
+        )
       : null,
 
     // Target info (Command + args or URL)

@@ -85,15 +85,10 @@ export function SkillsSettingsTab({
             e(
               'h2',
               { className: 'dsh-mcp-page-title' },
-              t('title') || '技能管理',
+              t('skillsSettings.title'),
             ),
           ),
-          e(
-            'p',
-            { className: 'dsh-mcp-page-desc' },
-            t('desc') ||
-              '配置所有新会话默认生效的 Skill 启用/禁用规则。支持分别独立管控模型的 tool-skill 工具调用与用户的 /快捷指令。',
-          ),
+          e('p', { className: 'dsh-mcp-page-desc' }, t('skillsSettings.desc')),
         ),
         e(
           'div',
@@ -103,7 +98,7 @@ export function SkillsSettingsTab({
             {
               type: 'button',
               className: 'dsh-sam-btn secondary',
-              title: t('sessionSettings.skills.refresh') || '刷新技能',
+              title: t('sessionSettings.skills.refresh'),
               onClick: loadSkills,
             },
             e(IconRefreshOutline16, { size: 14 }),
@@ -117,8 +112,8 @@ export function SkillsSettingsTab({
               onClick: handleSaveDefault,
             },
             saving
-              ? t('actions.saving') || '保存中...'
-              : t('actions.saveSettings') || '保存设置',
+              ? t('skillsSettings.actions.saving')
+              : t('skillsSettings.actions.saveSettings'),
           ),
         ),
       ),

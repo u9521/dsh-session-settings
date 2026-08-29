@@ -157,29 +157,37 @@ export function loadSessionSettingsStore(): SessionSettingsStore {
   try {
     const file = getSessionSettingsStoragePath()
     if (fs.existsSync(file)) {
-      const data = JSON.parse(fs.readFileSync(file, 'utf8'))
-      if (data && typeof data === 'object') {
-        const def = normalizeSessionSettings(data.default)
-        const workspaces: Record<string, SessionSettingsConfig> = {}
-        if (data.workspaces && typeof data.workspaces === 'object') {
-          for (const [id, w] of Object.entries(data.workspaces)) {
-            if (w && typeof w === 'object') {
-              workspaces[id] = normalizeSessionSettings(w as any)
+      const content = fs.readFileSync(file, 'utf8')
+      if (content.trim()) {
+        const data = JSON.parse(content)
+        if (data && typeof data === 'object') {
+          const def = normalizeSessionSettings(data.default)
+          const workspaces: Record<string, SessionSettingsConfig> = {}
+          if (data.workspaces && typeof data.workspaces === 'object') {
+            for (const [id, w] of Object.entries(data.workspaces)) {
+              if (w && typeof w === 'object') {
+                workspaces[id] = normalizeSessionSettings(w as any)
+              }
             }
           }
-        }
-        const sessions: Record<string, SessionSettingsConfig> = {}
-        if (data.sessions && typeof data.sessions === 'object') {
-          for (const [id, s] of Object.entries(data.sessions)) {
-            if (s && typeof s === 'object') {
-              sessions[id] = normalizeSessionSettings(s as any)
+          const sessions: Record<string, SessionSettingsConfig> = {}
+          if (data.sessions && typeof data.sessions === 'object') {
+            for (const [id, s] of Object.entries(data.sessions)) {
+              if (s && typeof s === 'object') {
+                sessions[id] = normalizeSessionSettings(s as any)
+              }
             }
           }
+          return { default: def, workspaces, sessions }
         }
-        return { default: def, workspaces, sessions }
       }
     }
-  } catch {}
+  } catch (err) {
+    console.error(
+      '[session-settings:storage] Failed to load session settings store:',
+      err,
+    )
+  }
 
   return {
     default: { ...DEFAULT_SESSION_SETTINGS },
@@ -194,7 +202,84 @@ export function saveSessionSettingsStore(store: SessionSettingsStore): void {
     const tmp = `${file}.tmp`
     fs.writeFileSync(tmp, JSON.stringify(store, null, 2), 'utf8')
     fs.renameSync(tmp, file)
-  } catch {}
+  } catch (err) {
+    console.error(
+      '[session-settings:storage] Failed to save session settings store:',
+      err,
+    )
+  }
+}
+
+function renameMcpInConfig(
+  mcp: SessionSettingsConfig['mcp'] | undefined,
+  oldId: string,
+  newId: string,
+): boolean {
+  if (!mcp) return false
+  let changed = false
+
+  if (
+    Array.isArray(mcp.enabledServerIds) &&
+    mcp.enabledServerIds.includes(oldId)
+  ) {
+    mcp.enabledServerIds = mcp.enabledServerIds.map((id) =>
+      id === oldId ? newId : id,
+    )
+    changed = true
+  }
+
+  if (mcp.toolsMode && oldId in mcp.toolsMode) {
+    mcp.toolsMode[newId] = mcp.toolsMode[oldId]
+    delete mcp.toolsMode[oldId]
+    changed = true
+  }
+
+  if (mcp.disabledTools && oldId in mcp.disabledTools) {
+    mcp.disabledTools[newId] = mcp.disabledTools[oldId]
+    delete mcp.disabledTools[oldId]
+    changed = true
+  }
+
+  if (mcp.effectiveDisabledTools && oldId in mcp.effectiveDisabledTools) {
+    mcp.effectiveDisabledTools[newId] = mcp.effectiveDisabledTools[oldId]
+    delete mcp.effectiveDisabledTools[oldId]
+    changed = true
+  }
+
+  return changed
+}
+
+export function renameServerIdInSessionStore(
+  store: SessionSettingsStore,
+  oldId: string,
+  newId: string,
+): boolean {
+  if (!oldId || !newId || oldId === newId) return false
+  let changed = false
+
+  if (store.default?.mcp) {
+    if (renameMcpInConfig(store.default.mcp, oldId, newId)) {
+      changed = true
+    }
+  }
+
+  if (store.workspaces) {
+    for (const wsConfig of Object.values(store.workspaces)) {
+      if (wsConfig?.mcp && renameMcpInConfig(wsConfig.mcp, oldId, newId)) {
+        changed = true
+      }
+    }
+  }
+
+  if (store.sessions) {
+    for (const sCfg of Object.values(store.sessions)) {
+      if (sCfg?.mcp && renameMcpInConfig(sCfg.mcp, oldId, newId)) {
+        changed = true
+      }
+    }
+  }
+
+  return changed
 }
 
 export function resolveEffectiveSubagentModel(

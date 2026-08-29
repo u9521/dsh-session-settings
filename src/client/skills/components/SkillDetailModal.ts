@@ -52,10 +52,8 @@ export function SkillDetailModal({
           ? e(Badge, {
               key: 'model',
               label: !isModelDisabled
-                ? t('sessionSettings.skills.modelInvocableEnabled') ||
-                  '模型调用: 开启'
-                : t('sessionSettings.skills.modelInvocableDisabled') ||
-                  '模型调用: 禁用',
+                ? t('sessionSettings.skills.modelInvocableEnabled')
+                : t('sessionSettings.skills.modelInvocableDisabled'),
               variant: !isModelDisabled ? 'status-enabled' : 'status-disabled',
             })
           : null,
@@ -63,10 +61,8 @@ export function SkillDetailModal({
           ? e(Badge, {
               key: 'user',
               label: !isUserDisabled
-                ? t('sessionSettings.skills.userInvocableEnabled') ||
-                  '快捷指令: 开启'
-                : t('sessionSettings.skills.userInvocableDisabled') ||
-                  '快捷指令: 禁用',
+                ? t('sessionSettings.skills.userInvocableEnabled')
+                : t('sessionSettings.skills.userInvocableDisabled'),
               variant: !isUserDisabled ? 'status-enabled' : 'status-disabled',
             })
           : null,
@@ -81,7 +77,7 @@ export function SkillDetailModal({
             className: 'dsh-sam-btn primary',
             onClick: onClose,
           },
-          t('sessionSettings.skills.modalDoneBtn') || '完成',
+          t('sessionSettings.skills.modalDoneBtn'),
         ),
       ),
     },
@@ -136,7 +132,7 @@ export function SkillDetailModal({
         e(
           'h4',
           { className: 'dsh-skill-modal-section-title' },
-          t('sessionSettings.skills.rulesSectionTitle') || '调用权限管控',
+          t('sessionSettings.skills.rulesSectionTitle'),
         ),
         !isRuntime
           ? e(
@@ -219,7 +215,7 @@ export function SkillDetailModal({
         e(
           'h4',
           { className: 'dsh-skill-modal-section-title' },
-          t('sessionSettings.skills.instructionsSectionTitle') || '指令与规则',
+          t('sessionSettings.skills.instructionsSectionTitle'),
         ),
         loadingContent
           ? e(

@@ -8,17 +8,8 @@ import type {
   SessionMcpConfig,
   SessionSkillsConfig,
   SessionSettingsConfig,
-  McpDiscoveredTool,
   NavSection,
 } from '../../types/index.ts'
-import {
-  getLocalSessionSettingsStore,
-  getLocalMcpServers,
-  getSessionRawSettings,
-  getSessionEffectiveSettings,
-  saveLocalSessionSettingsStore,
-  saveLocalMcpServers,
-} from '../../storage/index.ts'
 
 export function useSessionData({
   api,
@@ -90,20 +81,6 @@ export function useSessionData({
     currentWorkspace?.name ||
     currentWorkspace?.path
 
-  const localStore = getLocalSessionSettingsStore()
-  const localServers = getLocalMcpServers()
-  const initialRaw = getSessionRawSettings(
-    localStore,
-    sessionId,
-    currentWorkspaceId,
-  )
-  const initialEffective = getSessionEffectiveSettings(
-    localStore,
-    localServers,
-    sessionId,
-    currentWorkspaceId,
-  )
-
   const [activeNav, setActiveNav] = React.useState<NavSection>('model')
   const [copiedId, setCopiedId] = React.useState<boolean>(false)
   const [error, setError] = React.useState<string>('')
@@ -115,22 +92,26 @@ export function useSessionData({
   const [cloneError, setCloneError] = React.useState<string>('')
 
   const [providers, setProviders] = React.useState<ModelProviderGroup[]>([])
-  const [availableMcpServers, setAvailableMcpServers] =
-    React.useState<GlobalMcpServerConfig[]>(localServers)
+  const [loadingModels, setLoadingModels] = React.useState<boolean>(false)
+  const [availableMcpServers, setAvailableMcpServers] = React.useState<
+    GlobalMcpServerConfig[]
+  >([])
   const [availableSkills, setAvailableSkills] = React.useState<SkillItem[]>([])
 
+  const defaultMode = currentWorkspaceId ? 'workspace' : 'default'
+
   // Form state
-  const [modelConfig, setModelConfig] = React.useState<SubagentModelConfig>(
-    sessionId
-      ? initialRaw.config.subagentModel
-      : initialEffective.subagentModel,
-  )
-  const [mcpConfig, setMcpConfig] = React.useState<SessionMcpConfig>(
-    sessionId ? initialRaw.config.mcp : initialEffective.mcp,
-  )
-  const [skillsConfig, setSkillsConfig] = React.useState<SessionSkillsConfig>(
-    sessionId ? initialRaw.config.skills : initialEffective.skills,
-  )
+  const [modelConfig, setModelConfig] = React.useState<SubagentModelConfig>({
+    mode: defaultMode,
+  })
+  const [mcpConfig, setMcpConfig] = React.useState<SessionMcpConfig>({
+    mode: defaultMode,
+    enabledServerIds: [],
+  })
+  const [skillsConfig, setSkillsConfig] = React.useState<SessionSkillsConfig>({
+    mode: defaultMode,
+    disabledSkills: [],
+  })
 
   // Skills UI state
   const [skillsSearch, setSkillsSearch] = React.useState<string>('')
@@ -153,36 +134,21 @@ export function useSessionData({
   const [sessionDisabledToolsSet, setSessionDisabledToolsSet] = React.useState<
     Set<string>
   >(new Set())
-  const [sessionToolsSearch, setSessionToolsSearch] = React.useState<string>('')
-  const [sessionToolsExpandedSchemas, setSessionToolsExpandedSchemas] =
-    React.useState<Set<string>>(new Set())
-  const [sessionToolSchemaModes, setSessionToolSchemaModes] = React.useState<
-    Record<string, 'list' | 'raw'>
-  >({})
   const [sessionToolsFetching, setSessionToolsFetching] =
     React.useState<boolean>(false)
-  const [sessionToolsList, setSessionToolsList] = React.useState<
-    McpDiscoveredTool[]
-  >([])
+  const [sessionToolsList, setSessionToolsList] = React.useState<any[]>([])
 
   const [defaultSettings, setDefaultSettings] =
-    React.useState<SessionSettingsConfig>(
-      localStore.default || {
-        subagentModel: { mode: 'inherit' },
-        mcp: { mode: 'default', enabledServerIds: [] },
-        skills: { mode: 'default', disabledSkills: [] },
-      },
-    )
+    React.useState<SessionSettingsConfig>({
+      subagentModel: { mode: 'inherit' },
+      mcp: { mode: 'default', enabledServerIds: [] },
+      skills: { mode: 'default', disabledSkills: [] },
+    })
   const [workspaceSettings, setWorkspaceSettings] = React.useState<
     SessionSettingsConfig | undefined
-  >(
-    currentWorkspaceId && localStore.workspaces
-      ? localStore.workspaces[currentWorkspaceId]
-      : undefined,
-  )
-  const [hasSessionOverride, setHasSessionOverride] = React.useState<boolean>(
-    initialRaw.hasOverride,
-  )
+  >(undefined)
+  const [hasSessionOverride, setHasSessionOverride] =
+    React.useState<boolean>(false)
 
   // Set as default modal states
   const [setDefaultModalOpen, setSetDefaultModalOpen] =
@@ -205,56 +171,44 @@ export function useSessionData({
   React.useEffect(() => {
     let mounted = true
 
-    const curStore = getLocalSessionSettingsStore()
-    const curServers = getLocalMcpServers()
-    const curRaw = getSessionRawSettings(
-      curStore,
-      sessionId,
-      currentWorkspaceId,
-    )
-    const curEffective = getSessionEffectiveSettings(
-      curStore,
-      curServers,
-      sessionId,
-      currentWorkspaceId,
-    )
-
-    if (sessionId) {
-      setModelConfig(curRaw.config.subagentModel)
-      setMcpConfig(curRaw.config.mcp)
-      setSkillsConfig(curRaw.config.skills)
-      setHasSessionOverride(curRaw.hasOverride)
-    } else {
-      setModelConfig(curEffective.subagentModel)
-      setMcpConfig(curEffective.mcp)
-      setSkillsConfig(curEffective.skills)
-      setHasSessionOverride(false)
-    }
-
-    if (curStore.default) {
-      setDefaultSettings(curStore.default)
-    }
-    if (currentWorkspaceId && curStore.workspaces?.[currentWorkspaceId]) {
-      setWorkspaceSettings(curStore.workspaces[currentWorkspaceId])
-    } else {
-      setWorkspaceSettings(undefined)
+    async function loadModels() {
+      if (typeof apiRef.current?.llm?.models !== 'function') return
+      setLoadingModels(true)
+      try {
+        const modelsRes = await apiRef.current.llm.models({})
+        if (
+          mounted &&
+          modelsRes?.result?.ok &&
+          Array.isArray(modelsRes.result.value?.groups)
+        ) {
+          const groups = modelsRes.result.value.groups
+          setProviders(groups)
+          if (groups.length > 0) {
+            setModelConfig((prev) => {
+              if (prev.mode === 'custom' && !prev.provider) {
+                const firstGroup = groups[0]
+                return {
+                  ...prev,
+                  provider: firstGroup.id,
+                  model: firstGroup.models?.[0]?.id || '',
+                }
+              }
+              return prev
+            })
+          }
+        }
+      } catch {
+        // ignore fetch failure
+      } finally {
+        if (mounted) {
+          setLoadingModels(false)
+        }
+      }
     }
 
     async function loadData() {
       try {
-        if (apiRef.current?.llm?.models) {
-          try {
-            const clientApi = apiRef.current
-            if (typeof clientApi.llm.models === 'function') {
-              const modelsRes = await clientApi.llm.models({})
-              if (mounted && Array.isArray(modelsRes?.groups)) {
-                setProviders(modelsRes.groups)
-              }
-            }
-          } catch {
-            // ignore catalog fetch failure
-          }
-        }
+        await loadModels()
 
         const params = new URLSearchParams()
         if (sessionId) params.set('sessionId', sessionId)
@@ -265,25 +219,14 @@ export function useSessionData({
         if (res.ok && mounted) {
           const data = await res.json()
           if (data && data.ok) {
-            const freshStore = getLocalSessionSettingsStore()
             if (data.defaultConfig) {
-              freshStore.default = data.defaultConfig
               setDefaultSettings(data.defaultConfig)
             }
             if (data.workspaceConfig && currentWorkspaceId) {
-              if (!freshStore.workspaces) freshStore.workspaces = {}
-              freshStore.workspaces[currentWorkspaceId] = data.workspaceConfig
               setWorkspaceSettings(data.workspaceConfig)
-            } else if (
-              currentWorkspaceId &&
-              freshStore.workspaces?.[currentWorkspaceId]
-            ) {
-              setWorkspaceSettings(freshStore.workspaces[currentWorkspaceId])
+            } else {
+              setWorkspaceSettings(undefined)
             }
-            if (data.config && sessionId) {
-              freshStore.sessions[sessionId] = data.config
-            }
-            saveLocalSessionSettingsStore(freshStore)
 
             if (data.hasSessionOverride !== undefined) {
               setHasSessionOverride(Boolean(data.hasSessionOverride))
@@ -300,7 +243,6 @@ export function useSessionData({
 
             if (Array.isArray(data.availableMcpServers)) {
               setAvailableMcpServers(data.availableMcpServers)
-              saveLocalMcpServers(data.availableMcpServers)
             }
             if (Array.isArray(data.availableSkills)) {
               setAvailableSkills(data.availableSkills)
@@ -326,8 +268,6 @@ export function useSessionData({
     currentWorkspace,
     currentWorkspaceId,
     currentWorkspaceTitle,
-    localStore,
-    localServers,
     activeNav,
     setActiveNav,
     copiedId,
@@ -344,6 +284,7 @@ export function useSessionData({
     setCloneError,
     providers,
     setProviders,
+    loadingModels,
     availableMcpServers,
     setAvailableMcpServers,
     availableSkills,
@@ -370,12 +311,6 @@ export function useSessionData({
     setSessionToolsMode,
     sessionDisabledToolsSet,
     setSessionDisabledToolsSet,
-    sessionToolsSearch,
-    setSessionToolsSearch,
-    sessionToolsExpandedSchemas,
-    setSessionToolsExpandedSchemas,
-    sessionToolSchemaModes,
-    setSessionToolSchemaModes,
     sessionToolsFetching,
     setSessionToolsFetching,
     sessionToolsList,

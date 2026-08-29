@@ -145,49 +145,6 @@ export const SESSION_MCP_CSS = `
   gap: 6px;
   margin: 2px 0;
 }
-.dsh-session-mcp-item {
-  align-items: center;
-  background: var(--dsw-alias-bg-layer-1);
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 8px;
-  cursor: pointer;
-  display: flex;
-  gap: 12px;
-  outline: none;
-  padding: 12px 16px;
-  transition: background-color 0.15s, border-color 0.15s;
-  user-select: none;
-}
-.dsh-session-mcp-item:hover:not(.readonly) {
-  background: var(--dsw-alias-bg-layer-2);
-  border-color: var(--dsw-alias-border-l1);
-}
-.dsh-session-mcp-item:focus-visible {
-  outline: 2px solid var(--dsw-alias-brand-primary);
-  outline-offset: -1px;
-}
-.dsh-session-mcp-item.active {
-  background: var(--dsw-alias-bg-layer-2);
-  border-color: var(--dsw-alias-brand-primary);
-}
-.dsh-session-mcp-item.readonly {
-  cursor: default;
-  opacity: 0.8;
-}
-.dsh-session-mcp-info {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-}
-.dsh-session-mcp-row1 {
-  align-items: center;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  justify-content: flex-start;
-}
 .dsh-session-mcp-desc {
   color: var(--dsw-alias-label-secondary);
   font-size: 13px;
@@ -213,24 +170,12 @@ export const SESSION_MCP_CSS = `
   white-space: nowrap;
   width: 100%;
 }
-.dsh-session-mcp-check {
-  color: var(--dsw-alias-brand-primary);
-  display: flex;
-  flex: none;
-}
 .dsh-session-mcp-footer {
   align-items: center;
   display: flex;
   justify-content: flex-end;
   margin-top: 2px;
   width: 100%;
-}
-.dsh-session-mcp-tools-row {
-  align-items: center;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 4px;
 }
 .dsh-session-tools-btn {
   align-items: center;

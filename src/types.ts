@@ -36,20 +36,6 @@ export interface GlobalMcpServerConfig {
   toolDetails?: McpDiscoveredTool[]
   detectedTransport?: 'stdio' | 'streamable-http' | 'sse'
   serverInfo?: McpServerInfo
-  compatibility?: {
-    status:
-      | 'compatible'
-      | 'downgrade-supported'
-      | 'incompatible-2026-07-28'
-      | 'unknown'
-    canEnable: boolean
-    protocolVersion?: string
-    supportedVersions?: string[]
-    negotiatedVersion?: string
-    message: string
-    warning?: string
-    error?: string
-  }
   lastTestedAt?: number
   createdAt?: number
   updatedAt?: number
@@ -61,10 +47,22 @@ export interface McpDiscoveredTool {
   inputSchema?: Record<string, any>
 }
 
+export interface McpIcon {
+  src: string
+  mimeType?: string
+  sizes?: string[]
+  theme?: 'light' | 'dark'
+}
+
 export interface McpServerInfo {
   name?: string
+  title?: string
   version?: string
+  description?: string
+  websiteUrl?: string
+  icons?: McpIcon[]
   protocolVersion?: string
+  supportedVersions?: string[]
 }
 
 export interface McpTestResult {
@@ -73,21 +71,8 @@ export interface McpTestResult {
   tools?: string[]
   toolDetails?: McpDiscoveredTool[]
   serverInfo?: McpServerInfo
+  supportedVersions?: string[]
   detectedTransport?: 'stdio' | 'streamable-http' | 'sse'
-  compatibility?: {
-    status:
-      | 'compatible'
-      | 'downgrade-supported'
-      | 'incompatible-2026-07-28'
-      | 'unknown'
-    canEnable: boolean
-    protocolVersion?: string
-    supportedVersions?: string[]
-    negotiatedVersion?: string
-    message: string
-    warning?: string
-    error?: string
-  }
   count?: number
 }
 
@@ -109,7 +94,7 @@ export type SessionSkillsMode = 'default' | 'workspace' | 'custom'
 
 export interface SessionSkillsConfig {
   mode: SessionSkillsMode
-  disabledSkills: string[] // Backward compatible: disabled for model invocation
+  disabledSkills?: string[] // Backwards-compatible alias for disabledModelSkills
   disabledModelSkills?: string[] // Explicitly disabled for model invocation
   disabledUserSkills?: string[] // Explicitly disabled for user /name invocation
   effectiveDisabledSkills?: string[] // Resolved effective disabled for model
@@ -127,7 +112,7 @@ export interface SkillItem {
   content?: string
   modelInvocable?: boolean
   userInvocable?: boolean
-  isRuntime?: boolean // true if provided by a runtime preset or dynamic provider
+  isRuntime?: boolean
 }
 
 export interface SessionSettingsConfig {

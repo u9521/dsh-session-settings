@@ -5,10 +5,6 @@ import type {
   SessionMcpConfig,
   SessionSkillsConfig,
 } from '../../types/index.ts'
-import {
-  getLocalSessionSettingsStore,
-  saveLocalSessionSettingsStore,
-} from '../../storage/index.ts'
 
 export interface UseSessionActionsProps {
   sessionId?: string
@@ -47,7 +43,6 @@ export function useSessionActions({
   mcpConfig,
   skillsConfig,
   defaultSettings,
-  workspaceSettings: _workspaceSettings,
   setModelConfig,
   setMcpConfig,
   setSkillsConfig,
@@ -93,9 +88,7 @@ export function useSessionActions({
     if (!targetSourceId) return
 
     if (sessionId && targetSourceId === sessionId) {
-      setCloneError(
-        t('sessionSettings.clone.cannotCloneSelf') || '不能复制自己的预设',
-      )
+      setCloneError(t('sessionSettings.clone.cannotCloneSelf'))
       return
     }
 
@@ -179,10 +172,7 @@ export function useSessionActions({
 
       const data = await res.json()
       if (res.ok && data?.ok) {
-        const freshStore = getLocalSessionSettingsStore()
         if (isSaveDefault) {
-          freshStore.default = payloadConfig
-          if (sessionId) delete freshStore.sessions[sessionId]
           setDefaultSettings(payloadConfig)
           setHasSessionOverride(false)
           setSaveSuccessMsg(t('sessionSettings.notice.savedDefault'))
@@ -196,16 +186,9 @@ export function useSessionActions({
             (payloadConfig.skills.mode === 'workspace' ||
               (!currentWorkspaceId && payloadConfig.skills.mode === 'default'))
 
-          if (isAllInherited) {
-            delete freshStore.sessions[sessionId]
-            setHasSessionOverride(false)
-          } else {
-            freshStore.sessions[sessionId] = payloadConfig
-            setHasSessionOverride(true)
-          }
+          setHasSessionOverride(!isAllInherited)
           setSaveSuccessMsg(t('sessionSettings.notice.saved'))
         }
-        saveLocalSessionSettingsStore(freshStore)
 
         if (onSave) {
           onSave(payloadConfig)
@@ -272,28 +255,22 @@ export function useSessionActions({
 
       const data = await res.json()
       if (res.ok && data?.ok) {
-        const freshStore = getLocalSessionSettingsStore()
         if (setDefaultTargetScope === 'workspace' && currentWorkspaceId) {
-          if (!freshStore.workspaces) freshStore.workspaces = {}
           if (isRestoringDefault) {
-            delete freshStore.workspaces[currentWorkspaceId]
             setWorkspaceSettings(undefined)
           } else {
-            freshStore.workspaces[currentWorkspaceId] = payloadConfig
             setWorkspaceSettings(payloadConfig)
           }
           setSaveSuccessMsg(
             t('sessionSettings.notice.savedWorkspace', {
               name: currentWorkspaceTitle || currentWorkspaceId,
-            }) || t('sessionSettings.notice.savedWorkspaceDefault'),
+            }),
           )
         } else {
-          freshStore.default = payloadConfig
           setDefaultSettings(payloadConfig)
           setSaveSuccessMsg(t('sessionSettings.notice.savedDefault'))
         }
 
-        saveLocalSessionSettingsStore(freshStore)
         setSetDefaultModalOpen(false)
         setIsRestoringDefault(false)
         if (onSave) onSave(payloadConfig)
@@ -325,10 +302,6 @@ export function useSessionActions({
       )
       const data = await res.json()
       if (res.ok && data?.ok) {
-        const freshStore = getLocalSessionSettingsStore()
-        delete freshStore.sessions[sessionId]
-        saveLocalSessionSettingsStore(freshStore)
-
         const defaultMode = currentWorkspaceId ? 'workspace' : 'default'
         setModelConfig({ mode: defaultMode })
         setMcpConfig({ mode: defaultMode, enabledServerIds: [] })
@@ -336,7 +309,7 @@ export function useSessionActions({
         setHasSessionOverride(false)
         setSaveSuccessMsg(t('sessionSettings.notice.saved'))
         if (onSave) {
-          onSave(data.effectiveConfig || freshStore.default)
+          onSave(data.effectiveConfig || defaultSettings)
         }
         setTimeout(() => setSaveSuccessMsg(''), 3000)
       }

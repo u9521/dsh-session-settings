@@ -1,16 +1,18 @@
 import * as React from 'react'
-import {
-  IconCodeOutline16,
-  IconLinkOutline16,
-  IconChecklistOutline14,
-} from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconChecklistOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {
   SessionMcpConfig,
   SessionMcpMode,
   GlobalMcpServerConfig,
   SessionSettingsConfig,
 } from '../../types/index.ts'
-import { ModeSelector, EmptyState, Badge } from '../../components/index.ts'
+import {
+  ModeSelector,
+  EmptyState,
+  Badge,
+  ServerIcon,
+} from '../../components/index.ts'
+import { formatProtocolTitle } from '../../utils/string.ts'
 
 const e = React.createElement
 
@@ -79,10 +81,16 @@ export function SessionMcpSection({
           badges: [
             workspaceSettings?.mcp?.mode === 'custom'
               ? {
-                  label: `工作区: ${(workspaceSettings?.mcp?.enabledServerIds || []).length}个启用`,
+                  label: t('sessionSettings.mcpMode.workspace.badgeCustom', {
+                    count: (workspaceSettings?.mcp?.enabledServerIds || [])
+                      .length,
+                  }),
                   variant: 'custom',
                 }
-              : { label: '继承全局', variant: 'inherit' },
+              : {
+                  label: t('sessionSettings.mcpMode.workspace.badgeInherit'),
+                  variant: 'inherit',
+                },
           ],
           desc: t('sessionSettings.mcpMode.workspace.desc'),
         },
@@ -91,7 +99,9 @@ export function SessionMcpSection({
           title: t('sessionSettings.mcpMode.default.title'),
           badges: [
             {
-              label: `${(defaultSettings?.mcp?.enabledServerIds || []).length} 个服务器`,
+              label: t('sessionSettings.mcpMode.default.badge', {
+                count: (defaultSettings?.mcp?.enabledServerIds || []).length,
+              }),
               variant: 'custom',
             },
           ],
@@ -193,16 +203,14 @@ export function SessionMcpSection({
                           ? `${server.serverInfo.name} ${server.serverInfo.version}`
                           : server.serverInfo.version,
                       variant: 'server-version',
-                      title: server.serverInfo.protocolVersion
-                        ? `MCP Protocol: ${server.serverInfo.protocolVersion}`
-                        : server.serverInfo.name || undefined,
+                      title: formatProtocolTitle(server.serverInfo),
                     })
                   : server.serverInfo?.protocolVersion
                     ? e(Badge, {
                         key: 'protocol-version',
                         label: `MCP ${server.serverInfo.protocolVersion}`,
                         variant: 'server-version',
-                        title: server.serverInfo.name || undefined,
+                        title: formatProtocolTitle(server.serverInfo),
                       })
                     : null,
                 isChecked
@@ -231,30 +239,6 @@ export function SessionMcpSection({
                       variant: 'timeout',
                     })
                   : null,
-                server.compatibility?.status === 'incompatible-2026-07-28' ||
-                server.compatibility?.canEnable === false
-                  ? e(Badge, {
-                      key: 'incompatible',
-                      label: t('compatibility.incompatibleBadge'),
-                      variant: 'incompatible',
-                      title:
-                        server.compatibility.warning ||
-                        t('compatibility.incompatibleDesc'),
-                    })
-                  : server.compatibility?.status === 'downgrade-supported'
-                    ? e(Badge, {
-                        key: 'downgrade',
-                        label: t('compatibility.downgradedBadge', {
-                          version:
-                            server.compatibility.negotiatedVersion ||
-                            '2025-11-25',
-                        }),
-                        variant: 'downgrade',
-                        title:
-                          server.compatibility.warning ||
-                          t('compatibility.downgradedDesc'),
-                      })
-                    : null,
               ].filter(Boolean)
 
               const handleSwitchClick = (evt: React.MouseEvent) => {
@@ -282,9 +266,7 @@ export function SessionMcpSection({
                     e(
                       'div',
                       { className: 'dsh-session-mcp-icon' },
-                      server.transport === 'stdio'
-                        ? e(IconCodeOutline16, { size: 16 })
-                        : e(IconLinkOutline16, { size: 16 }),
+                      e(ServerIcon, { server, size: 16 }),
                     ),
                     e(
                       'div',
@@ -343,11 +325,11 @@ export function SessionMcpSection({
                   : null,
 
                 // Description
-                server.description
+                server.description || server.serverInfo?.description
                   ? e(
                       'p',
                       { className: 'dsh-session-mcp-desc' },
-                      server.description,
+                      server.description || server.serverInfo?.description,
                     )
                   : null,
 
