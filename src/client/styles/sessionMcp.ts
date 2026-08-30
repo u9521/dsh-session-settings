@@ -40,15 +40,19 @@ export const SESSION_MCP_CSS = `
   background: var(--dsw-alias-bg-layer-2);
   border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 6px;
+  box-sizing: border-box;
   color: var(--dsw-alias-label-primary);
   cursor: pointer;
   display: inline-flex;
   font-size: 12px;
   font-weight: 500;
   gap: 6px;
-  line-height: 16px;
-  padding: 6px 12px;
+  height: 34px;
+  justify-content: center;
+  line-height: 1;
+  padding: 0 12px;
   transition: background-color 0.15s, border-color 0.15s, color 0.15s;
+  vertical-align: middle;
 }
 .dsh-mcp-text-btn:hover {
   background: var(--dsw-alias-bg-layer-3, var(--dsw-alias-bg-layer-1));
@@ -222,5 +226,39 @@ export const SESSION_MCP_CSS = `
   flex-direction: column;
   gap: 8px;
   margin-bottom: 6px;
+}
+.dsh-session-tools-mode-tabs {
+  background: var(--dsw-alias-bg-layer-1);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  display: flex;
+  gap: 4px;
+  margin-bottom: 14px;
+  padding: 3px;
+}
+.dsh-session-tools-mode-tab {
+  align-items: center;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+  display: flex;
+  flex: 1;
+  font-size: 13px;
+  font-weight: 500;
+  justify-content: center;
+  line-height: 18px;
+  padding: 6px 14px;
+  transition: background-color 0.15s, color 0.15s;
+}
+.dsh-session-tools-mode-tab:hover {
+  color: var(--dsw-alias-label-primary);
+}
+.dsh-session-tools-mode-tab.active {
+  background: var(--dsw-alias-bg-layer-2);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+  color: var(--dsw-alias-brand-primary, #1383fe);
+  font-weight: 600;
 }
 `

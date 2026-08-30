@@ -1,14 +1,7 @@
-import type {
-  GlobalMcpServerConfig,
-  McpDiscoveredTool,
-  McpServerInfo,
-  McpTestResult,
-  McpTransportType,
-  McpReconnectConfig,
-} from '../../types.ts'
+import type { ClientRemoteApi } from './session.ts'
 
 export interface McpSettingsProps {
-  api: any
+  api: ClientRemoteApi
   t: (key: string, vars?: Record<string, string | number>) => string
   close?: () => void
 }
@@ -18,7 +11,7 @@ export interface ToolParamItem {
   type: string
   required: boolean
   description?: string
-  default?: any
+  default?: unknown
   enum?: string[]
 }
 

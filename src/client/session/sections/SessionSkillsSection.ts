@@ -6,6 +6,7 @@ import {
 import type {
   SessionSkillsConfig,
   SessionSkillsMode,
+  SettingsMode,
   SkillItem,
   SessionSettingsConfig,
 } from '../../types/index.ts'
@@ -23,7 +24,7 @@ export interface SessionSkillsSectionProps {
   availableSkills: SkillItem[]
   currentWorkspaceId?: string
   workspaceSettings?: SessionSettingsConfig
-  defaultSettings?: SessionSettingsConfig
+  globalConfig?: SessionSettingsConfig
   skillsSearch: string
   refreshingSkills: boolean
   effectiveDisabledModelSet: Set<string>
@@ -40,7 +41,7 @@ export function SessionSkillsSection({
   availableSkills,
   currentWorkspaceId,
   workspaceSettings,
-  defaultSettings,
+  globalConfig,
   skillsSearch,
   refreshingSkills,
   effectiveDisabledModelSet,
@@ -59,6 +60,8 @@ export function SessionSkillsSection({
       (s.description || '').toLowerCase().includes(q)
     )
   })
+
+  const defaultMode = currentWorkspaceId ? 'workspace' : 'global'
 
   return e(
     'div',
@@ -81,8 +84,8 @@ export function SessionSkillsSection({
 
     e(ModeSelector, {
       name: 'sessionSkillsMode',
-      value: skillsConfig.mode,
-      onChange: onSkillsModeChange,
+      value: skillsConfig.mode ?? defaultMode,
+      onChange: (val) => onSkillsModeChange(val as SettingsMode),
       options: [
         {
           value: 'workspace',
@@ -93,9 +96,7 @@ export function SessionSkillsSection({
               ? {
                   label: t('sessionSettings.skillsMode.workspace.badgeCustom', {
                     count: (
-                      workspaceSettings?.skills?.disabledModelSkills ||
-                      workspaceSettings?.skills?.disabledSkills ||
-                      []
+                      workspaceSettings?.skills?.disabledModelSkills ?? []
                     ).length,
                   }),
                   variant: 'custom',
@@ -108,16 +109,12 @@ export function SessionSkillsSection({
           desc: t('sessionSettings.skillsMode.workspace.desc'),
         },
         {
-          value: 'default',
+          value: 'global',
           title: t('sessionSettings.skillsMode.default.title'),
           badges: [
             {
               label: t('sessionSettings.skillsMode.default.badge', {
-                count: (
-                  defaultSettings?.skills?.disabledModelSkills ||
-                  defaultSettings?.skills?.disabledSkills ||
-                  []
-                ).length,
+                count: (globalConfig?.skills?.disabledModelSkills ?? []).length,
               }),
               variant: 'custom',
             },
@@ -176,6 +173,7 @@ export function SessionSkillsSection({
                     skill,
                     isModelDisabled: effectiveDisabledModelSet.has(skill.name),
                     isUserDisabled: effectiveDisabledUserSet.has(skill.name),
+                    showStatusBadges: true,
                     onClick: () => onOpenSessionSkillModal(skill),
                     t,
                   }),

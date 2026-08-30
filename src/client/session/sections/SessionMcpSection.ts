@@ -3,6 +3,7 @@ import { IconChecklistOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {
   SessionMcpConfig,
   SessionMcpMode,
+  SettingsMode,
   GlobalMcpServerConfig,
   SessionSettingsConfig,
 } from '../../types/index.ts'
@@ -22,7 +23,7 @@ export interface SessionMcpSectionProps {
   availableMcpServers: GlobalMcpServerConfig[]
   currentWorkspaceId?: string
   workspaceSettings?: SessionSettingsConfig
-  defaultSettings: SessionSettingsConfig
+  globalConfig: SessionSettingsConfig
   onMcpModeChange: (mode: SessionMcpMode) => void
   onToggleMcpServer: (serverId: string) => void
   onToggleSelectAllMcp: () => void
@@ -36,7 +37,7 @@ export function SessionMcpSection({
   availableMcpServers,
   currentWorkspaceId,
   workspaceSettings,
-  defaultSettings,
+  globalConfig,
   onMcpModeChange,
   onToggleMcpServer,
   onToggleSelectAllMcp,
@@ -46,8 +47,10 @@ export function SessionMcpSection({
   const isAllMcpSelected =
     availableMcpServers.length > 0 &&
     availableMcpServers.every((s) =>
-      (mcpConfig.enabledServerIds || []).includes(s.id),
+      (mcpConfig.enabledServerIds ?? []).includes(s.id),
     )
+
+  const defaultMode = currentWorkspaceId ? 'workspace' : 'global'
 
   return e(
     'div',
@@ -71,8 +74,8 @@ export function SessionMcpSection({
     // Mode Selector
     e(ModeSelector, {
       name: 'sessionMcpMode',
-      value: mcpConfig.mode,
-      onChange: onMcpModeChange,
+      value: mcpConfig.mode ?? defaultMode,
+      onChange: (val) => onMcpModeChange(val as SettingsMode),
       options: [
         {
           value: 'workspace',
@@ -95,12 +98,12 @@ export function SessionMcpSection({
           desc: t('sessionSettings.mcpMode.workspace.desc'),
         },
         {
-          value: 'default',
+          value: 'global',
           title: t('sessionSettings.mcpMode.default.title'),
           badges: [
             {
               label: t('sessionSettings.mcpMode.default.badge', {
-                count: (defaultSettings?.mcp?.enabledServerIds || []).length,
+                count: (globalConfig?.mcp?.enabledServerIds || []).length,
               }),
               variant: 'custom',
             },
@@ -142,24 +145,22 @@ export function SessionMcpSection({
             'div',
             { className: 'dsh-session-mcp-list' },
             availableMcpServers.map((server) => {
+              const isGlobalCustom = Array.isArray(
+                globalConfig?.mcp?.enabledServerIds,
+              )
+              const globalActive = isGlobalCustom
+                ? (globalConfig.mcp.enabledServerIds ?? []).includes(server.id)
+                : Boolean(server.enabledByDefault)
+
               const isChecked =
                 mcpConfig.mode === 'custom' || !sessionId
-                  ? (mcpConfig.enabledServerIds || []).includes(server.id)
-                  : mcpConfig.mode === 'workspace'
-                    ? workspaceSettings?.mcp?.mode === 'custom'
-                      ? (workspaceSettings.mcp.enabledServerIds || []).includes(
-                          server.id,
-                        )
-                      : defaultSettings?.mcp?.mode === 'custom'
-                        ? (defaultSettings.mcp.enabledServerIds || []).includes(
-                            server.id,
-                          )
-                        : Boolean(server.enabledByDefault)
-                    : defaultSettings?.mcp?.mode === 'custom'
-                      ? (defaultSettings.mcp.enabledServerIds || []).includes(
-                          server.id,
-                        )
-                      : Boolean(server.enabledByDefault)
+                  ? (mcpConfig.enabledServerIds ?? []).includes(server.id)
+                  : mcpConfig.mode === 'workspace' &&
+                      workspaceSettings?.mcp?.mode === 'custom'
+                    ? (workspaceSettings.mcp.enabledServerIds ?? []).includes(
+                        server.id,
+                      )
+                    : globalActive
 
               const isReadonly = Boolean(
                 sessionId && mcpConfig.mode !== 'custom',
@@ -203,14 +204,14 @@ export function SessionMcpSection({
                           ? `${server.serverInfo.name} ${server.serverInfo.version}`
                           : server.serverInfo.version,
                       variant: 'server-version',
-                      title: formatProtocolTitle(server.serverInfo),
+                      title: formatProtocolTitle(server.serverInfo, t),
                     })
                   : server.serverInfo?.protocolVersion
                     ? e(Badge, {
                         key: 'protocol-version',
                         label: `MCP ${server.serverInfo.protocolVersion}`,
                         variant: 'server-version',
-                        title: formatProtocolTitle(server.serverInfo),
+                        title: formatProtocolTitle(server.serverInfo, t),
                       })
                     : null,
                 isChecked
@@ -235,7 +236,9 @@ export function SessionMcpSection({
                 server.toolCallTimeoutMs
                   ? e(Badge, {
                       key: 'timeout',
-                      label: `${server.toolCallTimeoutMs / 1000}s 超时`,
+                      label: t('sessionSettings.field.timeoutSeconds', {
+                        seconds: server.toolCallTimeoutMs / 1000,
+                      }),
                       variant: 'timeout',
                     })
                   : null,

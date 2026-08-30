@@ -6,6 +6,7 @@ import {
   IconBranchOutline16,
   IconLoadingOutline16,
 } from '@deepseek-ai/dsh-client-ui-primitives'
+import type { WorkspaceInfo } from '../../types/index.ts'
 
 const e = React.createElement
 
@@ -14,7 +15,7 @@ export interface HeaderBarProps {
   copiedId: boolean
   currentWorkspaceId?: string
   currentWorkspaceTitle?: string
-  currentWorkspace?: any
+  currentWorkspace?: WorkspaceInfo
   hasSessionOverride: boolean
   cloneSourceId: string
   cloning: boolean

@@ -19,10 +19,12 @@ export const SESSION_SKILLS_CSS = `
   border-radius: 6px;
   box-sizing: border-box;
   color: var(--dsw-alias-label-primary);
-  font-size: 12px;
-  line-height: 18px;
+  font: inherit;
+  font-size: 13px;
+  height: 32px;
+  line-height: 20px;
   outline: none;
-  padding: 6px 10px 6px 30px;
+  padding: 0 10px 0 32px;
   transition: border-color 0.15s;
   width: 100%;
 }
@@ -76,13 +78,6 @@ export const SESSION_SKILLS_CSS = `
   max-height: 88vh;
   max-width: 720px;
   width: 90vw;
-}
-.dsh-skill-modal-header-meta {
-  align-items: center;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 4px;
 }
 .dsh-skill-modal-body {
   display: flex;

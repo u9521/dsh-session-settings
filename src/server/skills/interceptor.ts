@@ -1,7 +1,22 @@
 import type { Context } from '@deepseek-ai/cordis'
-import type { SessionSettingsStore } from '../../types.ts'
+import type {
+  Agent,
+  PreToolDecision,
+  SessionSettingsStore,
+  SkillsService,
+  SkillSummary,
+  SkillViewOptions,
+  ToolExecution,
+} from '../../types.ts'
 import { resolveEffectiveSkills } from '../session/storage.ts'
-import { resolveWorkspaceForSession } from '../session/routes.ts'
+import {
+  resolveAgentSessionId,
+  resolveWorkspaceForSession,
+} from '../session/resolution.ts'
+
+interface DecoratedSkillsService extends SkillsService {
+  __sessionSettingsDecorated?: boolean
+}
 
 export function registerSkillsInterceptors(
   ctx: Context,
@@ -11,23 +26,22 @@ export function registerSkillsInterceptors(
   // dynamically reflect the session's invocable policies.
   // This allows official dsh-tool-skill to compute consistent digests natively
   // without entering an infinite catalog-update loop.
+  let cleanupDecorate: (() => void) | null = null
   const decorateSkillRegistry = () => {
-    const skillsService = ctx.get('skills' as any) as any
+    const skillsService = ctx.get('skills') as
+      DecoratedSkillsService | undefined
     if (skillsService && !skillsService.__sessionSettingsDecorated) {
       skillsService.__sessionSettingsDecorated = true
 
       const origSnapshot = skillsService.snapshot.bind(skillsService)
-      skillsService.snapshot = async function (options: any = {}) {
+      skillsService.snapshot = async function (options: SkillViewOptions = {}) {
         const snapshot = await origSnapshot(options)
         if (!snapshot || !Array.isArray(snapshot.skills)) return snapshot
 
-        const sessionId =
-          options?.scope?.session?.id ||
-          options?.scope?.session?.header?.parentSession ||
-          options?.scope?.id
-        const workspaceId =
-          options?.scope?.session?.header?.workspaceId ||
-          resolveWorkspaceForSession(ctx, sessionId)
+        const sessionId = resolveAgentSessionId(
+          options?.scope as Agent | undefined,
+        )
+        const workspaceId = await resolveWorkspaceForSession(ctx, sessionId)
 
         const sessionSettingsStore = getSessionSettingsStore()
         const effectiveSkills = resolveEffectiveSkills(
@@ -36,9 +50,7 @@ export function registerSkillsInterceptors(
           workspaceId,
         )
         const disabledModelSet = new Set(
-          effectiveSkills.effectiveDisabledModelSkills ||
-            effectiveSkills.effectiveDisabledSkills ||
-            [],
+          effectiveSkills.effectiveDisabledModelSkills || [],
         )
         const disabledUserSet = new Set(
           effectiveSkills.effectiveDisabledUserSkills || [],
@@ -50,7 +62,7 @@ export function registerSkillsInterceptors(
 
         return {
           ...snapshot,
-          skills: snapshot.skills.map((skill: any) => {
+          skills: snapshot.skills.map((skill: SkillSummary) => {
             const isModelDis = disabledModelSet.has(skill.name)
             const isUserDis = disabledUserSet.has(skill.name)
             if (!isModelDis && !isUserDis) return skill
@@ -71,17 +83,17 @@ export function registerSkillsInterceptors(
       }
 
       const origGet = skillsService.get.bind(skillsService)
-      skillsService.get = async function (name: string, options: any = {}) {
+      skillsService.get = async function (
+        name: string,
+        options: SkillViewOptions = {},
+      ) {
         const definition = await origGet(name, options)
         if (!definition) return definition
 
-        const sessionId =
-          options?.scope?.session?.id ||
-          options?.scope?.session?.header?.parentSession ||
-          options?.scope?.id
-        const workspaceId =
-          options?.scope?.session?.header?.workspaceId ||
-          resolveWorkspaceForSession(ctx, sessionId)
+        const sessionId = resolveAgentSessionId(
+          options?.scope as Agent | undefined,
+        )
+        const workspaceId = await resolveWorkspaceForSession(ctx, sessionId)
 
         const sessionSettingsStore = getSessionSettingsStore()
         const effectiveSkills = resolveEffectiveSkills(
@@ -90,9 +102,7 @@ export function registerSkillsInterceptors(
           workspaceId,
         )
         const disabledModelSet = new Set(
-          effectiveSkills.effectiveDisabledModelSkills ||
-            effectiveSkills.effectiveDisabledSkills ||
-            [],
+          effectiveSkills.effectiveDisabledModelSkills || [],
         )
         const disabledUserSet = new Set(
           effectiveSkills.effectiveDisabledUserSkills || [],
@@ -117,49 +127,57 @@ export function registerSkillsInterceptors(
 
         return definition
       }
+
+      cleanupDecorate = () => {
+        if (skillsService.__sessionSettingsDecorated) {
+          skillsService.snapshot = origSnapshot
+          skillsService.get = origGet
+          delete skillsService.__sessionSettingsDecorated
+        }
+      }
     }
   }
 
-  decorateSkillRegistry()
-  ctx.on('skills/change' as any, () => {
+  ctx.effect(() => {
+    decorateSkillRegistry()
+    return () => {
+      cleanupDecorate?.()
+    }
+  }, 'session-settings: skill-registry decoration')
+
+  ctx.on('skills/change', () => {
     decorateSkillRegistry()
   })
 
   // 2. Pre-execution guard: deny any execution attempt of disabled skills
-  ;(ctx as any).on('tools/pre-execute', async (exec: any, next: any) => {
-    const toolName = exec?.name
-    if (
-      toolName === 'skill' &&
-      exec?.args &&
-      typeof exec.args.name === 'string'
-    ) {
-      const targetSkillName = exec.args.name.trim()
-      const sessionId =
-        exec?.agent?.session?.id ||
-        exec?.agent?.session?.header?.parentSession ||
-        exec?.agent?.id
-      const workspaceId =
-        exec?.agent?.session?.header?.workspaceId ||
-        resolveWorkspaceForSession(ctx, sessionId)
+  ctx.on(
+    'tools/pre-execute',
+    async (exec: ToolExecution, next: () => Promise<PreToolDecision>) => {
+      const toolName = exec?.name
+      const args = (exec?.arguments ?? (exec as { args?: unknown }).args) as
+        { name?: unknown } | undefined
+      if (toolName === 'skill' && args && typeof args.name === 'string') {
+        const targetSkillName = args.name.trim()
+        const sessionId = resolveAgentSessionId(exec?.agent)
+        const workspaceId = await resolveWorkspaceForSession(ctx, sessionId)
 
-      const sessionSettingsStore = getSessionSettingsStore()
-      const effectiveSkills = resolveEffectiveSkills(
-        sessionSettingsStore,
-        sessionId,
-        workspaceId,
-      )
-      const disabledModelSkills =
-        effectiveSkills.effectiveDisabledModelSkills ||
-        effectiveSkills.effectiveDisabledSkills ||
-        []
+        const sessionSettingsStore = getSessionSettingsStore()
+        const effectiveSkills = resolveEffectiveSkills(
+          sessionSettingsStore,
+          sessionId,
+          workspaceId,
+        )
+        const disabledModelSkills =
+          effectiveSkills.effectiveDisabledModelSkills || []
 
-      if (disabledModelSkills.includes(targetSkillName)) {
-        return {
-          kind: 'deny',
-          reason: `skill "${targetSkillName}" is disabled for model invocation in this session`,
+        if (disabledModelSkills.includes(targetSkillName)) {
+          return {
+            kind: 'deny',
+            reason: `skill "${targetSkillName}" is disabled for model invocation in this session`,
+          }
         }
       }
-    }
-    return next()
-  })
+      return next()
+    },
+  )
 }

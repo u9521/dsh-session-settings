@@ -12,6 +12,7 @@ import {
   ModalDialog,
   SchemaViewer,
   ServerIcon,
+  SearchToolbar,
 } from '../../components/index.ts'
 import { formatProtocolTitle } from '../../utils/string.ts'
 
@@ -97,7 +98,7 @@ export function McpToolsModal({
     e(
       'span',
       {
-        className: `dsh-mcp-proto-badge ${server.transport || 'streamable-http-or-sse'}`,
+        className: `dsh-mcp-proto-badge ${server.transport === 'stdio' ? 'stdio' : (detectedTransport ?? server.transport ?? 'streamable-http-or-sse')}`,
       },
       server.transport === 'stdio'
         ? 'STDIO'
@@ -118,7 +119,7 @@ export function McpToolsModal({
             className: 'dsh-mcp-proto-badge website',
             title: effectiveInfo.websiteUrl,
           },
-          '🔗 ' + t('table.website'),
+          '🔗 ' + t('mcpServers.table.website'),
         )
       : null,
     effectiveInfo?.version
@@ -126,7 +127,7 @@ export function McpToolsModal({
           'span',
           {
             className: 'dsh-mcp-proto-badge server-version',
-            title: formatProtocolTitle(effectiveInfo),
+            title: formatProtocolTitle(effectiveInfo, t),
           },
           effectiveInfo.name &&
             effectiveInfo.name !== server.id &&
@@ -139,7 +140,7 @@ export function McpToolsModal({
             'span',
             {
               className: 'dsh-mcp-proto-badge server-version',
-              title: formatProtocolTitle(effectiveInfo),
+              title: formatProtocolTitle(effectiveInfo, t),
             },
             `MCP ${effectiveInfo.protocolVersion}`,
           )
@@ -151,7 +152,7 @@ export function McpToolsModal({
     {
       open: Boolean(server),
       onClose,
-      title: t('toolsModal.title'),
+      title: t('mcpServers.toolsModal.title'),
       headerExtra: headerMeta,
       panelClassName: 'dsh-mcp-tools-modal',
       footer: [
@@ -166,7 +167,10 @@ export function McpToolsModal({
                 color: 'var(--dsw-alias-label-secondary)',
               },
             },
-            `已启用 ${toolsList.length - disabledToolsSet.size} / ${toolsList.length}`,
+            t('sessionSettings.mcp.toolsEnabledCount', {
+              enabled: toolsList.length - disabledToolsSet.size,
+              total: toolsList.length,
+            }),
           ),
         ),
         e(
@@ -176,10 +180,10 @@ export function McpToolsModal({
             'button',
             {
               type: 'button',
-              className: 'dsh-sam-btn tertiary',
+              className: 'dsh-sam-btn secondary',
               onClick: onClose,
             },
-            t('actions.cancel'),
+            t('mcpServers.actions.cancel'),
           ),
           e(
             'button',
@@ -189,66 +193,60 @@ export function McpToolsModal({
               disabled: saving,
               onClick: onSave,
             },
-            saving ? t('toolsModal.saving') : t('toolsModal.save'),
+            saving
+              ? t('mcpServers.toolsModal.saving')
+              : t('mcpServers.toolsModal.save'),
           ),
         ),
       ],
     },
     // Toolbar
-    e(
-      'div',
-      { className: 'dsh-mcp-tools-toolbar' },
-      e(
-        'div',
-        { className: 'dsh-mcp-tools-search-box' },
-        e('input', {
-          type: 'text',
-          className: 'dsh-sam-select',
-          placeholder: t('toolsModal.searchPlaceholder'),
-          value: search,
-          onChange: (evt: React.ChangeEvent<HTMLInputElement>) =>
-            setSearch(evt.target.value),
-        }),
-      ),
-      e(
-        'div',
-        { className: 'dsh-mcp-tools-toolbar-actions' },
+    e(SearchToolbar, {
+      value: search,
+      onChange: setSearch,
+      placeholder: t('mcpServers.toolsModal.searchPlaceholder'),
+      actions: [
         e(
           'button',
           {
+            key: 'enableAll',
             type: 'button',
             className: 'dsh-sam-btn secondary',
             disabled: loading || toolsList.length === 0,
             onClick: () => onToggleAllTools(true),
           },
-          t('toolsModal.enableAll'),
+          t('mcpServers.toolsModal.enableAll'),
         ),
         e(
           'button',
           {
+            key: 'disableAll',
             type: 'button',
             className: 'dsh-sam-btn secondary',
             disabled: loading || toolsList.length === 0,
             onClick: () => onToggleAllTools(false),
           },
-          t('toolsModal.disableAll'),
+          t('mcpServers.toolsModal.disableAll'),
         ),
         e(
           'button',
           {
+            key: 'retry',
             type: 'button',
             className: 'dsh-sam-btn secondary',
             disabled: loading,
             onClick: onRefresh,
-            title: t('toolsModal.retry'),
+            title: t('mcpServers.toolsModal.retry'),
           },
           loading
             ? e(IconLoadingOutline16, { size: 14, className: 'dsh-spin' })
             : e(IconRefreshOutline16, { size: 14 }),
-          loading ? t('actions.toolsFetching') : t('toolsModal.retry'),
+          loading
+            ? t('mcpServers.actions.toolsFetching')
+            : t('mcpServers.toolsModal.retry'),
         ),
-      ),
-    ),
+      ],
+    }),
     // Tools list / States
     loading
       ? e(
@@ -264,7 +262,7 @@ export function McpToolsModal({
             },
           },
           e(IconLoadingOutline16, { size: 16, className: 'dsh-spin' }),
-          t('toolsModal.loading'),
+          t('mcpServers.toolsModal.loading'),
         )
       : error
         ? e(
@@ -273,7 +271,7 @@ export function McpToolsModal({
               className: 'dsh-sam-notice error',
               style: { margin: '14px 0' },
             },
-            t('toolsModal.fetchFailed') + error,
+            t('mcpServers.toolsModal.fetchFailed') + error,
           )
         : toolsList.length === 0
           ? e(
@@ -282,7 +280,7 @@ export function McpToolsModal({
                 className: 'dsh-sam-desc',
                 style: { padding: '32px 0', textAlign: 'center' },
               },
-              t('toolsModal.serverNoTools'),
+              t('mcpServers.toolsModal.serverNoTools'),
             )
           : filteredTools.length === 0
             ? e(
@@ -291,7 +289,7 @@ export function McpToolsModal({
                   className: 'dsh-sam-desc',
                   style: { padding: '32px 0', textAlign: 'center' },
                 },
-                t('toolsModal.empty'),
+                t('mcpServers.toolsModal.empty'),
               )
             : e(
                 'div',
@@ -329,8 +327,8 @@ export function McpToolsModal({
                               }
                             },
                             title: !isDisabled
-                              ? t('toolsModal.statusEnabled')
-                              : t('toolsModal.statusDisabled'),
+                              ? t('mcpServers.toolsModal.statusEnabled')
+                              : t('mcpServers.toolsModal.statusDisabled'),
                           },
                           e('span', { className: 'dsh-mcp-switch-thumb' }),
                         ),
@@ -351,8 +349,8 @@ export function McpToolsModal({
                                 className: `dsh-mcp-tool-status-pill ${!isDisabled ? 'active' : 'disabled'}`,
                               },
                               !isDisabled
-                                ? t('toolsModal.statusEnabled')
-                                : t('toolsModal.statusDisabled'),
+                                ? t('mcpServers.toolsModal.statusEnabled')
+                                : t('mcpServers.toolsModal.statusDisabled'),
                             ),
                           ),
                           tool.description
@@ -373,8 +371,8 @@ export function McpToolsModal({
                               onClick: () => handleToggleSchema(tool.name),
                             },
                             isSchemaExpanded
-                              ? t('toolsModal.hideParameters')
-                              : t('toolsModal.parameters'),
+                              ? t('mcpServers.toolsModal.hideParameters')
+                              : t('mcpServers.toolsModal.parameters'),
                           )
                         : null,
                     ),

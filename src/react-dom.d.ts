@@ -13,6 +13,9 @@ declare module 'react-dom/client' {
   }
   export function createRoot(
     container: Element | DocumentFragment,
-    options?: any,
+    options?: {
+      identifierPrefix?: string
+      onRecoverableError?: (error: unknown) => void
+    },
   ): Root
 }

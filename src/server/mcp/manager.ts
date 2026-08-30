@@ -1,4 +1,4 @@
-import type { Context } from '@deepseek-ai/cordis'
+import type { Context, Fiber, Plugin } from '@deepseek-ai/cordis'
 import type {
   GlobalMcpServerConfig,
   McpServerStore,
@@ -11,35 +11,44 @@ export interface ToolMeta {
   rawName: string
 }
 
-let cachedOfficialPlugin: any = null
+let cachedOfficialPlugin: Plugin | null = null
 let officialPluginChecked = false
+
+interface LoaderServiceWithImport {
+  import?: (name: string) => Promise<unknown>
+  unwrapExports?: (exports: unknown) => unknown
+}
 
 /**
  * Resolve the official @deepseek-ai/dsh-mcp-client Cordis plugin module directly via ctx.loader.
  */
-export async function loadOfficialMcpClientPlugin(ctx: Context): Promise<any> {
+async function loadOfficialMcpClientPlugin(
+  ctx: Context,
+): Promise<Plugin | null> {
   if (officialPluginChecked) return cachedOfficialPlugin
   officialPluginChecked = true
 
-  const loader = ctx.get('loader' as any) as any
+  const loader = ctx.get('loader') as LoaderServiceWithImport | undefined
   if (loader && typeof loader.import === 'function') {
     try {
       const raw = await loader.import('@deepseek-ai/dsh-mcp-client')
-      const mod = loader.unwrapExports
-        ? loader.unwrapExports(raw)
-        : (raw?.default ?? raw)
+      const mod = (
+        loader.unwrapExports
+          ? loader.unwrapExports(raw)
+          : ((raw as { default?: unknown })?.default ?? raw)
+      ) as Plugin | null
       if (
         mod &&
-        (typeof mod.apply === 'function' ||
-          typeof mod.default?.apply === 'function')
+        (typeof mod === 'function' ||
+          typeof (mod as { apply?: unknown }).apply === 'function')
       ) {
         cachedOfficialPlugin = mod
         return mod
       }
-    } catch (err) {
+    } catch (err: unknown) {
       console.warn(
         '[session-settings] Failed to load @deepseek-ai/dsh-mcp-client via ctx.loader:',
-        err,
+        err instanceof Error ? err.message : String(err),
       )
     }
   }
@@ -50,11 +59,10 @@ export async function loadOfficialMcpClientPlugin(ctx: Context): Promise<any> {
 export class McpManager {
   private ctx: Context
   private getMcpStore: () => McpServerStore
-  private setMcpStore: (store: McpServerStore) => void
   private getSessionSettingsStore?: () => SessionSettingsStore
 
   /** Map of serverId -> active Cordis Plugin Fork instance of @deepseek-ai/dsh-mcp-client */
-  private officialForks = new Map<string, any>()
+  private officialForks = new Map<string, Fiber>()
 
   /** Map of publicToolName -> { serverId, rawName } metadata */
   private toolMeta = new Map<string, ToolMeta>()
@@ -68,12 +76,10 @@ export class McpManager {
   constructor(
     ctx: Context,
     getMcpStore: () => McpServerStore,
-    setMcpStore: (store: McpServerStore) => void,
     getSessionSettingsStore?: () => SessionSettingsStore,
   ) {
     this.ctx = ctx
     this.getMcpStore = getMcpStore
-    this.setMcpStore = setMcpStore
     this.getSessionSettingsStore = getSessionSettingsStore
   }
 
@@ -92,10 +98,22 @@ export class McpManager {
     const sessionSettingsStore = this.getSessionSettingsStore?.()
     if (sessionSettingsStore) {
       if (
-        sessionSettingsStore.default?.mcp?.mode === 'custom' &&
-        sessionSettingsStore.default.mcp.enabledServerIds?.includes(serverId)
+        sessionSettingsStore.globalConfig?.mcp?.enabledServerIds?.includes(
+          serverId,
+        )
       ) {
         return true
+      }
+
+      if (sessionSettingsStore.workspaces) {
+        for (const wsConfig of Object.values(sessionSettingsStore.workspaces)) {
+          if (
+            wsConfig?.mcp?.mode === 'custom' &&
+            wsConfig.mcp.enabledServerIds?.includes(serverId)
+          ) {
+            return true
+          }
+        }
       }
 
       if (sessionSettingsStore.sessions) {
@@ -134,20 +152,20 @@ export class McpManager {
    */
   public async mountOfficialClient(
     server: GlobalMcpServerConfig,
-    officialPlugin: any,
+    officialPlugin: Plugin,
   ): Promise<boolean> {
     this.unmountOfficialClient(server.id)
 
     const officialConfig = {
       serverName: server.id,
       transport: server.transport === 'stdio' ? 'stdio' : 'streamable-http',
-      command: server.command || '',
-      args: server.args || [],
-      env: server.env || {},
-      cwd: server.cwd || '',
-      url: server.url || '',
-      headers: server.headers || {},
-      toolCallTimeoutMs: server.toolCallTimeoutMs || 60000,
+      command: server.command ?? '',
+      args: server.args ?? [],
+      env: server.env ?? {},
+      cwd: server.cwd ?? '',
+      url: server.url ?? '',
+      headers: server.headers ?? {},
+      toolCallTimeoutMs: server.toolCallTimeoutMs ?? 60000,
       failOnStartupError: Boolean(server.failOnStartupError),
       reconnect: {
         enabled: server.reconnect?.enabled ?? true,
@@ -173,10 +191,10 @@ export class McpManager {
       }
 
       return true
-    } catch (err) {
+    } catch (err: unknown) {
       console.warn(
         `[session-settings] Failed to mount official mcp-client for "${server.id}":`,
-        err,
+        err instanceof Error ? err.message : String(err),
       )
       return false
     }
@@ -201,13 +219,6 @@ export class McpManager {
       }
       this.serverToolMap.delete(serverId)
     }
-  }
-
-  /**
-   * Unregister / unmount a specific server.
-   */
-  public unregisterServer(serverId: string): void {
-    this.unmountOfficialClient(serverId)
   }
 
   /**
@@ -240,10 +251,10 @@ export class McpManager {
             '[session-settings] Official @deepseek-ai/dsh-mcp-client plugin not found in DSH environment.',
           )
         }
-      } catch (err) {
+      } catch (err: unknown) {
         console.warn(
           `[session-settings] Sync failed for MCP server "${server.name || server.id}":`,
-          err,
+          err instanceof Error ? err.message : String(err),
         )
       } finally {
         this.activeSyncs.delete(server.id)

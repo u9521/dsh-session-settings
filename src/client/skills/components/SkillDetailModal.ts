@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { IconSkillOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconLoadingOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SkillItem } from '../../types/index.ts'
 import { ModalDialog, Badge } from '../../components/index.ts'
 import { getSkillSourceMeta } from '../../utils/index.ts'
@@ -12,8 +12,13 @@ export interface SkillDetailModalProps {
   isModelDisabled: boolean
   isUserDisabled: boolean
   loadingContent: boolean
-  onToggleModelInvocable: (name: string) => void
-  onToggleUserInvocable: (name: string) => void
+  isSessionContext?: boolean
+  saving?: boolean
+  onSave?: (
+    name: string,
+    modelDisabled: boolean,
+    userDisabled: boolean,
+  ) => void | Promise<void>
   onClose: () => void
   t: (key: string, vars?: Record<string, string | number>) => string
 }
@@ -24,23 +29,85 @@ export function SkillDetailModal({
   isModelDisabled,
   isUserDisabled,
   loadingContent,
-  onToggleModelInvocable,
-  onToggleUserInvocable,
+  isSessionContext = false,
+  saving = false,
+  onSave,
   onClose,
   t,
 }: SkillDetailModalProps) {
+  const [localModelDisabled, setLocalModelDisabled] =
+    React.useState<boolean>(isModelDisabled)
+  const [localUserDisabled, setLocalUserDisabled] =
+    React.useState<boolean>(isUserDisabled)
+
+  React.useEffect(() => {
+    setLocalModelDisabled(isModelDisabled)
+    setLocalUserDisabled(isUserDisabled)
+  }, [skill?.name, isModelDisabled, isUserDisabled])
+
   if (!skill || !detail) return null
 
   const isRuntime = Boolean(skill.isRuntime)
+  const canToggle = !isRuntime || isSessionContext
   const { sourceClass, sourceLabel } = getSkillSourceMeta(skill, t)
+
+  const handleSave = () => {
+    if (onSave) {
+      onSave(skill.name, localModelDisabled, localUserDisabled)
+    } else {
+      onClose()
+    }
+  }
+
+  const footerButtons = canToggle
+    ? [
+        e(
+          'button',
+          {
+            key: 'cancel',
+            type: 'button',
+            className: 'dsh-sam-btn secondary',
+            disabled: saving,
+            onClick: onClose,
+          },
+          t('sessionSettings.skills.modalCancelBtn'),
+        ),
+        e(
+          'button',
+          {
+            key: 'save',
+            type: 'button',
+            className: 'dsh-sam-btn primary',
+            disabled: saving,
+            onClick: handleSave,
+          },
+          saving
+            ? e(IconLoadingOutline16, { size: 12, className: 'dsh-spin' })
+            : null,
+          saving
+            ? t('sessionSettings.skills.modalSavingBtn')
+            : t('sessionSettings.skills.modalSaveBtn'),
+        ),
+      ]
+    : [
+        e(
+          'button',
+          {
+            key: 'close',
+            type: 'button',
+            className: 'dsh-sam-btn primary',
+            onClick: onClose,
+          },
+          t('sessionSettings.skills.modalDoneBtn'),
+        ),
+      ]
 
   return e(
     ModalDialog,
     {
-      open: Boolean(skill && detail),
+      open: true,
       onClose,
       title: skill.name,
-      icon: e(IconSkillOutline16, { size: 18 }),
       panelClassName: 'dsh-sam-modal-panel dsh-skill-modal',
       headerExtra: [
         e(Badge, {
@@ -48,38 +115,36 @@ export function SkillDetailModal({
           label: sourceLabel,
           variant: sourceClass,
         }),
-        !isRuntime
+        canToggle
           ? e(Badge, {
               key: 'model',
-              label: !isModelDisabled
+              label: !localModelDisabled
                 ? t('sessionSettings.skills.modelInvocableEnabled')
                 : t('sessionSettings.skills.modelInvocableDisabled'),
-              variant: !isModelDisabled ? 'status-enabled' : 'status-disabled',
+              variant: !localModelDisabled
+                ? 'status-enabled'
+                : 'status-disabled',
             })
           : null,
-        !isRuntime
+        canToggle
           ? e(Badge, {
               key: 'user',
-              label: !isUserDisabled
+              label: !localUserDisabled
                 ? t('sessionSettings.skills.userInvocableEnabled')
                 : t('sessionSettings.skills.userInvocableDisabled'),
-              variant: !isUserDisabled ? 'status-enabled' : 'status-disabled',
+              variant: !localUserDisabled
+                ? 'status-enabled'
+                : 'status-disabled',
             })
           : null,
       ].filter(Boolean),
-      footer: e(
-        'div',
-        { className: 'dsh-mcp-modal-footer-right' },
+      footer: [
         e(
-          'button',
-          {
-            type: 'button',
-            className: 'dsh-sam-btn primary',
-            onClick: onClose,
-          },
-          t('sessionSettings.skills.modalDoneBtn'),
+          'div',
+          { key: 'right', className: 'dsh-mcp-modal-footer-right' },
+          footerButtons,
         ),
-      ),
+      ],
     },
     e(
       'div',
@@ -90,8 +155,8 @@ export function SkillDetailModal({
         ? e('p', { className: 'dsh-skill-modal-desc' }, skill.description)
         : null,
 
-      // Runtime Note
-      isRuntime
+      // Runtime Note (shown in global settings)
+      isRuntime && !isSessionContext
         ? e(
             'div',
             { className: 'dsh-skill-runtime-note' },
@@ -134,7 +199,7 @@ export function SkillDetailModal({
           { className: 'dsh-skill-modal-section-title' },
           t('sessionSettings.skills.rulesSectionTitle'),
         ),
-        !isRuntime
+        canToggle
           ? e(
               'div',
               {
@@ -148,8 +213,8 @@ export function SkillDetailModal({
               e(
                 'div',
                 {
-                  className: `dsh-mcp-switch-card mini ${!isModelDisabled ? 'active' : ''}`,
-                  onClick: () => onToggleModelInvocable(skill.name),
+                  className: `dsh-mcp-switch-card mini ${!localModelDisabled ? 'active' : ''}`,
+                  onClick: () => setLocalModelDisabled((prev) => !prev),
                   style: { cursor: 'pointer' },
                 },
                 e(
@@ -169,7 +234,7 @@ export function SkillDetailModal({
                 e(
                   'div',
                   {
-                    className: `dsh-mcp-switch-btn ${!isModelDisabled ? 'active' : ''}`,
+                    className: `dsh-mcp-switch-btn ${!localModelDisabled ? 'active' : ''}`,
                   },
                   e('span', { className: 'dsh-mcp-switch-thumb' }),
                 ),
@@ -178,8 +243,8 @@ export function SkillDetailModal({
               e(
                 'div',
                 {
-                  className: `dsh-mcp-switch-card mini ${!isUserDisabled ? 'active' : ''}`,
-                  onClick: () => onToggleUserInvocable(skill.name),
+                  className: `dsh-mcp-switch-card mini ${!localUserDisabled ? 'active' : ''}`,
+                  onClick: () => setLocalUserDisabled((prev) => !prev),
                   style: { cursor: 'pointer' },
                 },
                 e(
@@ -199,7 +264,7 @@ export function SkillDetailModal({
                 e(
                   'div',
                   {
-                    className: `dsh-mcp-switch-btn ${!isUserDisabled ? 'active' : ''}`,
+                    className: `dsh-mcp-switch-btn ${!localUserDisabled ? 'active' : ''}`,
                   },
                   e('span', { className: 'dsh-mcp-switch-thumb' }),
                 ),

@@ -2,15 +2,38 @@ import * as React from 'react'
 import { createPortal } from 'react-dom'
 import { IconSettingsOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { SessionSettingsViewPage } from '../session/index.ts'
-import { LOCALE_NS } from '../types/index.ts'
+import {
+  LOCALE_NS,
+  API_ENDPOINTS,
+  type ClientRemoteApi,
+  type SessionsState,
+  type WorkspacesState,
+  type WorkspaceInfo,
+  type SessionSettingsConfig,
+} from '../types/index.ts'
+import { isSessionCustomized } from '../utils/config.ts'
 
 const e = React.createElement
 
 export interface SessionSettingsHeroChipProps {
-  api: any
-  locale?: any
-  sessions?: any
-  workspaces?: any
+  api: ClientRemoteApi
+  locale?: {
+    bind?: (
+      ns: string,
+    ) => (key: string, vars?: Record<string, string | number>) => string
+  }
+  sessions?: {
+    list?: {
+      subscribe: (cb: () => void) => () => void
+      getSnapshot: () => SessionsState
+    }
+  }
+  workspaces?: {
+    list?: {
+      subscribe: (cb: () => void) => () => void
+      getSnapshot: () => WorkspacesState
+    }
+  }
 }
 
 export function SessionSettingsHeroChip({
@@ -22,26 +45,13 @@ export function SessionSettingsHeroChip({
   const [modalOpen, setModalOpen] = React.useState<boolean>(false)
   const [hasOverride, setHasOverride] = React.useState<boolean>(false)
 
-  const translator = React.useMemo(
+  const t = React.useMemo(
     () => (locale?.bind ? locale.bind(LOCALE_NS) : (k: string) => k),
     [locale],
   )
 
-  const t = React.useCallback(
-    (key: string, vars?: Record<string, string | number>) => {
-      let res = translator(key, vars)
-      if (res && res !== key) return res
-      if (!key.startsWith('sessionSettings.')) {
-        res = translator(`sessionSettings.${key}`, vars)
-        if (res && res !== `sessionSettings.${key}`) return res
-      }
-      return res || key
-    },
-    [translator],
-  )
-
   // Subscribe to sessions list state to reactively track current session
-  const sessionsState = React.useSyncExternalStore(
+  const sessionsState = React.useSyncExternalStore<SessionsState>(
     sessions?.list?.subscribe
       ? sessions.list.subscribe.bind(sessions.list)
       : () => () => {},
@@ -51,7 +61,7 @@ export function SessionSettingsHeroChip({
   )
 
   // Subscribe to workspaces list state to reactively track workspace
-  const workspacesState = React.useSyncExternalStore(
+  const workspacesState = React.useSyncExternalStore<WorkspacesState>(
     workspaces?.list?.subscribe
       ? workspaces.list.subscribe.bind(workspaces.list)
       : () => () => {},
@@ -60,25 +70,37 @@ export function SessionSettingsHeroChip({
       : () => ({ items: [], recentWorkspaceId: undefined }),
   )
 
-  const currentSessionId = (sessionsState as any)?.current
+  const currentSessionId = sessionsState?.current
+  const currentSession =
+    currentSessionId && sessionsState?.byId
+      ? sessionsState.byId[currentSessionId]
+      : currentSessionId && Array.isArray(sessionsState?.items)
+        ? sessionsState.items.find((s) => s?.id === currentSessionId)
+        : undefined
 
-  const workspaceItems = Array.isArray((workspacesState as any)?.items)
-    ? (workspacesState as any).items
+  const workspaceItems: WorkspaceInfo[] = Array.isArray(workspacesState?.items)
+    ? workspacesState.items
     : []
   const currentWorkspace =
     workspaceItems.find(
-      (w: any) =>
+      (w) =>
         (currentSessionId &&
-          w.sessionIds &&
-          Array.isArray(w.sessionIds) &&
+          Array.isArray(w?.sessionIds) &&
           w.sessionIds.includes(currentSessionId)) ||
-        w.isCurrent ||
-        w.active,
-    ) || workspaceItems[0]
+        (currentSession?.cwd &&
+          (w?.path === currentSession.cwd || w?.cwd === currentSession.cwd)),
+    ) ??
+    (!currentSessionId && workspacesState?.recentWorkspaceId
+      ? workspaceItems.find(
+          (w) =>
+            w.workspaceId === workspacesState.recentWorkspaceId ||
+            w.id === workspacesState.recentWorkspaceId,
+        )
+      : workspaceItems[0])
   const currentWorkspaceId =
-    currentWorkspace?.workspaceId || currentWorkspace?.id
+    currentWorkspace?.workspaceId ?? currentWorkspace?.id
   const currentWorkspaceTitle =
-    currentWorkspace?.title || currentWorkspace?.name || currentWorkspace?.path
+    currentWorkspace?.title ?? currentWorkspace?.name ?? currentWorkspace?.path
 
   // Fetch whether current session has an override
   const checkOverride = React.useCallback(() => {
@@ -87,12 +109,16 @@ export function SessionSettingsHeroChip({
       return
     }
     fetch(
-      `/api/session-settings?sessionId=${encodeURIComponent(currentSessionId)}`,
+      `${API_ENDPOINTS.getSettings}?sessionId=${encodeURIComponent(currentSessionId)}`,
     )
       .then((res) => res.json())
-      .then((data) => {
+      .then((data: { ok?: boolean; sessionConfig?: unknown }) => {
         if (data?.ok) {
-          setHasOverride(Boolean(data.hasSessionOverride))
+          setHasOverride(
+            isSessionCustomized(
+              data.sessionConfig as SessionSettingsConfig | undefined,
+            ),
+          )
         }
       })
       .catch(() => {})
@@ -170,14 +196,10 @@ export function SessionSettingsHeroChip({
                 sessionId: currentSessionId,
                 workspaceId: currentWorkspaceId,
                 workspaceTitle: currentWorkspaceTitle,
-                useSessions: (selector?: any) =>
-                  typeof selector === 'function'
-                    ? selector(sessionsState)
-                    : sessionsState,
-                useWorkspaces: (selector?: any) =>
-                  typeof selector === 'function'
-                    ? selector(workspacesState)
-                    : workspacesState,
+                useSessions: (selector) =>
+                  selector ? selector(sessionsState) : sessionsState,
+                useWorkspaces: (selector) =>
+                  selector ? selector(workspacesState) : workspacesState,
                 onClose: () => setModalOpen(false),
                 onSave: () => {
                   checkOverride()

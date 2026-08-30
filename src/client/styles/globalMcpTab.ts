@@ -40,6 +40,16 @@ export const GLOBAL_MCP_TAB_CSS = `
   display: flex;
   gap: 8px;
 }
+.dsh-mcp-refresh-btn {
+  align-items: center;
+  border-radius: 6px;
+  display: inline-flex;
+  height: 34px;
+  justify-content: center;
+  min-width: 34px !important;
+  padding: 0 !important;
+  width: 34px;
+}
 
 /* Server Cards List */
 .dsh-mcp-server-list {
@@ -130,18 +140,7 @@ export const GLOBAL_MCP_TAB_CSS = `
   background: rgba(139, 92, 246, 0.12);
   color: #8b5cf6;
 }
-.dsh-mcp-proto-badge.incompatible {
-  background: rgba(239, 68, 68, 0.15);
-  color: #ef4444;
-  border: 1px solid rgba(239, 68, 68, 0.3);
-}
-.dsh-mcp-proto-badge.downgrade {
-  background: rgba(59, 130, 246, 0.15);
-  color: #3b82f6;
-  border: 1px solid rgba(59, 130, 246, 0.3);
-}
-.dsh-mcp-proto-badge.count,
-.dsh-mcp-count-badge {
+.dsh-mcp-proto-badge.count {
   background: var(--dsw-alias-bg-layer-3, rgba(255, 255, 255, 0.08));
   border-radius: 4px;
   color: var(--dsw-alias-label-secondary);
@@ -659,6 +658,9 @@ export const GLOBAL_MCP_TAB_CSS = `
   display: flex;
   gap: 8px;
 }
+.dsh-mcp-modal-footer-right {
+  margin-left: auto;
+}
 
 /* Import Modal */
 .dsh-mcp-import-modal {
@@ -738,7 +740,7 @@ export const GLOBAL_MCP_TAB_CSS = `
   color: var(--dsw-alias-label-primary);
   font: inherit;
   font-size: 13px;
-  height: 34px;
+  height: 32px;
   line-height: 20px;
   padding: 0 10px 0 32px;
   transition: border-color 0.15s, box-shadow 0.15s;
@@ -756,6 +758,12 @@ export const GLOBAL_MCP_TAB_CSS = `
   align-items: center;
   display: flex;
   gap: 8px;
+}
+.dsh-mcp-tools-toolbar-actions .dsh-sam-btn {
+  font-size: 12px;
+  height: 34px;
+  min-width: unset;
+  padding: 0 12px;
 }
 .dsh-mcp-tools-stats-bar {
   align-items: center;
@@ -819,12 +827,6 @@ export const GLOBAL_MCP_TAB_CSS = `
 .dsh-mcp-tool-schema-preview {
   user-select: text;
 }
-.dsh-mcp-tool-card-right {
-  align-items: center;
-  display: flex;
-  flex-shrink: 0;
-  gap: 8px;
-}
 .dsh-mcp-tool-info {
   display: flex;
   flex-direction: column;
@@ -866,8 +868,7 @@ export const GLOBAL_MCP_TAB_CSS = `
   line-height: 18px;
   margin: 4px 0 0;
 }
-.dsh-mcp-tool-schema-btn,
-.dsh-mcp-schema-toggle-btn {
+.dsh-mcp-tool-schema-btn {
   align-items: center;
   background: var(--dsw-alias-bg-layer-1);
   border: 1px solid var(--dsw-alias-border-l2);
@@ -882,15 +883,13 @@ export const GLOBAL_MCP_TAB_CSS = `
   padding: 4px 10px;
   transition: background-color 0.15s, border-color 0.15s, color 0.15s;
 }
-.dsh-mcp-tool-schema-btn:hover,
-.dsh-mcp-schema-toggle-btn:hover {
+.dsh-mcp-tool-schema-btn:hover {
   background: var(--dsw-alias-bg-layer-3, var(--dsw-alias-bg-layer-2));
   border-color: var(--dsw-alias-border-l1);
   color: var(--dsw-alias-label-primary);
   text-decoration: none;
 }
-.dsh-mcp-tool-schema-btn.active,
-.dsh-mcp-schema-toggle-btn.active {
+.dsh-mcp-tool-schema-btn.active {
   background: rgba(88, 166, 255, 0.1);
   border-color: var(--dsw-alias-brand-primary);
   color: var(--dsw-alias-brand-primary);

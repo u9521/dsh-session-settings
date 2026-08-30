@@ -22,9 +22,9 @@ export async function testStdioConnection(
   let stderrBuffer = ''
   const transport = new StdioClientTransport({
     command,
-    args: server.args || [],
-    env: server.env || {},
-    cwd: server.cwd,
+    args: server.args ?? [],
+    env: server.env ?? {},
+    cwd: server.cwd?.trim() || undefined,
     stderr: 'pipe',
   })
 
@@ -73,14 +73,25 @@ export async function testStdioConnection(
           : []
 
     const rawTools = listResult?.tools || []
-    const toolDetails: McpDiscoveredTool[] = rawTools.map((t: any) => ({
-      name: typeof t === 'string' ? t : t.name || t.id || '',
-      description: typeof t === 'object' ? t.description : undefined,
-      inputSchema:
-        typeof t === 'object'
-          ? (t.inputSchema as Record<string, any>)
-          : undefined,
-    }))
+    const toolDetails: McpDiscoveredTool[] = rawTools.map((t) => {
+      const item = t as Record<string, unknown>
+      return {
+        name:
+          typeof t === 'string'
+            ? t
+            : typeof item.name === 'string'
+              ? item.name
+              : typeof item.id === 'string'
+                ? item.id
+                : '',
+        description:
+          typeof item.description === 'string' ? item.description : undefined,
+        inputSchema:
+          item.inputSchema && typeof item.inputSchema === 'object'
+            ? (item.inputSchema as Record<string, unknown>)
+            : undefined,
+      }
+    })
 
     const toolNames = toolDetails.map((t) => t.name).filter(Boolean)
     const count = toolNames.length
@@ -107,13 +118,13 @@ export async function testStdioConnection(
           ? `成功获取到 ${count} 个工具`
           : '成功连接并完成 MCP 握手 (未声明可用工具)',
     }
-  } catch (err: any) {
+  } catch (err: unknown) {
     const stderrDetail = stderrBuffer.trim()
       ? `\n(stderr: ${stderrBuffer.trim().slice(-300)})`
       : ''
     return {
       ok: false,
-      message: `STDIO 连接测试失败: ${err?.message || String(err)}${stderrDetail}`,
+      message: `STDIO 连接测试失败: ${err instanceof Error ? err.message : String(err)}${stderrDetail}`,
     }
   } finally {
     await client.close().catch(() => {})

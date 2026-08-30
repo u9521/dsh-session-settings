@@ -29,7 +29,7 @@ export function McpSaveConfirmModal({
     {
       open: Boolean(confirmState?.open),
       onClose: onCancel,
-      title: t('saveConfirmModal.title'),
+      title: t('mcpServers.saveConfirmModal.title'),
       icon: e(IconWarningOutline16, { size: 18 }),
       overlayClassName: 'dsh-sam-modal-overlay dsh-mcp-confirm-overlay',
       panelClassName: 'dsh-mcp-confirm-modal',
@@ -45,7 +45,7 @@ export function McpSaveConfirmModal({
               className: 'dsh-sam-btn secondary',
               onClick: onCancel,
             },
-            t('saveConfirmModal.cancel'),
+            t('mcpServers.saveConfirmModal.cancel'),
           ),
           e(
             'button',
@@ -54,17 +54,21 @@ export function McpSaveConfirmModal({
               className: 'dsh-sam-btn primary',
               onClick: () => onConfirm(confirmState.payload),
             },
-            t('saveConfirmModal.saveAnyway'),
+            t('mcpServers.saveConfirmModal.saveAnyway'),
           ),
         ),
       ],
     },
-    e('p', { className: 'dsh-mcp-confirm-msg' }, t('saveConfirmModal.message')),
+    e(
+      'p',
+      { className: 'dsh-mcp-confirm-msg' },
+      t('mcpServers.saveConfirmModal.message'),
+    ),
     e('div', { className: 'dsh-mcp-confirm-detail' }, confirmState.message),
     e(
       'p',
       { className: 'dsh-mcp-confirm-prompt' },
-      t('saveConfirmModal.prompt'),
+      t('mcpServers.saveConfirmModal.prompt'),
     ),
   )
 }

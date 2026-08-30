@@ -1,10 +1,4 @@
-import type {
-  SessionSettingsConfig,
-  SubagentModelConfig,
-  SubagentModelMode,
-  SessionMcpConfig,
-  SessionSkillsConfig,
-} from '../../types.ts'
+import type { SessionSettingsConfig } from '../../types.ts'
 
 export interface ModelReasoningEffort {
   id: string
@@ -30,16 +24,66 @@ export interface ModelProviderGroup {
   models: ModelCatalogItem[]
 }
 
+export interface ClientRemoteApi {
+  get?: <T = unknown>(
+    path: string,
+    params?: Record<string, string | number | boolean>,
+  ) => Promise<T>
+  post?: <T = unknown>(path: string, body?: unknown) => Promise<T>
+  delete?: <T = unknown>(path: string, body?: unknown) => Promise<T>
+  invoke?: <T = unknown>(path: string, options?: RequestInit) => Promise<T>
+  [key: string]: unknown
+}
+
+export interface WorkspaceInfo {
+  id?: string
+  workspaceId?: string
+  name?: string
+  title?: string
+  path?: string
+  cwd?: string
+  sessionIds?: string[]
+}
+
+export interface SessionInfo {
+  id?: string
+  title?: string
+  cwd?: string
+  parentSession?: string
+}
+
+export interface SessionsState {
+  items?: SessionInfo[]
+  byId?: Record<string, SessionInfo>
+  current?: string
+}
+
+export interface WorkspacesState {
+  items?: WorkspaceInfo[]
+  byId?: Record<string, WorkspaceInfo>
+  recentWorkspaceId?: string
+}
+
+export type UseSessionsHook = (
+  selector?: (state: SessionsState) => unknown,
+) => unknown
+export type UseWorkspacesHook = (
+  selector?: (state: WorkspacesState) => unknown,
+) => unknown
+
 export interface ClientPageProps {
-  api: any
+  api: ClientRemoteApi
   t: (key: string, vars?: Record<string, string | number>) => string
   sessionId?: string
   sessionTitle?: string
   workspaceId?: string
   workspaceTitle?: string
-  useSessions?: any
-  useWorkspaces?: any
-  workspaces?: any
+  useSessions?: UseSessionsHook
+  useWorkspaces?: UseWorkspacesHook
+  workspaces?: {
+    list?: () => WorkspaceInfo[]
+    resolveByPath?: (path: string) => Promise<WorkspaceInfo | undefined>
+  }
   onClose?: () => void
   onSave?: (config: SessionSettingsConfig) => void
 }

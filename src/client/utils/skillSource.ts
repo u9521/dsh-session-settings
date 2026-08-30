@@ -2,7 +2,7 @@ import type { SkillSourceMeta } from '../types/index.ts'
 
 export function getSkillSourceMeta(
   skill: { source?: string; isRuntime?: boolean } | null | undefined,
-  t: (key: string, params?: any) => string,
+  t: (key: string, params?: Record<string, string | number>) => string,
 ): SkillSourceMeta {
   if (!skill) {
     return {

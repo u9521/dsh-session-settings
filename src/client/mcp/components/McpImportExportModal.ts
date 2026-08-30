@@ -31,8 +31,8 @@ export function McpImportExportModal({
     {
       open,
       onClose,
-      title: t('importModal.title'),
-      subtitle: t('importModal.desc'),
+      title: t('mcpServers.importModal.title'),
+      subtitle: t('mcpServers.importModal.desc'),
       panelClassName: 'dsh-mcp-import-modal',
       footer: [
         e('div', { key: 'left', className: 'dsh-mcp-modal-footer-left' }),
@@ -46,7 +46,7 @@ export function McpImportExportModal({
               className: 'dsh-sam-btn secondary',
               onClick: onClose,
             },
-            t('actions.cancel'),
+            t('mcpServers.actions.cancel'),
           ),
           e(
             'button',
@@ -56,7 +56,9 @@ export function McpImportExportModal({
               disabled: importing || !text.trim(),
               onClick: onSubmit,
             },
-            importing ? t('importModal.importing') : t('importModal.confirm'),
+            importing
+              ? t('mcpServers.importModal.importing')
+              : t('mcpServers.importModal.confirm'),
           ),
         ),
       ],
@@ -65,7 +67,7 @@ export function McpImportExportModal({
     e('textarea', {
       className: 'dsh-mcp-import-textarea',
       rows: 10,
-      placeholder: t('importModal.placeholder'),
+      placeholder: t('mcpServers.importModal.placeholder'),
       value: text,
       onChange: (evt: React.ChangeEvent<HTMLTextAreaElement>) =>
         onChange(evt.target.value),

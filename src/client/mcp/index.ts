@@ -6,12 +6,13 @@ import {
   IconDownloadOutline16,
   IconCodeOutline16,
 } from '@deepseek-ai/dsh-client-ui-primitives'
-import type {
-  McpSettingsProps,
-  GlobalMcpServerConfig,
-  McpDiscoveredTool,
-  McpServerInfo,
-  EnvEntry,
+import {
+  type McpSettingsProps,
+  type GlobalMcpServerConfig,
+  type McpDiscoveredTool,
+  type McpServerInfo,
+  type EnvEntry,
+  API_ENDPOINTS,
 } from '../types/index.ts'
 import { EmptyState } from '../components/index.ts'
 import { useMcpServers } from './hooks/useMcpServers.ts'
@@ -33,7 +34,6 @@ export function McpServersSettingsTab({
     setServers,
     loading,
     error,
-    setError,
     successMsg,
     setSuccessMsg,
     loadServers,
@@ -153,7 +153,9 @@ export function McpServersSettingsTab({
         maxDelayMs: server.reconnect?.maxDelayMs,
         maxAttempts: server.reconnect?.maxAttempts,
       },
-      disabledTools: server.disabledTools ? [...server.disabledTools] : [],
+      disabledTools: Array.isArray(server.disabledTools)
+        ? [...server.disabledTools]
+        : [],
     })
     setEnvEntries(
       server.env
@@ -175,11 +177,11 @@ export function McpServersSettingsTab({
     setFormError('')
     setFormTestResult(null)
     if (formServer.transport === 'stdio' && !formServer.command?.trim()) {
-      setFormError(t('form.command') + ' is required for stdio')
+      setFormError(t('mcpServers.form.command') + ' is required for stdio')
       return
     }
     if (formServer.transport !== 'stdio' && !formServer.url?.trim()) {
-      setFormError(t('form.url') + ' is required for HTTP/SSE')
+      setFormError(t('mcpServers.form.url') + ' is required for HTTP/SSE')
       return
     }
 
@@ -211,10 +213,10 @@ export function McpServersSettingsTab({
 
     setFormTesting(true)
     try {
-      const res = await fetch('/api/mcp-servers?action=test', {
+      const res = await fetch(API_ENDPOINTS.mcpServersTest, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'test', server: serverObj }),
+        body: JSON.stringify({ server: serverObj }),
       })
       const data = await res.json()
       setFormTestResult({
@@ -256,10 +258,10 @@ export function McpServersSettingsTab({
           return updated
         })
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       setFormTestResult({
         ok: false,
-        message: err?.message || String(err),
+        message: err instanceof Error ? err.message : String(err),
       })
     } finally {
       setFormTesting(false)
@@ -273,10 +275,10 @@ export function McpServersSettingsTab({
     setToolsLoading(true)
     setToolsError('')
     try {
-      const res = await fetch('/api/mcp-servers?action=tools', {
+      const res = await fetch(API_ENDPOINTS.mcpServersTools, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'tools', server }),
+        body: JSON.stringify({ server }),
       })
       const data = await res.json()
       if (data.ok) {
@@ -286,9 +288,7 @@ export function McpServersSettingsTab({
         if (data.detectedTransport) {
           setToolsDetectedTransport(data.detectedTransport)
         }
-        if (data.servers) {
-          setServers(data.servers)
-        } else if (server.id) {
+        if (server.id) {
           setServers((prev) =>
             prev.map((s) =>
               s.id === server.id
@@ -297,6 +297,7 @@ export function McpServersSettingsTab({
                     detectedTransport:
                       data.detectedTransport || s.detectedTransport,
                     serverInfo: data.serverInfo || s.serverInfo,
+                    tools: data.tools || s.tools,
                     lastTestedAt: Date.now(),
                   }
                 : s,
@@ -307,16 +308,18 @@ export function McpServersSettingsTab({
           setToolsList(data.toolDetails)
         } else if (Array.isArray(data.tools)) {
           setToolsList(
-            data.tools.map((t: any) =>
-              typeof t === 'string' ? { name: t } : t,
+            (data.tools as unknown[]).map((t) =>
+              typeof t === 'string' ? { name: t } : (t as McpDiscoveredTool),
             ),
           )
         }
       } else {
+        setToolsList([])
         setToolsError(data.message || 'Failed to fetch tools from MCP server')
       }
-    } catch (err: any) {
-      setToolsError(err?.message || String(err))
+    } catch (err: unknown) {
+      setToolsList([])
+      setToolsError(err instanceof Error ? err.message : String(err))
     } finally {
       setToolsLoading(false)
     }
@@ -329,7 +332,9 @@ export function McpServersSettingsTab({
   ) => {
     setToolsTargetServer(server)
     setToolsSource(source)
-    setToolsDisabledSet(new Set(server.disabledTools || []))
+    setToolsDisabledSet(
+      new Set(Array.isArray(server.disabledTools) ? server.disabledTools : []),
+    )
     setToolsList([])
     setToolsServerInfo(null)
     setToolsDetectedTransport(null)
@@ -339,11 +344,11 @@ export function McpServersSettingsTab({
 
   const handleFormOpenTools = () => {
     if (formServer.transport === 'stdio' && !formServer.command?.trim()) {
-      setFormError(t('form.command') + ' is required for stdio')
+      setFormError(t('mcpServers.form.command') + ' is required for stdio')
       return
     }
     if (formServer.transport !== 'stdio' && !formServer.url?.trim()) {
-      setFormError(t('form.url') + ' is required for HTTP/SSE')
+      setFormError(t('mcpServers.form.url') + ' is required for HTTP/SSE')
       return
     }
 
@@ -398,7 +403,7 @@ export function McpServersSettingsTab({
     if (toolsSource === 'form') {
       setFormServer((prev) => ({ ...prev, disabledTools: disabledArray }))
       setToolsModalOpen(false)
-      setSuccessMsg(t('toolsModal.saveSuccess'))
+      setSuccessMsg(t('mcpServers.toolsModal.saveSuccess'))
       setTimeout(() => setSuccessMsg(''), 3000)
       return
     }
@@ -417,22 +422,26 @@ export function McpServersSettingsTab({
         disabledTools: disabledArray,
       } as GlobalMcpServerConfig
 
-      const res = await fetch('/api/mcp-servers', {
+      const res = await fetch(API_ENDPOINTS.mcpServersEdit, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ server: updatedServer }),
       })
       const data = await res.json()
       if (res.ok && data.ok) {
-        setServers(data.servers || [])
+        setServers((prev) =>
+          prev.map((s) =>
+            s.id === updatedServer.id ? data.server || updatedServer : s,
+          ),
+        )
         setToolsModalOpen(false)
-        setSuccessMsg(t('toolsModal.saveSuccess'))
+        setSuccessMsg(t('mcpServers.toolsModal.saveSuccess'))
         setTimeout(() => setSuccessMsg(''), 3000)
       } else {
         setToolsError(data.error || 'Failed to save tool settings')
       }
-    } catch (err: any) {
-      setToolsError(err?.message || String(err))
+    } catch (err: unknown) {
+      setToolsError(err instanceof Error ? err.message : String(err))
     } finally {
       setToolsSaving(false)
     }
@@ -442,7 +451,7 @@ export function McpServersSettingsTab({
   const handleSaveForm = async () => {
     setFormError('')
     if (!formServer.id?.trim()) {
-      setFormError(t('form.id') + ' is required')
+      setFormError(t('mcpServers.form.id') + ' is required')
       return
     }
     if (!/^[a-zA-Z0-9_-]+$/.test(formServer.id.trim())) {
@@ -461,11 +470,11 @@ export function McpServersSettingsTab({
       return
     }
     if (formServer.transport === 'stdio' && !formServer.command?.trim()) {
-      setFormError(t('form.command') + ' is required for stdio')
+      setFormError(t('mcpServers.form.command') + ' is required for stdio')
       return
     }
     if (formServer.transport !== 'stdio' && !formServer.url?.trim()) {
-      setFormError(t('form.url') + ' is required for HTTP/SSE')
+      setFormError(t('mcpServers.form.url') + ' is required for HTTP/SSE')
       return
     }
 
@@ -518,10 +527,10 @@ export function McpServersSettingsTab({
     // Pre-save test connection check
     setFormSaving(true)
     try {
-      const testRes = await fetch('/api/mcp-servers?action=test', {
+      const testRes = await fetch(API_ENDPOINTS.mcpServersTest, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'test', server: payload }),
+        body: JSON.stringify({ server: payload }),
       })
       const testData = await testRes.json()
       if (testData && testData.ok) {
@@ -569,7 +578,7 @@ export function McpServersSettingsTab({
 
   // Export JSON configuration
   const handleExport = () => {
-    const mcpServersMap: Record<string, any> = {}
+    const mcpServersMap: Record<string, Record<string, unknown>> = {}
     for (const s of servers) {
       if (s.transport === 'stdio') {
         mcpServersMap[s.id] = {
@@ -601,23 +610,27 @@ export function McpServersSettingsTab({
     setImporting(true)
     try {
       const parsed = JSON.parse(importText)
-      const res = await fetch('/api/mcp-servers?action=import', {
+      const res = await fetch(API_ENDPOINTS.mcpServersImport, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'import', data: parsed }),
+        body: JSON.stringify({ data: parsed }),
       })
       const data = await res.json()
       if (res.ok && data.ok) {
         setServers(data.servers || [])
         setImportOpen(false)
-        setSuccessMsg(t('importModal.success', { count: data.count || 0 }))
+        setSuccessMsg(
+          t('mcpServers.importModal.success', { count: data.count || 0 }),
+        )
         setTimeout(() => setSuccessMsg(''), 3000)
       } else {
-        setImportError(data.message || t('importModal.error'))
+        setImportError(data.message || t('mcpServers.importModal.error'))
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       setImportError(
-        t('importModal.error') + ': ' + (err?.message || String(err)),
+        t('mcpServers.importModal.error') +
+          ': ' +
+          (err instanceof Error ? err.message : String(err)),
       )
     } finally {
       setImporting(false)
@@ -637,8 +650,8 @@ export function McpServersSettingsTab({
         e(
           'div',
           null,
-          e('h2', { className: 'dsh-mcp-page-title' }, t('title')),
-          e('p', { className: 'dsh-mcp-page-desc' }, t('desc')),
+          e('h2', { className: 'dsh-mcp-page-title' }, t('mcpServers.title')),
+          e('p', { className: 'dsh-mcp-page-desc' }, t('mcpServers.desc')),
         ),
         e(
           'div',
@@ -651,7 +664,7 @@ export function McpServersSettingsTab({
               onClick: handleOpenAdd,
             },
             e(IconPlusOutline16, { size: 14 }),
-            t('actions.add'),
+            t('mcpServers.actions.add'),
           ),
           e(
             'button',
@@ -665,7 +678,7 @@ export function McpServersSettingsTab({
               },
             },
             e(IconCodeOutline16, { size: 14 }),
-            t('actions.import'),
+            t('mcpServers.actions.import'),
           ),
           e(
             'button',
@@ -676,15 +689,15 @@ export function McpServersSettingsTab({
               onClick: handleExport,
             },
             e(IconDownloadOutline16, { size: 14 }),
-            t('actions.export'),
+            t('mcpServers.actions.export'),
           ),
           e(
             'button',
             {
               type: 'button',
-              className: 'dsh-sam-btn secondary',
+              className: 'dsh-sam-btn secondary dsh-mcp-refresh-btn',
               onClick: loadServers,
-              title: t('actions.refresh'),
+              title: t('mcpServers.actions.refresh'),
             },
             e(IconRefreshOutline16, { size: 14 }),
           ),
@@ -710,7 +723,7 @@ export function McpServersSettingsTab({
         )
       : servers.length === 0
         ? e(EmptyState, {
-            message: t('table.empty'),
+            message: t('mcpServers.table.empty'),
             action: e(
               'button',
               {
@@ -718,7 +731,7 @@ export function McpServersSettingsTab({
                 className: 'dsh-sam-btn primary',
                 onClick: handleOpenAdd,
               },
-              t('actions.add'),
+              t('mcpServers.actions.add'),
             ),
           })
         : e(

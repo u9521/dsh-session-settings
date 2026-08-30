@@ -3,32 +3,30 @@ import { Badge, type BadgeProps } from './Badge.ts'
 
 const e = React.createElement
 
-export interface ModeOption {
-  value: string
+export interface ModeOption<T extends string = string> {
+  value: T
   title: React.ReactNode
   desc?: React.ReactNode
-  badges?: Array<
-    BadgeProps | { label: string; variant?: string; className?: string }
-  >
+  badges?: BadgeProps[]
   disabled?: boolean
   visible?: boolean
 }
 
-export interface ModeSelectorProps {
+export interface ModeSelectorProps<T extends string = string> {
   name: string
-  value: string
-  onChange: (value: any) => void
-  options: ModeOption[]
+  value: T
+  onChange: (value: T) => void
+  options: ModeOption<T>[]
   className?: string
 }
 
-export function ModeSelector({
+export function ModeSelector<T extends string = string>({
   name,
   value,
   onChange,
   options,
   className = 'dsh-sam-mode-list',
-}: ModeSelectorProps) {
+}: ModeSelectorProps<T>) {
   const visibleOptions = options.filter((opt) => opt.visible !== false)
 
   return e(
@@ -70,8 +68,8 @@ export function ModeSelector({
               e(Badge, {
                 key: idx,
                 label: b.label,
-                variant: (b as any).variant,
-                className: (b as any).className,
+                variant: b.variant,
+                className: b.className,
               }),
             ),
           ),

@@ -32,7 +32,7 @@ export function ModalDialog({
   footer,
   role = 'dialog',
   ariaLabel,
-  closeTitle = '关闭',
+  closeTitle,
 }: ModalDialogProps) {
   React.useEffect(() => {
     if (!open) return
@@ -105,9 +105,9 @@ export function ModalDialog({
       ),
       subtitle
         ? e(
-            'p',
-            { className: 'dsh-sam-desc', style: { margin: '4px 24px 0' } },
-            subtitle,
+            'div',
+            { className: 'dsh-sam-modal-subtitle' },
+            e('p', { className: 'dsh-sam-desc' }, subtitle),
           )
         : null,
       e('div', { className: 'dsh-sam-modal-body' }, children),

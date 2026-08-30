@@ -1,10 +1,16 @@
 import * as React from 'react'
-import type {
-  SessionSettingsConfig,
-  SubagentModelConfig,
-  SessionMcpConfig,
-  SessionSkillsConfig,
+import {
+  type SessionSettingsConfig,
+  type SubagentModelConfig,
+  type SessionMcpConfig,
+  type SessionSkillsConfig,
+  type SessionInfo,
+  API_ENDPOINTS,
 } from '../../types/index.ts'
+import {
+  isSessionCustomized,
+  resolveEffectiveSessionConfig,
+} from '../../utils/config.ts'
 
 export interface UseSessionActionsProps {
   sessionId?: string
@@ -13,12 +19,11 @@ export interface UseSessionActionsProps {
   modelConfig: SubagentModelConfig
   mcpConfig: SessionMcpConfig
   skillsConfig: SessionSkillsConfig
-  defaultSettings: SessionSettingsConfig
-  workspaceSettings?: SessionSettingsConfig
+  globalConfig: SessionSettingsConfig
   setModelConfig: (config: SubagentModelConfig) => void
   setMcpConfig: (config: SessionMcpConfig) => void
   setSkillsConfig: (config: SessionSkillsConfig) => void
-  setDefaultSettings: (config: SessionSettingsConfig) => void
+  setGlobalConfig: (config: SessionSettingsConfig) => void
   setWorkspaceSettings: (config: SessionSettingsConfig | undefined) => void
   setHasSessionOverride: (override: boolean) => void
   setSaveSuccessMsg: (msg: string) => void
@@ -30,7 +35,7 @@ export interface UseSessionActionsProps {
   setCloning: (cloning: boolean) => void
   setCloneError: (err: string) => void
   setCopiedId: (copied: boolean) => void
-  sessionsMap: Record<string, any>
+  sessionsMap: Record<string, SessionInfo>
   onSave?: (config: SessionSettingsConfig) => void
   t: (key: string, vars?: Record<string, string | number>) => string
 }
@@ -42,11 +47,11 @@ export function useSessionActions({
   modelConfig,
   mcpConfig,
   skillsConfig,
-  defaultSettings,
+  globalConfig,
   setModelConfig,
   setMcpConfig,
   setSkillsConfig,
-  setDefaultSettings,
+  setGlobalConfig,
   setWorkspaceSettings,
   setHasSessionOverride,
   setSaveSuccessMsg,
@@ -97,20 +102,25 @@ export function useSessionActions({
     setSaveSuccessMsg('')
     try {
       const res = await fetch(
-        `/api/session-settings?sessionId=${encodeURIComponent(targetSourceId)}`,
+        `${API_ENDPOINTS.getSettings}?sessionId=${encodeURIComponent(targetSourceId)}`,
       )
       if (!res.ok) {
         setCloneError(t('sessionSettings.clone.error'))
         return
       }
-      const data = await res.json()
+      const data = (await res.json()) as {
+        ok?: boolean
+        sessionConfig?: SessionSettingsConfig
+        workspaceConfig?: SessionSettingsConfig
+        globalConfig?: SessionSettingsConfig
+      }
       if (data && data.ok) {
         const sourceConfig: SessionSettingsConfig =
-          data.config?.subagentModel?.mode !== 'default' ||
-          data.config?.mcp?.mode !== 'default' ||
-          data.config?.skills?.mode !== 'default'
-            ? data.config
-            : data.effectiveConfig
+          resolveEffectiveSessionConfig(
+            data.sessionConfig,
+            data.workspaceConfig,
+            data.globalConfig,
+          )
 
         if (sourceConfig.subagentModel) {
           setModelConfig(sourceConfig.subagentModel)
@@ -123,9 +133,7 @@ export function useSessionActions({
         }
 
         const sourceTitle =
-          sessionsMap[targetSourceId]?.title ||
-          sessionsMap[targetSourceId]?.header?.title ||
-          targetSourceId
+          sessionsMap[targetSourceId]?.title || targetSourceId.slice(0, 8)
 
         setCloneSourceId('')
         setSaveSuccessMsg(
@@ -134,21 +142,19 @@ export function useSessionActions({
       } else {
         setCloneError(t('sessionSettings.clone.error'))
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       setCloneError(
-        t('sessionSettings.clone.error') + ': ' + (err?.message || String(err)),
+        t('sessionSettings.clone.error') +
+          ': ' +
+          (err instanceof Error ? err.message : String(err)),
       )
     } finally {
       setCloning(false)
     }
   }
 
-  const handleSave = async (isSaveDefault: boolean = false) => {
-    if (isSaveDefault) {
-      setSavingDefault(true)
-    } else {
-      setSaving(true)
-    }
+  const handleSave = async () => {
+    setSaving(true)
     setSaveSuccessMsg('')
     setError('')
 
@@ -159,34 +165,19 @@ export function useSessionActions({
     }
 
     try {
-      const res = await fetch('/api/session-settings', {
+      const res = await fetch(API_ENDPOINTS.saveSettings, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           sessionId,
-          workspaceId: currentWorkspaceId,
           config: payloadConfig,
-          isDefault: isSaveDefault,
         }),
       })
 
-      const data = await res.json()
+      const data = (await res.json()) as { ok?: boolean; error?: string }
       if (res.ok && data?.ok) {
-        if (isSaveDefault) {
-          setDefaultSettings(payloadConfig)
-          setHasSessionOverride(false)
-          setSaveSuccessMsg(t('sessionSettings.notice.savedDefault'))
-        } else if (sessionId) {
-          const isAllInherited =
-            (payloadConfig.subagentModel.mode === 'workspace' ||
-              (!currentWorkspaceId &&
-                payloadConfig.subagentModel.mode === 'default')) &&
-            (payloadConfig.mcp.mode === 'workspace' ||
-              (!currentWorkspaceId && payloadConfig.mcp.mode === 'default')) &&
-            (payloadConfig.skills.mode === 'workspace' ||
-              (!currentWorkspaceId && payloadConfig.skills.mode === 'default'))
-
-          setHasSessionOverride(!isAllInherited)
+        if (sessionId) {
+          setHasSessionOverride(isSessionCustomized(payloadConfig))
           setSaveSuccessMsg(t('sessionSettings.notice.saved'))
         }
 
@@ -199,13 +190,13 @@ export function useSessionActions({
           t('sessionSettings.notice.error') + (data?.error || 'Unknown error'),
         )
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       setError(
-        t('sessionSettings.notice.error') + (err?.message || String(err)),
+        t('sessionSettings.notice.error') +
+          (err instanceof Error ? err.message : String(err)),
       )
     } finally {
       setSaving(false)
-      setSavingDefault(false)
     }
   }
 
@@ -217,45 +208,98 @@ export function useSessionActions({
     setSaveSuccessMsg('')
     setError('')
 
-    const payloadConfig: SessionSettingsConfig = isRestoringDefault
-      ? setDefaultTargetScope === 'workspace'
-        ? defaultSettings
-        : {
-            subagentModel: { mode: 'inherit' },
-            mcp: {
-              mode: 'default',
-              enabledServerIds: [],
-              toolsMode: {},
-              disabledTools: {},
-            },
-            skills: { mode: 'default', disabledSkills: [] },
-          }
-      : {
-          subagentModel: modelConfig,
-          mcp: mcpConfig,
-          skills: skillsConfig,
-        }
-
     try {
-      const res = await fetch('/api/session-settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sessionId,
-          workspaceId:
-            setDefaultTargetScope === 'workspace'
-              ? currentWorkspaceId
-              : undefined,
-          config: payloadConfig,
-          isDefault: setDefaultTargetScope === 'global',
-          isWorkspaceDefault: setDefaultTargetScope === 'workspace',
-          isRestoringDefault,
-        }),
-      })
+      if (setDefaultTargetScope === 'global') {
+        const payloadGlobalConfig: SessionSettingsConfig = isRestoringDefault
+          ? {
+              subagentModel: {},
+              mcp: { enabledServerIds: [] },
+              skills: { disabledModelSkills: [], disabledUserSkills: [] },
+            }
+          : {
+              subagentModel:
+                modelConfig.mode === 'custom' &&
+                !modelConfig.inherit &&
+                modelConfig.model?.provider &&
+                modelConfig.model?.model
+                  ? {
+                      inherit: false,
+                      model: modelConfig.model,
+                    }
+                  : modelConfig.mode === 'custom'
+                    ? { inherit: true }
+                    : (globalConfig.subagentModel ?? { inherit: true }),
+              mcp:
+                mcpConfig.mode === 'custom'
+                  ? {
+                      enabledServerIds: mcpConfig.enabledServerIds ?? [],
+                      toolsMode: mcpConfig.toolsMode,
+                      disabledTools: mcpConfig.disabledTools,
+                    }
+                  : (globalConfig.mcp ?? { enabledServerIds: [] }),
+              skills:
+                skillsConfig.mode === 'custom'
+                  ? {
+                      disabledModelSkills:
+                        skillsConfig.disabledModelSkills ?? [],
+                      disabledUserSkills: skillsConfig.disabledUserSkills ?? [],
+                    }
+                  : (globalConfig.skills ?? {
+                      disabledModelSkills: [],
+                      disabledUserSkills: [],
+                    }),
+            }
 
-      const data = await res.json()
-      if (res.ok && data?.ok) {
-        if (setDefaultTargetScope === 'workspace' && currentWorkspaceId) {
+        const res = await fetch(API_ENDPOINTS.saveSettings, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            isDefault: true,
+            globalConfig: payloadGlobalConfig,
+            isRestoringDefault,
+          }),
+        })
+
+        const data = (await res.json()) as { ok?: boolean; error?: string }
+        if (res.ok && data?.ok) {
+          setGlobalConfig(payloadGlobalConfig)
+          setSaveSuccessMsg(t('sessionSettings.notice.savedDefault'))
+          setSetDefaultModalOpen(false)
+          setIsRestoringDefault(false)
+          setTimeout(() => setSaveSuccessMsg(''), 3000)
+        } else {
+          setError(
+            t('sessionSettings.notice.error') +
+              (data?.error || 'Unknown error'),
+          )
+        }
+      } else {
+        // Workspace default
+        const payloadConfig: SessionSettingsConfig = isRestoringDefault
+          ? {
+              subagentModel: { mode: 'global' },
+              mcp: { mode: 'global' },
+              skills: { mode: 'global' },
+            }
+          : {
+              subagentModel: modelConfig,
+              mcp: mcpConfig,
+              skills: skillsConfig,
+            }
+
+        const res = await fetch(API_ENDPOINTS.saveSettings, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sessionId,
+            config: payloadConfig,
+            isWorkspaceDefault: true,
+            isRestoringDefault,
+          }),
+        })
+
+        const data = (await res.json()) as { ok?: boolean; error?: string }
+        if (res.ok && data?.ok) {
           if (isRestoringDefault) {
             setWorkspaceSettings(undefined)
           } else {
@@ -263,26 +307,24 @@ export function useSessionActions({
           }
           setSaveSuccessMsg(
             t('sessionSettings.notice.savedWorkspace', {
-              name: currentWorkspaceTitle || currentWorkspaceId,
+              name: currentWorkspaceTitle || currentWorkspaceId || '',
             }),
           )
+          setSetDefaultModalOpen(false)
+          setIsRestoringDefault(false)
+          if (onSave) onSave(payloadConfig)
+          setTimeout(() => setSaveSuccessMsg(''), 3000)
         } else {
-          setDefaultSettings(payloadConfig)
-          setSaveSuccessMsg(t('sessionSettings.notice.savedDefault'))
+          setError(
+            t('sessionSettings.notice.error') +
+              (data?.error || 'Unknown error'),
+          )
         }
-
-        setSetDefaultModalOpen(false)
-        setIsRestoringDefault(false)
-        if (onSave) onSave(payloadConfig)
-        setTimeout(() => setSaveSuccessMsg(''), 3000)
-      } else {
-        setError(
-          t('sessionSettings.notice.error') + (data?.error || 'Unknown error'),
-        )
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       setError(
-        t('sessionSettings.notice.error') + (err?.message || String(err)),
+        t('sessionSettings.notice.error') +
+          (err instanceof Error ? err.message : String(err)),
       )
     } finally {
       setSavingDefault(false)
@@ -297,24 +339,36 @@ export function useSessionActions({
 
     try {
       const res = await fetch(
-        `/api/session-settings?sessionId=${encodeURIComponent(sessionId)}`,
+        `${API_ENDPOINTS.deleteSettings}?sessionId=${encodeURIComponent(sessionId)}`,
         { method: 'DELETE' },
       )
-      const data = await res.json()
+      const data = (await res.json()) as {
+        ok?: boolean
+        sessionConfig?: SessionSettingsConfig
+        workspaceConfig?: SessionSettingsConfig
+        globalConfig?: SessionSettingsConfig
+      }
       if (res.ok && data?.ok) {
-        const defaultMode = currentWorkspaceId ? 'workspace' : 'default'
+        const defaultMode = currentWorkspaceId ? 'workspace' : 'global'
         setModelConfig({ mode: defaultMode })
-        setMcpConfig({ mode: defaultMode, enabledServerIds: [] })
-        setSkillsConfig({ mode: defaultMode, disabledSkills: [] })
+        setMcpConfig({ mode: defaultMode })
+        setSkillsConfig({
+          mode: defaultMode,
+        })
         setHasSessionOverride(false)
         setSaveSuccessMsg(t('sessionSettings.notice.saved'))
         if (onSave) {
-          onSave(data.effectiveConfig || defaultSettings)
+          const effective = resolveEffectiveSessionConfig(
+            data.sessionConfig,
+            data.workspaceConfig,
+            data.globalConfig,
+          )
+          onSave(effective)
         }
         setTimeout(() => setSaveSuccessMsg(''), 3000)
       }
-    } catch (err: any) {
-      setError(err?.message || String(err))
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err))
     } finally {
       setSaving(false)
     }

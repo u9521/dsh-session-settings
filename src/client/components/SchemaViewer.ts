@@ -4,7 +4,7 @@ import { parseToolParameters } from '../utils/index.ts'
 const e = React.createElement
 
 export interface SchemaViewerProps {
-  schema?: Record<string, any>
+  schema?: Record<string, unknown>
   mode?: 'list' | 'raw'
   onModeChange?: (mode: 'list' | 'raw') => void
   t: (key: string, vars?: Record<string, string | number>) => string
@@ -24,7 +24,11 @@ export function SchemaViewer({
     return e(
       'div',
       { className: 'dsh-mcp-tool-expanded-box' },
-      e('div', { className: 'dsh-mcp-param-desc' }, t('toolsModal.noParams')),
+      e(
+        'div',
+        { className: 'dsh-mcp-param-desc' },
+        t('mcpServers.toolsModal.noParams'),
+      ),
     )
   }
 
@@ -41,7 +45,7 @@ export function SchemaViewer({
       e(
         'span',
         { className: 'dsh-mcp-tool-param-stats' },
-        t('toolsModal.paramsCount', {
+        t('mcpServers.toolsModal.paramsCount', {
           total: params.length,
           required: requiredCount,
         }),
@@ -59,7 +63,7 @@ export function SchemaViewer({
               setMode('list')
             },
           },
-          t('toolsModal.viewList'),
+          t('mcpServers.toolsModal.viewList'),
         ),
         e(
           'button',
@@ -71,7 +75,7 @@ export function SchemaViewer({
               setMode('raw')
             },
           },
-          t('toolsModal.viewRaw'),
+          t('mcpServers.toolsModal.viewRaw'),
         ),
       ),
     ),
@@ -89,7 +93,7 @@ export function SchemaViewer({
             ? e(
                 'div',
                 { className: 'dsh-mcp-param-desc' },
-                t('toolsModal.noParameters'),
+                t('mcpServers.toolsModal.noParameters'),
               )
             : params.map((param) =>
                 e(
@@ -104,18 +108,18 @@ export function SchemaViewer({
                       ? e(
                           'span',
                           { className: 'dsh-mcp-param-badge required' },
-                          t('toolsModal.required'),
+                          t('mcpServers.toolsModal.required'),
                         )
                       : e(
                           'span',
                           { className: 'dsh-mcp-param-badge optional' },
-                          t('toolsModal.optional'),
+                          t('mcpServers.toolsModal.optional'),
                         ),
                     param.default !== undefined &&
                       e(
                         'span',
                         { className: 'dsh-mcp-param-default' },
-                        `${t('toolsModal.defaultVal')}${JSON.stringify(param.default)}`,
+                        `${t('mcpServers.toolsModal.defaultVal')}${JSON.stringify(param.default)}`,
                       ),
                   ),
                   param.description &&
@@ -129,7 +133,7 @@ export function SchemaViewer({
                     e(
                       'div',
                       { className: 'dsh-mcp-param-enum' },
-                      `${t('toolsModal.enumVal')}${param.enum.join(' | ')}`,
+                      `${t('mcpServers.toolsModal.enumVal')}${param.enum.join(' | ')}`,
                     ),
                 ),
               ),

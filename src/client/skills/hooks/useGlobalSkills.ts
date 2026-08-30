@@ -1,21 +1,24 @@
 import * as React from 'react'
-import type { SkillItem, SessionSettingsConfig } from '../../types/index.ts'
+import {
+  type SkillItem,
+  type SessionSettingsConfig,
+  API_ENDPOINTS,
+} from '../../types/index.ts'
 
 export function useGlobalSkills(
   t: (key: string, vars?: Record<string, string | number>) => string,
 ) {
   const [skills, setSkills] = React.useState<SkillItem[]>([])
-  const [defaultSettings, setDefaultSettings] =
-    React.useState<SessionSettingsConfig>({
-      subagentModel: { mode: 'inherit' },
-      mcp: { mode: 'default', enabledServerIds: [] },
+  const [globalConfig, setGlobalConfig] = React.useState<SessionSettingsConfig>(
+    {
+      subagentModel: { inherit: true },
+      mcp: { enabledServerIds: [] },
       skills: {
-        mode: 'default',
-        disabledSkills: [],
         disabledModelSkills: [],
         disabledUserSkills: [],
       },
-    })
+    },
+  )
   const [defaultDisabledModelList, setDefaultDisabledModelList] =
     React.useState<string[]>([])
   const [defaultDisabledUserList, setDefaultDisabledUserList] = React.useState<
@@ -52,6 +55,16 @@ export function useGlobalSkills(
     [skills],
   )
 
+  const filteredSkills = React.useMemo(() => {
+    const q = search.trim().toLowerCase()
+    if (!q) return skills
+    return skills.filter(
+      (s) =>
+        s.name.toLowerCase().includes(q) ||
+        (s.description && s.description.toLowerCase().includes(q)),
+    )
+  }, [skills, search])
+
   const enabledCount = React.useMemo(
     () =>
       nonRuntimeSkills.filter((s) => !defaultDisabledModelSet.has(s.name))
@@ -63,34 +76,40 @@ export function useGlobalSkills(
     setLoading(true)
     setError('')
     try {
-      const res = await fetch('/api/session-settings')
-      if (res.ok) {
-        const data = await res.json()
-        if (data?.ok) {
-          if (Array.isArray(data.availableSkills)) {
-            setSkills(data.availableSkills)
-          }
-          if (data.defaultConfig) {
-            setDefaultSettings(data.defaultConfig)
-            if (data.defaultConfig.skills) {
-              const mList =
-                data.defaultConfig.skills.disabledModelSkills ||
-                data.defaultConfig.skills.disabledSkills ||
-                []
-              const uList = data.defaultConfig.skills.disabledUserSkills || []
-              setDefaultDisabledModelList(mList)
-              setDefaultDisabledUserList(uList)
-            }
+      const [skillsRes, settingsRes] = await Promise.all([
+        fetch(API_ENDPOINTS.skills),
+        fetch(API_ENDPOINTS.getSettings),
+      ])
+
+      if (skillsRes.ok) {
+        const skillsData = (await skillsRes.json()) as {
+          ok?: boolean
+          skills?: SkillItem[]
+        }
+        if (skillsData?.ok && Array.isArray(skillsData.skills)) {
+          setSkills(skillsData.skills)
+        }
+      }
+
+      if (settingsRes.ok) {
+        const settingsData = (await settingsRes.json()) as {
+          ok?: boolean
+          globalConfig?: SessionSettingsConfig
+        }
+        if (settingsData?.ok && settingsData.globalConfig) {
+          setGlobalConfig(settingsData.globalConfig)
+          if (settingsData.globalConfig.skills) {
+            const mList =
+              settingsData.globalConfig.skills.disabledModelSkills || []
+            const uList =
+              settingsData.globalConfig.skills.disabledUserSkills || []
+            setDefaultDisabledModelList(mList)
+            setDefaultDisabledUserList(uList)
           }
         }
-      } else {
-        const data = await res.json().catch(() => ({}))
-        setError(
-          t('notices.saveError') + ' ' + (data?.error || `HTTP ${res.status}`),
-        )
       }
-    } catch (err: any) {
-      setError(err?.message || String(err))
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err))
     } finally {
       setLoading(false)
     }
@@ -120,42 +139,61 @@ export function useGlobalSkills(
     )
   }
 
-  const handleSaveDefault = async () => {
+  const handleSaveSkillModal = async (
+    skillName: string,
+    modelDisabled: boolean,
+    userDisabled: boolean,
+  ) => {
     setSaving(true)
     setError('')
     setSuccessMsg('')
 
-    const payloadConfig: SessionSettingsConfig = {
-      subagentModel: defaultSettings.subagentModel || { mode: 'inherit' },
-      mcp: defaultSettings.mcp || { mode: 'default', enabledServerIds: [] },
+    const nextModelList = modelDisabled
+      ? Array.from(new Set([...defaultDisabledModelList, skillName]))
+      : defaultDisabledModelList.filter((n) => n !== skillName)
+
+    const nextUserList = userDisabled
+      ? Array.from(new Set([...defaultDisabledUserList, skillName]))
+      : defaultDisabledUserList.filter((n) => n !== skillName)
+
+    const payloadGlobalConfig: SessionSettingsConfig = {
+      subagentModel: globalConfig.subagentModel || { inherit: true },
+      mcp: globalConfig.mcp || { enabledServerIds: [] },
       skills: {
-        mode: 'default',
-        disabledSkills: defaultDisabledModelList,
-        disabledModelSkills: defaultDisabledModelList,
-        disabledUserSkills: defaultDisabledUserList,
+        disabledModelSkills: nextModelList,
+        disabledUserSkills: nextUserList,
       },
     }
 
     try {
-      const res = await fetch('/api/session-settings', {
+      const res = await fetch(API_ENDPOINTS.saveSettings, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          config: payloadConfig,
+          globalConfig: payloadGlobalConfig,
           isDefault: true,
         }),
       })
 
-      const data = await res.json()
+      const data = (await res.json()) as { ok?: boolean; error?: string }
       if (res.ok && data?.ok) {
-        setDefaultSettings(payloadConfig)
-        setSuccessMsg(t('notices.saved'))
+        setGlobalConfig(payloadGlobalConfig)
+        setDefaultDisabledModelList(nextModelList)
+        setDefaultDisabledUserList(nextUserList)
+        setSelectedSkillForModal(null)
+        setSuccessMsg(t('skillsSettings.notices.saved'))
         setTimeout(() => setSuccessMsg(''), 3500)
       } else {
-        setError(t('notices.saveError') + (data?.error || 'Unknown error'))
+        setError(
+          t('skillsSettings.notices.saveError') +
+            (data?.error || 'Unknown error'),
+        )
       }
-    } catch (err: any) {
-      setError(t('notices.saveError') + (err?.message || String(err)))
+    } catch (err: unknown) {
+      setError(
+        t('skillsSettings.notices.saveError') +
+          (err instanceof Error ? err.message : String(err)),
+      )
     } finally {
       setSaving(false)
     }
@@ -168,43 +206,58 @@ export function useGlobalSkills(
       setSkillsLoadingMap((prev) => ({ ...prev, [skillName]: true }))
       try {
         const res = await fetch(
-          `/api/session-settings/skills/content?name=${encodeURIComponent(skillName)}`,
+          `${API_ENDPOINTS.skillsContent}?name=${encodeURIComponent(skillName)}`,
         )
         if (res.ok) {
-          const data = await res.json()
+          const data = (await res.json()) as {
+            ok?: boolean
+            skill?: SkillItem
+          }
           if (data?.ok && data.skill) {
             setSkillsContentMap((prev) => ({
               ...prev,
-              [skillName]: data.skill,
+              [skillName]: data.skill as SkillItem,
+            }))
+          } else {
+            setSkillsContentMap((prev) => ({
+              ...prev,
+              [skillName]: {
+                ...skill,
+                content: t('sessionSettings.skills.loadError'),
+              },
             }))
           }
         }
-      } catch {
-        // ignore
+      } catch (err: unknown) {
+        setSkillsContentMap((prev) => ({
+          ...prev,
+          [skillName]: {
+            ...skill,
+            content: t('sessionSettings.skills.loadErrorWithReason', {
+              reason: err instanceof Error ? err.message : String(err),
+            }),
+          },
+        }))
       } finally {
         setSkillsLoadingMap((prev) => ({ ...prev, [skillName]: false }))
       }
     }
   }
 
-  const filteredSkills = skills.filter((s) => {
-    if (!search.trim()) return true
-    const q = search.trim().toLowerCase()
-    return (
-      s.name.toLowerCase().includes(q) ||
-      (s.description || '').toLowerCase().includes(q) ||
-      (s.source || '').toLowerCase().includes(q) ||
-      (s.provider || '').toLowerCase().includes(q)
-    )
-  })
+  const handleCloseSkillModal = () => {
+    setSelectedSkillForModal(null)
+  }
 
   return {
     skills,
     filteredSkills,
-    nonRuntimeSkills,
-    enabledCount,
+    globalConfig,
+    defaultDisabledModelList,
+    defaultDisabledUserList,
     defaultDisabledModelSet,
     defaultDisabledUserSet,
+    nonRuntimeSkills,
+    enabledCount,
     loading,
     saving,
     search,
@@ -215,10 +268,11 @@ export function useGlobalSkills(
     setSelectedSkillForModal,
     skillsContentMap,
     skillsLoadingMap,
-    loadSkills,
     handleToggleModelInvocable,
     handleToggleUserInvocable,
-    handleSaveDefault,
+    handleSaveSkillModal,
     handleOpenSkillModal,
+    handleCloseSkillModal,
+    loadSkills,
   }
 }

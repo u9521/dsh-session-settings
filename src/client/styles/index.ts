@@ -16,7 +16,7 @@ export * from './sessionMcp.ts'
 export * from './globalMcpTab.ts'
 export * from './sessionSkills.ts'
 
-export const CORE_CSS = [
+const CORE_CSS = [
   BASE_CSS,
   SESSION_VIEW_CSS,
   MODEL_SECTION_CSS,
@@ -24,15 +24,9 @@ export const CORE_CSS = [
   SET_DEFAULT_MODAL_CSS,
 ].join('\n\n')
 
-export const MCP_CSS = [SESSION_MCP_CSS, GLOBAL_MCP_TAB_CSS].join('\n\n')
+const MCP_CSS = [SESSION_MCP_CSS, GLOBAL_MCP_TAB_CSS].join('\n\n')
 
-export const SKILLS_CSS = SESSION_SKILLS_CSS
-
-export const ALL_CSS_BLOCKS = [
-  { id: 'core', css: CORE_CSS },
-  { id: 'mcp', css: MCP_CSS },
-  { id: 'skills', css: SKILLS_CSS },
-]
+const SKILLS_CSS = SESSION_SKILLS_CSS
 
 export const CSS = [CORE_CSS, MCP_CSS, SKILLS_CSS].join('\n\n')
 export default CSS

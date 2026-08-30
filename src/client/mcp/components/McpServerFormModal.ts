@@ -79,7 +79,9 @@ export function McpServerFormModal({
     {
       open,
       onClose,
-      title: isEditing ? t('form.editTitle') : t('form.addTitle'),
+      title: isEditing
+        ? t('mcpServers.form.editTitle')
+        : t('mcpServers.form.addTitle'),
       panelClassName: 'dsh-mcp-form-modal',
       footer: [
         e(
@@ -92,12 +94,14 @@ export function McpServerFormModal({
               className: 'dsh-sam-btn secondary',
               disabled: testing || saving,
               onClick: onTest,
-              title: t('actions.test'),
+              title: t('mcpServers.actions.test'),
             },
             testing
               ? e(IconLoadingOutline16, { size: 14, className: 'dsh-spin' })
               : e(IconPlayOutline16, { size: 14 }),
-            testing ? t('actions.testing') : t('actions.test'),
+            testing
+              ? t('mcpServers.actions.testing')
+              : t('mcpServers.actions.test'),
           ),
           e(
             'button',
@@ -106,17 +110,25 @@ export function McpServerFormModal({
               className: 'dsh-sam-btn secondary',
               disabled: testing || saving,
               onClick: onOpenTools,
-              title: t('actions.toolsList'),
+              title: t('mcpServers.actions.toolsList'),
             },
             e(IconChecklistOutline14, { size: 14 }),
-            t('actions.toolsList'),
-            server.disabledTools && server.disabledTools.length > 0
-              ? e(
-                  'span',
-                  { className: 'dsh-mcp-mini-badge danger' },
-                  String(server.disabledTools.length),
-                )
-              : null,
+            t('mcpServers.actions.toolsList'),
+            (() => {
+              const disabledCount =
+                typeof server.disabledTools === 'number'
+                  ? server.disabledTools
+                  : Array.isArray(server.disabledTools)
+                    ? server.disabledTools.length
+                    : 0
+              return disabledCount > 0
+                ? e(
+                    'span',
+                    { className: 'dsh-mcp-mini-badge danger' },
+                    String(disabledCount),
+                  )
+                : null
+            })(),
           ),
         ),
         e(
@@ -126,11 +138,11 @@ export function McpServerFormModal({
             'button',
             {
               type: 'button',
-              className: 'dsh-sam-btn tertiary',
+              className: 'dsh-sam-btn secondary',
               disabled: saving,
               onClick: onClose,
             },
-            t('actions.cancel'),
+            t('mcpServers.actions.cancel'),
           ),
           e(
             'button',
@@ -140,7 +152,9 @@ export function McpServerFormModal({
               disabled: saving || testing,
               onClick: onSave,
             },
-            saving ? t('actions.saving') : t('actions.save'),
+            saving
+              ? t('mcpServers.actions.saving')
+              : t('mcpServers.actions.save'),
           ),
         ),
       ],
@@ -195,12 +209,12 @@ export function McpServerFormModal({
           e(
             'div',
             { className: 'dsh-mcp-switch-title' },
-            t('form.enabledByDefault'),
+            t('mcpServers.form.enabledByDefault'),
           ),
           e(
             'div',
             { className: 'dsh-mcp-switch-desc' },
-            t('form.enabledByDefaultDesc'),
+            t('mcpServers.form.enabledByDefaultDesc'),
           ),
         ),
         e(
@@ -223,24 +237,30 @@ export function McpServerFormModal({
           e(
             'div',
             { className: 'dsh-mcp-label-row' },
-            e('label', { className: 'dsh-sam-field-label' }, t('form.id')),
+            e(
+              'label',
+              { className: 'dsh-sam-field-label' },
+              t('mcpServers.form.id'),
+            ),
             canAutofillId
               ? e(
                   'button',
                   {
                     type: 'button',
                     className: 'dsh-mcp-autofill-btn',
-                    title: `填入: ${detectedId}`,
+                    title: t('mcpServers.form.fillDetected', {
+                      value: detectedId,
+                    }),
                     onClick: () => onChange({ ...server, id: detectedId }),
                   },
-                  t('form.autoFill'),
+                  t('mcpServers.form.autoFill'),
                 )
               : null,
           ),
           e('input', {
             type: 'text',
             className: 'dsh-sam-select',
-            placeholder: t('form.idPlaceholder'),
+            placeholder: t('mcpServers.form.idPlaceholder'),
             value: server.id || '',
             onChange: (evt: React.ChangeEvent<HTMLInputElement>) =>
               onChange({ ...server, id: evt.target.value }),
@@ -252,24 +272,30 @@ export function McpServerFormModal({
           e(
             'div',
             { className: 'dsh-mcp-label-row' },
-            e('label', { className: 'dsh-sam-field-label' }, t('form.name')),
+            e(
+              'label',
+              { className: 'dsh-sam-field-label' },
+              t('mcpServers.form.name'),
+            ),
             canAutofillName
               ? e(
                   'button',
                   {
                     type: 'button',
                     className: 'dsh-mcp-autofill-btn',
-                    title: `填入: ${detectedName}`,
+                    title: t('mcpServers.form.fillDetected', {
+                      value: detectedName,
+                    }),
                     onClick: () => onChange({ ...server, name: detectedName }),
                   },
-                  t('form.autoFill'),
+                  t('mcpServers.form.autoFill'),
                 )
               : null,
           ),
           e('input', {
             type: 'text',
             className: 'dsh-sam-select',
-            placeholder: t('form.namePlaceholder'),
+            placeholder: t('mcpServers.form.namePlaceholder'),
             value: server.name || '',
             onChange: (evt: React.ChangeEvent<HTMLInputElement>) =>
               onChange({ ...server, name: evt.target.value }),
@@ -287,7 +313,7 @@ export function McpServerFormModal({
           e(
             'label',
             { className: 'dsh-sam-field-label' },
-            t('form.description'),
+            t('mcpServers.form.description'),
           ),
           canAutofillDesc
             ? e(
@@ -295,18 +321,20 @@ export function McpServerFormModal({
                 {
                   type: 'button',
                   className: 'dsh-mcp-autofill-btn',
-                  title: `填入: ${detectedDesc}`,
+                  title: t('mcpServers.form.fillDetected', {
+                    value: detectedDesc,
+                  }),
                   onClick: () =>
                     onChange({ ...server, description: detectedDesc }),
                 },
-                t('form.autoFill'),
+                t('mcpServers.form.autoFill'),
               )
             : null,
         ),
         e('input', {
           type: 'text',
           className: 'dsh-sam-select',
-          placeholder: t('form.descriptionPlaceholder'),
+          placeholder: t('mcpServers.form.descriptionPlaceholder'),
           value: server.description || '',
           onChange: (evt: React.ChangeEvent<HTMLInputElement>) =>
             onChange({ ...server, description: evt.target.value }),
@@ -317,7 +345,11 @@ export function McpServerFormModal({
       e(
         'div',
         { className: 'dsh-sam-field-group' },
-        e('label', { className: 'dsh-sam-field-label' }, t('form.transport')),
+        e(
+          'label',
+          { className: 'dsh-sam-field-label' },
+          t('mcpServers.form.transport'),
+        ),
         e(
           'select',
           {
@@ -329,11 +361,11 @@ export function McpServerFormModal({
                 transport: evt.target.value as McpTransportType,
               }),
           },
-          e('option', { value: 'stdio' }, t('form.transportStdio')),
+          e('option', { value: 'stdio' }, t('mcpServers.form.transportStdio')),
           e(
             'option',
             { value: 'streamable-http-or-sse' },
-            t('form.transportHttp'),
+            t('mcpServers.form.transportHttp'),
           ),
         ),
       ),
@@ -350,12 +382,12 @@ export function McpServerFormModal({
               e(
                 'label',
                 { className: 'dsh-sam-field-label' },
-                t('form.command'),
+                t('mcpServers.form.command'),
               ),
               e('input', {
                 type: 'text',
                 className: 'dsh-sam-select',
-                placeholder: t('form.commandPlaceholder'),
+                placeholder: t('mcpServers.form.commandPlaceholder'),
                 value: server.command || '',
                 onChange: (evt: React.ChangeEvent<HTMLInputElement>) =>
                   onChange({ ...server, command: evt.target.value }),
@@ -365,10 +397,14 @@ export function McpServerFormModal({
             e(
               'div',
               { className: 'dsh-sam-field-group' },
-              e('label', { className: 'dsh-sam-field-label' }, t('form.args')),
+              e(
+                'label',
+                { className: 'dsh-sam-field-label' },
+                t('mcpServers.form.args'),
+              ),
               e('textarea', {
                 className: 'dsh-mcp-textarea',
-                placeholder: t('form.argsPlaceholder'),
+                placeholder: t('mcpServers.form.argsPlaceholder'),
                 rows: 3,
                 value: (server.args || []).join('\n'),
                 onChange: (evt: React.ChangeEvent<HTMLTextAreaElement>) =>
@@ -385,11 +421,15 @@ export function McpServerFormModal({
             e(
               'div',
               { className: 'dsh-sam-field-group' },
-              e('label', { className: 'dsh-sam-field-label' }, t('form.cwd')),
+              e(
+                'label',
+                { className: 'dsh-sam-field-label' },
+                t('mcpServers.form.cwd'),
+              ),
               e('input', {
                 type: 'text',
                 className: 'dsh-sam-select',
-                placeholder: t('form.cwdPlaceholder'),
+                placeholder: t('mcpServers.form.cwdPlaceholder'),
                 value: server.cwd || '',
                 onChange: (evt: React.ChangeEvent<HTMLInputElement>) =>
                   onChange({ ...server, cwd: evt.target.value }),
@@ -399,13 +439,17 @@ export function McpServerFormModal({
             e(
               'div',
               { className: 'dsh-sam-field-group' },
-              e('label', { className: 'dsh-sam-field-label' }, t('form.env')),
+              e(
+                'label',
+                { className: 'dsh-sam-field-label' },
+                t('mcpServers.form.env'),
+              ),
               e(KeyValueEditor, {
                 entries: envEntries,
                 onChange: onEnvChange,
-                keyPlaceholder: t('form.envKey'),
-                valuePlaceholder: t('form.envValue'),
-                addLabel: t('form.addEnv'),
+                keyPlaceholder: t('mcpServers.form.envKey'),
+                valuePlaceholder: t('mcpServers.form.envValue'),
+                addLabel: t('mcpServers.form.addEnv'),
               }),
             ),
           )
@@ -416,11 +460,15 @@ export function McpServerFormModal({
             e(
               'div',
               { className: 'dsh-sam-field-group' },
-              e('label', { className: 'dsh-sam-field-label' }, t('form.url')),
+              e(
+                'label',
+                { className: 'dsh-sam-field-label' },
+                t('mcpServers.form.url'),
+              ),
               e('input', {
                 type: 'text',
                 className: 'dsh-sam-select',
-                placeholder: t('form.urlPlaceholder'),
+                placeholder: t('mcpServers.form.urlPlaceholder'),
                 value: server.url || '',
                 onChange: (evt: React.ChangeEvent<HTMLInputElement>) =>
                   onChange({ ...server, url: evt.target.value }),
@@ -433,14 +481,14 @@ export function McpServerFormModal({
               e(
                 'label',
                 { className: 'dsh-sam-field-label' },
-                t('form.headers'),
+                t('mcpServers.form.headers'),
               ),
               e(KeyValueEditor, {
                 entries: headerEntries,
                 onChange: onHeaderChange,
-                keyPlaceholder: t('form.headerKey'),
-                valuePlaceholder: t('form.headerValue'),
-                addLabel: t('form.addHeader'),
+                keyPlaceholder: t('mcpServers.form.headerKey'),
+                valuePlaceholder: t('mcpServers.form.headerValue'),
+                addLabel: t('mcpServers.form.addHeader'),
               }),
             ),
           ),
@@ -463,12 +511,14 @@ export function McpServerFormModal({
             e(
               'span',
               { className: 'dsh-mcp-advanced-title' },
-              t('form.advancedTitle'),
+              t('mcpServers.form.advancedTitle'),
             ),
             e(
               'span',
               { className: 'dsh-mcp-advanced-badge' },
-              showAdvanced ? '收起' : '展开配置',
+              showAdvanced
+                ? t('mcpServers.form.collapseAdvanced')
+                : t('mcpServers.form.expandAdvanced'),
             ),
           ),
         ),
@@ -484,14 +534,16 @@ export function McpServerFormModal({
                 e(
                   'label',
                   { className: 'dsh-sam-field-label' },
-                  t('form.toolCallTimeoutMs'),
+                  t('mcpServers.form.toolCallTimeoutMs'),
                 ),
                 e('input', {
                   type: 'number',
                   min: 1000,
                   step: 1000,
                   className: 'dsh-sam-select',
-                  placeholder: t('form.toolCallTimeoutMsPlaceholder'),
+                  placeholder: t(
+                    'mcpServers.form.toolCallTimeoutMsPlaceholder',
+                  ),
                   value:
                     server.toolCallTimeoutMs !== undefined
                       ? server.toolCallTimeoutMs
@@ -507,7 +559,7 @@ export function McpServerFormModal({
                 e(
                   'span',
                   { className: 'dsh-mcp-field-hint' },
-                  t('form.toolCallTimeoutMsDesc'),
+                  t('mcpServers.form.toolCallTimeoutMsDesc'),
                 ),
               ),
 
@@ -530,12 +582,12 @@ export function McpServerFormModal({
                   e(
                     'div',
                     { className: 'dsh-mcp-switch-title' },
-                    t('form.failOnStartupError'),
+                    t('mcpServers.form.failOnStartupError'),
                   ),
                   e(
                     'div',
                     { className: 'dsh-mcp-switch-desc' },
-                    t('form.failOnStartupErrorDesc'),
+                    t('mcpServers.form.failOnStartupErrorDesc'),
                   ),
                 ),
                 e(
@@ -570,12 +622,12 @@ export function McpServerFormModal({
                   e(
                     'div',
                     { className: 'dsh-mcp-switch-title' },
-                    t('form.reconnectEnabled'),
+                    t('mcpServers.form.reconnectEnabled'),
                   ),
                   e(
                     'div',
                     { className: 'dsh-mcp-switch-desc' },
-                    t('form.reconnectEnabledDesc'),
+                    t('mcpServers.form.reconnectEnabledDesc'),
                   ),
                 ),
                 e(
@@ -599,7 +651,7 @@ export function McpServerFormModal({
                       e(
                         'label',
                         { className: 'dsh-sam-field-label' },
-                        t('form.reconnectInitialDelayMs'),
+                        t('mcpServers.form.reconnectInitialDelayMs'),
                       ),
                       e('input', {
                         type: 'number',
@@ -607,7 +659,7 @@ export function McpServerFormModal({
                         step: 100,
                         className: 'dsh-sam-select',
                         placeholder: t(
-                          'form.reconnectInitialDelayMsPlaceholder',
+                          'mcpServers.form.reconnectInitialDelayMsPlaceholder',
                         ),
                         value:
                           server.reconnect?.initialDelayMs !== undefined
@@ -631,14 +683,16 @@ export function McpServerFormModal({
                       e(
                         'label',
                         { className: 'dsh-sam-field-label' },
-                        t('form.reconnectMaxDelayMs'),
+                        t('mcpServers.form.reconnectMaxDelayMs'),
                       ),
                       e('input', {
                         type: 'number',
                         min: 0,
                         step: 1000,
                         className: 'dsh-sam-select',
-                        placeholder: t('form.reconnectMaxDelayMsPlaceholder'),
+                        placeholder: t(
+                          'mcpServers.form.reconnectMaxDelayMsPlaceholder',
+                        ),
                         value:
                           server.reconnect?.maxDelayMs !== undefined
                             ? server.reconnect.maxDelayMs
@@ -661,14 +715,16 @@ export function McpServerFormModal({
                       e(
                         'label',
                         { className: 'dsh-sam-field-label' },
-                        t('form.reconnectMaxAttempts'),
+                        t('mcpServers.form.reconnectMaxAttempts'),
                       ),
                       e('input', {
                         type: 'number',
                         min: 0,
                         step: 1,
                         className: 'dsh-sam-select',
-                        placeholder: t('form.reconnectMaxAttemptsPlaceholder'),
+                        placeholder: t(
+                          'mcpServers.form.reconnectMaxAttemptsPlaceholder',
+                        ),
                         value:
                           server.reconnect?.maxAttempts !== undefined
                             ? server.reconnect.maxAttempts

@@ -1,353 +1,64 @@
+import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
-import type {
-  McpServerStore,
-  SessionSettingsConfig,
-  SessionSettingsStore,
+import {
+  type SessionSettingsConfig,
+  type SessionSettingsStore,
+  type SkillItem,
+  type WebServer,
+  API_ENDPOINTS,
 } from '../../types.ts'
 import {
   normalizeSessionSettings,
-  resolveEffectiveSessionSettings,
+  normalizeGlobalSettings,
   saveSessionSettingsStore,
 } from './storage.ts'
 import { getAvailableSkills } from '../skills/discovery.ts'
 import type { McpManager } from '../mcp/manager.ts'
 import { readRequestBody } from '../common/http.ts'
 
-export function resolveWorkspaceForSession(
-  ctx: Context,
-  sessionId?: string,
-): string | undefined {
-  if (!sessionId) return undefined
-  try {
-    const workspaceRegistry = ctx.get('workspaceRegistry' as any) as any
-    if (workspaceRegistry && typeof workspaceRegistry.list === 'function') {
-      const list = workspaceRegistry.list()
-      if (Array.isArray(list)) {
-        for (const w of list) {
-          if (
-            w.sessionIds &&
-            Array.isArray(w.sessionIds) &&
-            w.sessionIds.includes(sessionId)
-          ) {
-            return w.id
-          }
-        }
-      }
-    }
-    const sessionsService = ctx.get('sessions' as any) as any
-    const s = sessionsService?.get?.(sessionId)
-    if (s?.header?.workspaceId) {
-      return s.header.workspaceId
-    }
-  } catch {}
-  return undefined
-}
+import { resolveWorkspaceForSession } from './resolution.ts'
 
 export function registerSessionSettingsRoutes(
   ctx: Context,
-  webServer: any,
+  webServer: WebServer,
   getSessionSettingsStore: () => SessionSettingsStore,
   setSessionSettingsStore: (s: SessionSettingsStore) => void,
-  getMcpStore: () => McpServerStore,
   mcpManager?: McpManager,
 ): () => void {
-  const unregisterSessionSettingsRoute = webServer.register({
+  const unregisterGetSettingsRoute = webServer.register({
     kind: 'exact',
-    path: '/api/session-settings',
-    handler: async (req: any, res: any) => {
+    path: API_ENDPOINTS.getSettings,
+    handler: async (req: IncomingMessage, res: ServerResponse) => {
       res.setHeader('Content-Type', 'application/json; charset=utf-8')
+      if (req.method !== 'GET') {
+        res.writeHead(405)
+        res.end(JSON.stringify({ ok: false, error: 'Method Not Allowed' }))
+        return
+      }
+
       const url = new URL(req.url ?? '/', 'http://localhost')
       const querySessionId = url.searchParams.get('sessionId') || undefined
-      const queryWorkspaceId =
-        url.searchParams.get('workspaceId') ||
-        resolveWorkspaceForSession(ctx, querySessionId)
+      const queryWorkspaceId = await resolveWorkspaceForSession(
+        ctx,
+        querySessionId,
+      )
 
-      if (req.method === 'GET') {
-        try {
-          const sessionSettingsStore = getSessionSettingsStore()
-          const mcpStore = getMcpStore()
-          const availableSkills = await getAvailableSkills(ctx, querySessionId)
-
-          const sessionEntry =
-            querySessionId && sessionSettingsStore.sessions[querySessionId]
-              ? sessionSettingsStore.sessions[querySessionId]
-              : undefined
-
-          const workspaceEntry =
-            queryWorkspaceId &&
-            sessionSettingsStore.workspaces?.[queryWorkspaceId]
-              ? sessionSettingsStore.workspaces[queryWorkspaceId]
-              : undefined
-
-          const rawConfig = sessionEntry || {
-            subagentModel: { mode: queryWorkspaceId ? 'workspace' : 'default' },
-            mcp: {
-              mode: queryWorkspaceId ? 'workspace' : 'default',
-              enabledServerIds: [],
-            },
-            skills: {
-              mode: queryWorkspaceId ? 'workspace' : 'default',
-              disabledSkills: [],
-            },
-          }
-
-          const effective = resolveEffectiveSessionSettings(
-            sessionSettingsStore,
-            mcpStore,
-            querySessionId,
-            queryWorkspaceId,
-          )
-
-          const hasSessionOverride = Boolean(
-            sessionEntry &&
-            ((sessionEntry.subagentModel?.mode !== 'workspace' &&
-              sessionEntry.subagentModel?.mode !== 'default') ||
-              (sessionEntry.mcp?.mode !== 'workspace' &&
-                sessionEntry.mcp?.mode !== 'default') ||
-              (sessionEntry.skills?.mode !== 'workspace' &&
-                sessionEntry.skills?.mode !== 'default')),
-          )
-
-          const hasWorkspaceOverride = Boolean(
-            workspaceEntry &&
-            (workspaceEntry.subagentModel?.mode !== 'default' ||
-              workspaceEntry.mcp?.mode !== 'default' ||
-              workspaceEntry.skills?.mode !== 'default'),
-          )
-
-          res.writeHead(200)
-          res.end(
-            JSON.stringify({
-              ok: true,
-              sessionId: querySessionId,
-              workspaceId: queryWorkspaceId,
-              config: rawConfig,
-              workspaceConfig: workspaceEntry || {
-                subagentModel: { mode: 'default' },
-                mcp: { mode: 'default', enabledServerIds: [] },
-                skills: { mode: 'default', disabledSkills: [] },
-              },
-              effectiveConfig: effective,
-              defaultConfig: sessionSettingsStore.default,
-              availableSkills,
-              hasSessionOverride,
-              hasWorkspaceOverride,
-            }),
-          )
-        } catch (err: any) {
-          res.writeHead(500)
-          res.end(
-            JSON.stringify({
-              ok: false,
-              error: err?.message || String(err),
-            }),
-          )
-        }
-        return
-      }
-
-      if (req.method === 'POST') {
-        try {
-          const bodyStr = await readRequestBody(req)
-          const parsed = JSON.parse(bodyStr || '{}')
-          const targetSessionId = parsed.sessionId || querySessionId
-          const targetWorkspaceId =
-            parsed.workspaceId ||
-            queryWorkspaceId ||
-            resolveWorkspaceForSession(ctx, targetSessionId)
-
-          const isSaveWorkspaceDefault = Boolean(
-            parsed.isWorkspaceDefault && targetWorkspaceId,
-          )
-          const isSaveDefault = Boolean(
-            (parsed.isDefault && !isSaveWorkspaceDefault) ||
-            (!targetSessionId &&
-              !targetWorkspaceId &&
-              !isSaveWorkspaceDefault) ||
-            parsed.saveAsDefault,
-          )
-
-          const sessionSettingsStore = getSessionSettingsStore()
-          const mcpStore = getMcpStore()
-
-          const incomingConfig: SessionSettingsConfig =
-            normalizeSessionSettings(parsed.config ?? parsed)
-
-          if (
-            incomingConfig.subagentModel.mode === 'custom' &&
-            (!incomingConfig.subagentModel.provider ||
-              !incomingConfig.subagentModel.model)
-          ) {
-            res.writeHead(400)
-            res.end(
-              JSON.stringify({
-                ok: false,
-                error: 'Subagent model custom mode requires provider and model',
-              }),
-            )
-            return
-          }
-
-          if (!sessionSettingsStore.workspaces) {
-            sessionSettingsStore.workspaces = {}
-          }
-
-          if (isSaveDefault) {
-            if (parsed.isRestoringDefault) {
-              sessionSettingsStore.default = {
-                subagentModel: { mode: 'inherit' },
-                mcp: {
-                  mode: 'default',
-                  enabledServerIds: [],
-                  toolsMode: {},
-                  disabledTools: {},
-                },
-                skills: {
-                  mode: 'default',
-                  disabledSkills: [],
-                  disabledModelSkills: [],
-                  disabledUserSkills: [],
-                },
-              }
-            } else {
-              // Runtime skills cannot be set as global defaults
-              try {
-                const allSkills = await getAvailableSkills(ctx, undefined)
-                const runtimeSkillNames = new Set(
-                  allSkills.filter((s) => s.isRuntime).map((s) => s.name),
-                )
-                incomingConfig.skills.disabledSkills = (
-                  incomingConfig.skills.disabledSkills || []
-                ).filter((name) => !runtimeSkillNames.has(name))
-                incomingConfig.skills.disabledModelSkills = (
-                  incomingConfig.skills.disabledModelSkills || []
-                ).filter((name) => !runtimeSkillNames.has(name))
-                incomingConfig.skills.disabledUserSkills = (
-                  incomingConfig.skills.disabledUserSkills || []
-                ).filter((name) => !runtimeSkillNames.has(name))
-              } catch {}
-
-              sessionSettingsStore.default = incomingConfig
-            }
-          } else if (isSaveWorkspaceDefault && targetWorkspaceId) {
-            if (parsed.isRestoringDefault) {
-              delete sessionSettingsStore.workspaces[targetWorkspaceId]
-            } else {
-              sessionSettingsStore.workspaces[targetWorkspaceId] =
-                incomingConfig
-            }
-          }
-
-          if (
-            targetSessionId &&
-            !parsed.onlyDefault &&
-            !isSaveWorkspaceDefault
-          ) {
-            if (isSaveDefault) {
-              delete sessionSettingsStore.sessions[targetSessionId]
-            } else if (
-              (incomingConfig.subagentModel.mode === 'default' ||
-                incomingConfig.subagentModel.mode === 'workspace') &&
-              (incomingConfig.mcp.mode === 'default' ||
-                incomingConfig.mcp.mode === 'workspace') &&
-              (incomingConfig.skills.mode === 'default' ||
-                incomingConfig.skills.mode === 'workspace')
-            ) {
-              // Resetting/selecting default or workspace clears custom session entry
-              delete sessionSettingsStore.sessions[targetSessionId]
-            } else {
-              sessionSettingsStore.sessions[targetSessionId] = incomingConfig
-            }
-          }
-
-          saveSessionSettingsStore(sessionSettingsStore)
-          setSessionSettingsStore(sessionSettingsStore)
-
-          mcpManager?.syncAll()
-
-          const effective = resolveEffectiveSessionSettings(
-            sessionSettingsStore,
-            mcpStore,
-            targetSessionId,
-            targetWorkspaceId,
-          )
-          const availableSkills = await getAvailableSkills(ctx, targetSessionId)
-
-          const sessionEntry =
-            targetSessionId && sessionSettingsStore.sessions[targetSessionId]
-          const workspaceEntry =
-            targetWorkspaceId &&
-            sessionSettingsStore.workspaces?.[targetWorkspaceId]
-
-          res.writeHead(200)
-          res.end(
-            JSON.stringify({
-              ok: true,
-              sessionId: targetSessionId,
-              workspaceId: targetWorkspaceId,
-              config: sessionEntry || incomingConfig,
-              workspaceConfig: workspaceEntry || {
-                subagentModel: { mode: 'default' },
-                mcp: { mode: 'default', enabledServerIds: [] },
-                skills: { mode: 'default', disabledSkills: [] },
-              },
-              effectiveConfig: effective,
-              defaultConfig: sessionSettingsStore.default,
-              availableSkills,
-              hasSessionOverride: Boolean(
-                sessionEntry &&
-                ((sessionEntry.subagentModel?.mode !== 'workspace' &&
-                  sessionEntry.subagentModel?.mode !== 'default') ||
-                  (sessionEntry.mcp?.mode !== 'workspace' &&
-                    sessionEntry.mcp?.mode !== 'default') ||
-                  (sessionEntry.skills?.mode !== 'workspace' &&
-                    sessionEntry.skills?.mode !== 'default')),
-              ),
-              hasWorkspaceOverride: Boolean(
-                workspaceEntry &&
-                (workspaceEntry.subagentModel?.mode !== 'default' ||
-                  workspaceEntry.mcp?.mode !== 'default' ||
-                  workspaceEntry.skills?.mode !== 'default'),
-              ),
-            }),
-          )
-        } catch (err: any) {
-          res.writeHead(400)
-          res.end(
-            JSON.stringify({ ok: false, error: err?.message || String(err) }),
-          )
-        }
-        return
-      }
-
-      if (req.method === 'DELETE') {
+      try {
         const sessionSettingsStore = getSessionSettingsStore()
-        const mcpStore = getMcpStore()
 
-        if (url.searchParams.has('workspaceId') && queryWorkspaceId) {
-          if (sessionSettingsStore.workspaces?.[queryWorkspaceId]) {
-            delete sessionSettingsStore.workspaces[queryWorkspaceId]
-            saveSessionSettingsStore(sessionSettingsStore)
-            setSessionSettingsStore(sessionSettingsStore)
-            mcpManager?.syncAll()
-          }
-        } else if (
-          querySessionId &&
-          sessionSettingsStore.sessions[querySessionId]
-        ) {
-          delete sessionSettingsStore.sessions[querySessionId]
-          saveSessionSettingsStore(sessionSettingsStore)
-          setSessionSettingsStore(sessionSettingsStore)
-          mcpManager?.syncAll()
+        const sessionEntry = querySessionId
+          ? sessionSettingsStore.sessions[querySessionId]
+          : undefined
+
+        const workspaceEntry = queryWorkspaceId
+          ? sessionSettingsStore.workspaces?.[queryWorkspaceId]
+          : undefined
+
+        const rawConfig = sessionEntry || {
+          subagentModel: { mode: 'workspace' },
+          mcp: { mode: 'workspace' },
+          skills: { mode: 'workspace' },
         }
-
-        const effective = resolveEffectiveSessionSettings(
-          sessionSettingsStore,
-          mcpStore,
-          querySessionId,
-          queryWorkspaceId,
-        )
-        const availableSkills = await getAvailableSkills(ctx, querySessionId)
 
         res.writeHead(200)
         res.end(
@@ -355,51 +66,291 @@ export function registerSessionSettingsRoutes(
             ok: true,
             sessionId: querySessionId,
             workspaceId: queryWorkspaceId,
-            config: {
-              subagentModel: {
-                mode: queryWorkspaceId ? 'workspace' : 'default',
-              },
-              mcp: {
-                mode: queryWorkspaceId ? 'workspace' : 'default',
-                enabledServerIds: [],
-              },
-              skills: {
-                mode: queryWorkspaceId ? 'workspace' : 'default',
-                disabledSkills: [],
-              },
+            sessionConfig: rawConfig,
+            workspaceConfig: workspaceEntry || {
+              subagentModel: { mode: 'global' },
+              mcp: { mode: 'global' },
+              skills: { mode: 'global' },
             },
-            workspaceConfig:
-              queryWorkspaceId &&
-              sessionSettingsStore.workspaces?.[queryWorkspaceId]
-                ? sessionSettingsStore.workspaces[queryWorkspaceId]
-                : {
-                    subagentModel: { mode: 'default' },
-                    mcp: { mode: 'default', enabledServerIds: [] },
-                    skills: { mode: 'default', disabledSkills: [] },
-                  },
-            effectiveConfig: effective,
-            defaultConfig: sessionSettingsStore.default,
-            availableSkills,
-            hasSessionOverride: false,
-            hasWorkspaceOverride: Boolean(
-              queryWorkspaceId &&
-              sessionSettingsStore.workspaces?.[queryWorkspaceId] &&
-              (sessionSettingsStore.workspaces[queryWorkspaceId].subagentModel
-                ?.mode !== 'default' ||
-                sessionSettingsStore.workspaces[queryWorkspaceId].mcp?.mode !==
-                  'default' ||
-                sessionSettingsStore.workspaces[queryWorkspaceId].skills
-                  ?.mode !== 'default'),
-            ),
+            globalConfig: sessionSettingsStore.globalConfig,
           }),
         )
-        return
+      } catch (err: unknown) {
+        res.writeHead(500)
+        res.end(
+          JSON.stringify({
+            ok: false,
+            error: err instanceof Error ? err.message : String(err),
+          }),
+        )
       }
-
-      res.writeHead(405)
-      res.end(JSON.stringify({ ok: false, error: 'Method Not Allowed' }))
     },
   })
 
-  return unregisterSessionSettingsRoute
+  const unregisterSaveSettingsRoute = webServer.register({
+    kind: 'exact',
+    path: API_ENDPOINTS.saveSettings,
+    handler: async (req: IncomingMessage, res: ServerResponse) => {
+      res.setHeader('Content-Type', 'application/json; charset=utf-8')
+      if (req.method !== 'POST') {
+        res.writeHead(405)
+        res.end(JSON.stringify({ ok: false, error: 'Method Not Allowed' }))
+        return
+      }
+
+      try {
+        const bodyStr = await readRequestBody(req)
+        const parsed = JSON.parse(bodyStr || '{}') as Record<string, unknown>
+        const targetSessionId =
+          typeof parsed.sessionId === 'string' ? parsed.sessionId : undefined
+        const targetWorkspaceId = await resolveWorkspaceForSession(
+          ctx,
+          targetSessionId,
+        )
+
+        const isSaveWorkspaceDefault = Boolean(
+          parsed.isWorkspaceDefault && targetWorkspaceId,
+        )
+        const isSaveDefault =
+          !isSaveWorkspaceDefault &&
+          Boolean(parsed.isDefault || !targetSessionId || parsed.saveAsDefault)
+
+        const sessionSettingsStore = getSessionSettingsStore()
+
+        const incomingConfig: SessionSettingsConfig = normalizeSessionSettings(
+          parsed.config ?? parsed.sessionConfig ?? parsed,
+        )
+
+        if (
+          incomingConfig.subagentModel.mode === 'custom' &&
+          !incomingConfig.subagentModel.inherit &&
+          (!incomingConfig.subagentModel.model?.provider ||
+            !incomingConfig.subagentModel.model?.model)
+        ) {
+          res.writeHead(400)
+          res.end(
+            JSON.stringify({
+              ok: false,
+              error: 'Subagent model custom mode requires provider and model',
+            }),
+          )
+          return
+        }
+
+        if (!sessionSettingsStore.workspaces) {
+          sessionSettingsStore.workspaces = {}
+        }
+
+        if (isSaveDefault) {
+          if (parsed.isRestoringDefault) {
+            sessionSettingsStore.globalConfig = {
+              subagentModel: {},
+              mcp: { enabledServerIds: [] },
+              skills: { disabledModelSkills: [], disabledUserSkills: [] },
+            }
+          } else {
+            const incomingGlobal = normalizeGlobalSettings(
+              parsed.globalConfig ??
+                parsed.config ??
+                parsed.sessionConfig ??
+                parsed,
+            )
+            // Runtime skills cannot be set as global defaults
+            try {
+              const allSkills = await getAvailableSkills(ctx, undefined)
+              const runtimeSkillNames = new Set(
+                allSkills
+                  .filter((s: SkillItem) => s.isRuntime)
+                  .map((s: SkillItem) => s.name),
+              )
+              if (incomingGlobal.skills?.disabledModelSkills) {
+                incomingGlobal.skills.disabledModelSkills =
+                  incomingGlobal.skills.disabledModelSkills.filter(
+                    (name) => !runtimeSkillNames.has(name),
+                  )
+              }
+              if (incomingGlobal.skills?.disabledUserSkills) {
+                incomingGlobal.skills.disabledUserSkills =
+                  incomingGlobal.skills.disabledUserSkills.filter(
+                    (name) => !runtimeSkillNames.has(name),
+                  )
+              }
+            } catch {}
+
+            sessionSettingsStore.globalConfig = incomingGlobal
+          }
+        } else if (isSaveWorkspaceDefault && targetWorkspaceId) {
+          if (parsed.isRestoringDefault) {
+            delete sessionSettingsStore.workspaces[targetWorkspaceId]
+          } else {
+            // Runtime skills cannot be set as workspace defaults
+            try {
+              const allSkills = await getAvailableSkills(ctx, undefined)
+              const runtimeSkillNames = new Set(
+                allSkills
+                  .filter((s: SkillItem) => s.isRuntime)
+                  .map((s: SkillItem) => s.name),
+              )
+              if (incomingConfig.skills?.disabledModelSkills) {
+                incomingConfig.skills.disabledModelSkills =
+                  incomingConfig.skills.disabledModelSkills.filter(
+                    (name) => !runtimeSkillNames.has(name),
+                  )
+              }
+              if (incomingConfig.skills?.disabledUserSkills) {
+                incomingConfig.skills.disabledUserSkills =
+                  incomingConfig.skills.disabledUserSkills.filter(
+                    (name) => !runtimeSkillNames.has(name),
+                  )
+              }
+            } catch {}
+            sessionSettingsStore.workspaces[targetWorkspaceId] = incomingConfig
+          }
+        }
+
+        if (targetSessionId && !isSaveWorkspaceDefault) {
+          if (isSaveDefault) {
+            delete sessionSettingsStore.sessions[targetSessionId]
+          } else {
+            const isPureWorkspaceInherit =
+              incomingConfig.subagentModel.mode === 'workspace' &&
+              incomingConfig.mcp.mode === 'workspace' &&
+              incomingConfig.skills.mode === 'workspace'
+
+            if (isPureWorkspaceInherit) {
+              delete sessionSettingsStore.sessions[targetSessionId]
+            } else {
+              sessionSettingsStore.sessions[targetSessionId] = incomingConfig
+            }
+          }
+        }
+
+        saveSessionSettingsStore(sessionSettingsStore)
+        setSessionSettingsStore(sessionSettingsStore)
+
+        mcpManager?.syncAll()
+
+        const sessionEntry =
+          targetSessionId && sessionSettingsStore.sessions[targetSessionId]
+        const workspaceEntry =
+          targetWorkspaceId &&
+          sessionSettingsStore.workspaces?.[targetWorkspaceId]
+
+        res.writeHead(200)
+        res.end(
+          JSON.stringify({
+            ok: true,
+            sessionId: targetSessionId,
+            workspaceId: targetWorkspaceId,
+            sessionConfig: sessionEntry || incomingConfig,
+            workspaceConfig: workspaceEntry || {
+              subagentModel: { mode: 'global' },
+              mcp: { mode: 'global' },
+              skills: { mode: 'global' },
+            },
+            globalConfig: sessionSettingsStore.globalConfig,
+          }),
+        )
+      } catch (err: unknown) {
+        res.writeHead(400)
+        res.end(
+          JSON.stringify({
+            ok: false,
+            error: err instanceof Error ? err.message : String(err),
+          }),
+        )
+      }
+    },
+  })
+
+  const unregisterDeleteSettingsRoute = webServer.register({
+    kind: 'exact',
+    path: API_ENDPOINTS.deleteSettings,
+    handler: async (req: IncomingMessage, res: ServerResponse) => {
+      res.setHeader('Content-Type', 'application/json; charset=utf-8')
+      if (req.method !== 'POST') {
+        res.writeHead(405)
+        res.end(JSON.stringify({ ok: false, error: 'Method Not Allowed' }))
+        return
+      }
+
+      try {
+        const url = new URL(req.url ?? '/', 'http://localhost')
+        let targetSessionId =
+          url.searchParams.get('sessionId')?.trim() || undefined
+        if (!targetSessionId) {
+          const bodyStr = await readRequestBody(req)
+          const parsed = (bodyStr ? JSON.parse(bodyStr) : {}) as {
+            sessionId?: string
+          }
+          targetSessionId = parsed.sessionId?.trim() || undefined
+        }
+
+        if (!targetSessionId) {
+          res.writeHead(400)
+          res.end(
+            JSON.stringify({ ok: false, error: 'Session ID is required' }),
+          )
+          return
+        }
+
+        const sessionSettingsStore = getSessionSettingsStore()
+        const targetWorkspaceId = await resolveWorkspaceForSession(
+          ctx,
+          targetSessionId,
+        )
+
+        if (targetSessionId && sessionSettingsStore.sessions[targetSessionId]) {
+          delete sessionSettingsStore.sessions[targetSessionId]
+          saveSessionSettingsStore(sessionSettingsStore)
+          setSessionSettingsStore(sessionSettingsStore)
+          mcpManager?.syncAll()
+        }
+
+        res.writeHead(200)
+        res.end(
+          JSON.stringify({
+            ok: true,
+            sessionId: targetSessionId,
+            workspaceId: targetWorkspaceId,
+            sessionConfig: {
+              subagentModel: {
+                mode: 'workspace',
+              },
+              mcp: {
+                mode: 'workspace',
+              },
+              skills: {
+                mode: 'workspace',
+              },
+            },
+            workspaceConfig:
+              targetWorkspaceId &&
+              sessionSettingsStore.workspaces?.[targetWorkspaceId]
+                ? sessionSettingsStore.workspaces[targetWorkspaceId]
+                : {
+                    subagentModel: { mode: 'global' },
+                    mcp: { mode: 'global' },
+                    skills: { mode: 'global' },
+                  },
+            globalConfig: sessionSettingsStore.globalConfig,
+          }),
+        )
+      } catch (err: unknown) {
+        res.writeHead(500)
+        res.end(
+          JSON.stringify({
+            ok: false,
+            error: err instanceof Error ? err.message : String(err),
+          }),
+        )
+      }
+    },
+  })
+
+  return () => {
+    unregisterGetSettingsRoute()
+    unregisterSaveSettingsRoute()
+    unregisterDeleteSettingsRoute()
+  }
 }

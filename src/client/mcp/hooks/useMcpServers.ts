@@ -1,5 +1,5 @@
 import * as React from 'react'
-import type { GlobalMcpServerConfig } from '../../types/index.ts'
+import { type GlobalMcpServerConfig, API_ENDPOINTS } from '../../types/index.ts'
 
 export function useMcpServers(
   t: (key: string, vars?: Record<string, string | number>) => string,
@@ -19,17 +19,20 @@ export function useMcpServers(
     setLoading(true)
     setError('')
     try {
-      const res = await fetch('/api/mcp-servers')
+      const res = await fetch(API_ENDPOINTS.mcpServersList)
       if (res.ok) {
-        const data = await res.json()
+        const data = (await res.json()) as {
+          ok?: boolean
+          servers?: GlobalMcpServerConfig[]
+        }
         if (data.ok && Array.isArray(data.servers)) {
           setServers(data.servers)
         }
       } else {
         setError(`Failed to load MCP servers: ${res.statusText}`)
       }
-    } catch (err: any) {
-      setError(err?.message || String(err))
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err))
     } finally {
       setLoading(false)
     }
@@ -41,28 +44,30 @@ export function useMcpServers(
 
   // Delete server
   const handleDelete = async (server: GlobalMcpServerConfig) => {
-    const confirmText = t('notices.deleteConfirm', {
+    const confirmText = t('mcpServers.notices.deleteConfirm', {
       name: server.name || server.id,
     })
     if (!window.confirm(confirmText)) return
 
     try {
-      const res = await fetch(
-        `/api/mcp-servers?id=${encodeURIComponent(server.id)}`,
-        {
-          method: 'DELETE',
-        },
-      )
+      const res = await fetch(API_ENDPOINTS.mcpServersRm, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: server.id }),
+      })
       if (res.ok) {
-        const data = await res.json()
+        const data = (await res.json()) as { ok?: boolean }
         if (data.ok) {
-          setServers(data.servers || [])
-          setSuccessMsg(t('notices.deleted'))
+          setServers((prev) => prev.filter((s) => s.id !== server.id))
+          setSuccessMsg(t('mcpServers.notices.deleted'))
           setTimeout(() => setSuccessMsg(''), 3000)
         }
       }
-    } catch (err: any) {
-      setError(t('notices.error') + (err?.message || String(err)))
+    } catch (err: unknown) {
+      setError(
+        t('mcpServers.notices.error') +
+          (err instanceof Error ? err.message : String(err)),
+      )
     }
   }
 
@@ -71,12 +76,18 @@ export function useMcpServers(
     const id = server.id || 'form_test'
     setTestingId(id)
     try {
-      const res = await fetch('/api/mcp-servers?action=test', {
+      const res = await fetch(API_ENDPOINTS.mcpServersTest, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'test', server }),
+        body: JSON.stringify({ server }),
       })
-      const data = await res.json()
+      const data = (await res.json()) as {
+        ok?: boolean
+        message?: string
+        detectedTransport?: 'stdio' | 'streamable-http' | 'sse'
+        serverInfo?: GlobalMcpServerConfig['serverInfo']
+        tools?: string[] | number
+      }
       setTestResults((prev) => ({
         ...prev,
         [id]: {
@@ -84,9 +95,7 @@ export function useMcpServers(
           message: data.message || (data.ok ? 'Connection OK' : 'Failed'),
         },
       }))
-      if (data.servers) {
-        setServers(data.servers)
-      } else if (data.ok && server.id) {
+      if (data.ok && server.id) {
         setServers((prev) =>
           prev.map((s) =>
             s.id === server.id
@@ -95,40 +104,27 @@ export function useMcpServers(
                   detectedTransport:
                     data.detectedTransport || s.detectedTransport,
                   serverInfo: data.serverInfo || s.serverInfo,
+                  tools: Array.isArray(data.tools)
+                    ? data.tools.length
+                    : typeof data.tools === 'number'
+                      ? data.tools
+                      : s.tools,
                   lastTestedAt: Date.now(),
                 }
               : s,
           ),
         )
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       setTestResults((prev) => ({
         ...prev,
-        [id]: { ok: false, message: err?.message || String(err) },
+        [id]: {
+          ok: false,
+          message: err instanceof Error ? err.message : String(err),
+        },
       }))
     } finally {
       setTestingId(null)
-    }
-  }
-
-  // Toggle server enabled by default
-  const handleToggleEnable = async (server: GlobalMcpServerConfig) => {
-    const updated: GlobalMcpServerConfig = {
-      ...server,
-      enabledByDefault: !server.enabledByDefault,
-    }
-    try {
-      const res = await fetch('/api/mcp-servers', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ server: updated }),
-      })
-      const data = await res.json()
-      if (res.ok && data.ok) {
-        setServers(data.servers || [])
-      }
-    } catch (err: any) {
-      setError(t('notices.error') + (err?.message || String(err)))
     }
   }
 
@@ -138,22 +134,44 @@ export function useMcpServers(
     originalId?: string,
   ) => {
     try {
-      const res = await fetch('/api/mcp-servers', {
+      const isEdit = Boolean(
+        originalId || servers.some((s) => s.id === payload.id),
+      )
+      const endpoint = isEdit
+        ? API_ENDPOINTS.mcpServersEdit
+        : API_ENDPOINTS.mcpServersAdd
+
+      const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ server: payload, originalId }),
       })
-      const data = await res.json()
-      if (res.ok && data.ok) {
-        setServers(data.servers || [])
-        setSuccessMsg(t('notices.saved'))
+      const data = (await res.json()) as {
+        ok?: boolean
+        server?: GlobalMcpServerConfig
+        error?: string
+      }
+      if (res.ok && data.ok && data.server) {
+        const savedServer: GlobalMcpServerConfig = data.server
+        const oldKey = originalId || savedServer.id
+        setServers((prev) => {
+          const exists = prev.some((s) => s.id === oldKey)
+          if (exists) {
+            return prev.map((s) => (s.id === oldKey ? savedServer : s))
+          }
+          return [...prev, savedServer]
+        })
+        setSuccessMsg(t('mcpServers.notices.saved'))
         setTimeout(() => setSuccessMsg(''), 3000)
         return { ok: true }
       } else {
         return { ok: false, error: data.error || 'Failed to save server' }
       }
-    } catch (err: any) {
-      return { ok: false, error: err?.message || String(err) }
+    } catch (err: unknown) {
+      return {
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+      }
     }
   }
 
@@ -170,7 +188,6 @@ export function useMcpServers(
     handleTest,
     testingId,
     testResults,
-    handleToggleEnable,
     executeSave,
   }
 }

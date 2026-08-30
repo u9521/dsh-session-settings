@@ -4,6 +4,8 @@ import type {
   SessionMcpConfig,
   SessionSkillsConfig,
   SessionSettingsConfig,
+  WorkspaceInfo,
+  SkillItem,
 } from '../../types/index.ts'
 import { ModalDialog } from '../../components/index.ts'
 
@@ -17,12 +19,13 @@ export interface SetDefaultModalProps {
   setIsRestoringDefault: (restoring: boolean) => void
   currentWorkspaceId?: string
   currentWorkspaceTitle?: string
-  currentWorkspace?: any
+  currentWorkspace?: WorkspaceInfo
   workspaceSettings?: SessionSettingsConfig
-  defaultSettings: SessionSettingsConfig
+  globalConfig: SessionSettingsConfig
   modelConfig: SubagentModelConfig
   mcpConfig: SessionMcpConfig
   skillsConfig: SessionSkillsConfig
+  availableSkills?: SkillItem[]
   savingDefault: boolean
   onClose: () => void
   onApply: () => void
@@ -39,10 +42,11 @@ export function SetDefaultModal({
   currentWorkspaceTitle,
   currentWorkspace,
   workspaceSettings,
-  defaultSettings,
+  globalConfig,
   modelConfig,
   mcpConfig,
   skillsConfig,
+  availableSkills,
   savingDefault,
   onClose,
   onApply,
@@ -50,48 +54,64 @@ export function SetDefaultModal({
 }: SetDefaultModalProps) {
   if (!open) return null
 
-  const targetScopeSettings =
-    setDefaultTargetScope === 'workspace'
-      ? workspaceSettings || defaultSettings || {}
-      : defaultSettings || {}
+  const isTargetWorkspace = setDefaultTargetScope === 'workspace'
+
+  const runtimeSkillsSet = React.useMemo(() => {
+    return new Set(
+      (availableSkills || []).filter((s) => s.isRuntime).map((s) => s.name),
+    )
+  }, [availableSkills])
+
+  const filterNonRuntimeSkills = React.useCallback(
+    (skillNames?: string[]) => {
+      if (!skillNames || !Array.isArray(skillNames)) return []
+      return skillNames.filter((name) => !runtimeSkillsSet.has(name))
+    },
+    [runtimeSkillsSet],
+  )
+
+  const formatSubagentModelSummary = (cfg?: SubagentModelConfig) => {
+    if (!cfg) return t('sessionSettings.status.default')
+    if (cfg.mode === 'custom') {
+      if (cfg.inherit) return t('sessionSettings.status.inherit')
+      if (cfg.model?.provider && cfg.model?.model) {
+        return `${cfg.model.provider} / ${cfg.model.model}`
+      }
+      return t('sessionSettings.badge.custom')
+    }
+    if (cfg.mode === 'workspace') return t('sessionSettings.status.workspace')
+    return t('sessionSettings.status.default')
+  }
 
   const beforeModelText =
-    targetScopeSettings?.subagentModel?.mode === 'custom'
-      ? `${targetScopeSettings?.subagentModel?.provider || ''} / ${targetScopeSettings?.subagentModel?.model || ''}`
-      : targetScopeSettings?.subagentModel?.mode === 'default'
-        ? t('sessionSettings.status.default')
-        : t('sessionSettings.status.inherit')
+    isTargetWorkspace && workspaceSettings?.subagentModel?.mode === 'custom'
+      ? formatSubagentModelSummary(workspaceSettings.subagentModel)
+      : formatSubagentModelSummary(globalConfig.subagentModel)
 
   const afterModelText = isRestoringDefault
-    ? setDefaultTargetScope === 'workspace'
-      ? defaultSettings?.subagentModel?.mode === 'custom'
-        ? `${defaultSettings?.subagentModel?.provider || ''} / ${defaultSettings?.subagentModel?.model || ''}`
-        : t('sessionSettings.status.inherit')
+    ? isTargetWorkspace
+      ? formatSubagentModelSummary(globalConfig.subagentModel)
       : t('sessionSettings.status.inherit')
-    : modelConfig?.mode === 'custom'
-      ? `${modelConfig?.provider || ''} / ${modelConfig?.model || ''}`
-      : modelConfig?.mode === 'inherit'
-        ? t('sessionSettings.status.inherit')
-        : modelConfig?.mode === 'workspace'
-          ? t('sessionSettings.status.workspace')
-          : t('sessionSettings.status.default')
+    : formatSubagentModelSummary(modelConfig)
 
-  const beforeMcpCount = (targetScopeSettings?.mcp?.enabledServerIds || [])
-    .length
+  const beforeMcpCount = (
+    isTargetWorkspace && workspaceSettings?.mcp?.mode === 'custom'
+      ? (workspaceSettings.mcp.enabledServerIds ?? [])
+      : (globalConfig?.mcp?.enabledServerIds ?? [])
+  ).length
+
   const beforeMcpText =
-    targetScopeSettings?.mcp?.mode === 'custom'
-      ? t('sessionSettings.setDefaultModal.mcpCustom', {
+    isTargetWorkspace && workspaceSettings?.mcp?.mode !== 'custom'
+      ? t('sessionSettings.status.default')
+      : t('sessionSettings.setDefaultModal.mcpCustom', {
           count: beforeMcpCount,
         })
-      : targetScopeSettings?.mcp?.mode === 'workspace'
-        ? t('sessionSettings.status.workspace')
-        : t('sessionSettings.status.default')
 
-  const afterMcpCount = (mcpConfig?.enabledServerIds || []).length
+  const afterMcpCount = (mcpConfig?.enabledServerIds ?? []).length
   const afterMcpText = isRestoringDefault
-    ? setDefaultTargetScope === 'workspace'
+    ? isTargetWorkspace
       ? t('sessionSettings.setDefaultModal.mcpCustom', {
-          count: (defaultSettings?.mcp?.enabledServerIds || []).length,
+          count: (globalConfig?.mcp?.enabledServerIds ?? []).length,
         })
       : t('sessionSettings.status.default')
     : mcpConfig?.mode === 'custom'
@@ -103,38 +123,27 @@ export function SetDefaultModal({
         : t('sessionSettings.status.default')
 
   const beforeSkillsDisabledCount = (
-    targetScopeSettings?.skills?.mode === 'custom'
-      ? targetScopeSettings?.skills?.disabledModelSkills ||
-        targetScopeSettings?.skills?.disabledSkills ||
-        []
-      : defaultSettings?.skills?.disabledModelSkills ||
-        defaultSettings?.skills?.disabledSkills ||
-        []
+    isTargetWorkspace && workspaceSettings?.skills?.mode === 'custom'
+      ? (workspaceSettings.skills.disabledModelSkills ?? [])
+      : (globalConfig?.skills?.disabledModelSkills ?? [])
   ).length
+
   const beforeSkillsText =
-    targetScopeSettings?.skills?.mode === 'custom'
-      ? t('sessionSettings.setDefaultModal.skillsCustom', {
+    isTargetWorkspace && workspaceSettings?.skills?.mode !== 'custom'
+      ? t('sessionSettings.status.default')
+      : t('sessionSettings.setDefaultModal.skillsCustom', {
           count: beforeSkillsDisabledCount,
         })
-      : targetScopeSettings?.skills?.mode === 'workspace'
-        ? t('sessionSettings.status.workspace')
-        : t('sessionSettings.status.default')
 
   const afterSkillsDisabledCount = (
     skillsConfig?.mode === 'custom'
-      ? skillsConfig?.disabledModelSkills || skillsConfig?.disabledSkills || []
-      : defaultSettings?.skills?.disabledModelSkills ||
-        defaultSettings?.skills?.disabledSkills ||
-        []
+      ? filterNonRuntimeSkills(skillsConfig?.disabledModelSkills)
+      : (globalConfig?.skills?.disabledModelSkills ?? [])
   ).length
   const afterSkillsText = isRestoringDefault
-    ? setDefaultTargetScope === 'workspace'
+    ? isTargetWorkspace
       ? t('sessionSettings.setDefaultModal.skillsCustom', {
-          count: (
-            defaultSettings?.skills?.disabledModelSkills ||
-            defaultSettings?.skills?.disabledSkills ||
-            []
-          ).length,
+          count: (globalConfig?.skills?.disabledModelSkills || []).length,
         })
       : t('sessionSettings.setDefaultModal.skillsAll')
     : skillsConfig?.mode === 'custom'
@@ -154,19 +163,23 @@ export function SetDefaultModal({
     {
       open,
       onClose,
-      title: t('sessionSettings.setDefaultModal.title'),
+      title: e(
+        'div',
+        { className: 'dsh-set-default-title-row' },
+        e('span', null, t('sessionSettings.setDefaultModal.title')),
+        currentWorkspaceTitle
+          ? e(
+              'span',
+              {
+                className: 'dsh-session-id-chip dsh-modal-workspace-chip',
+                title: currentWorkspace?.path || currentWorkspaceTitle,
+              },
+              `${t('sessionSettings.scope.workspaceLabel')}: ${currentWorkspaceTitle}`,
+            )
+          : null,
+      ),
       subtitle: t('sessionSettings.setDefaultModal.desc'),
       panelClassName: 'dsh-sam-modal-panel dsh-set-default-modal',
-      headerExtra: currentWorkspaceTitle
-        ? e(
-            'span',
-            {
-              className: 'dsh-session-id-chip dsh-modal-workspace-chip',
-              title: currentWorkspace?.path || currentWorkspaceTitle,
-            },
-            `${t('sessionSettings.scope.workspaceLabel')}: ${currentWorkspaceTitle}`,
-          )
-        : null,
       footer: [
         e(
           'div',

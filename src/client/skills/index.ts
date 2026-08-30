@@ -1,7 +1,7 @@
 import * as React from 'react'
 import {
   IconRefreshOutline16,
-  IconSkillOutline16,
+  IconLoadingOutline16,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SkillsSettingsProps } from '../types/index.ts'
 import { SearchToolbar, EmptyState } from '../components/index.ts'
@@ -34,14 +34,12 @@ export function SkillsSettingsTab({
     error,
     successMsg,
     selectedSkillForModal,
-    setSelectedSkillForModal,
     skillsContentMap,
     skillsLoadingMap,
     loadSkills,
-    handleToggleModelInvocable,
-    handleToggleUserInvocable,
-    handleSaveDefault,
+    handleSaveSkillModal,
     handleOpenSkillModal,
+    handleCloseSkillModal,
   } = useGlobalSkills(t)
 
   const modalSkill = selectedSkillForModal
@@ -79,41 +77,21 @@ export function SkillsSettingsTab({
           'div',
           null,
           e(
-            'div',
-            { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
-            e(IconSkillOutline16, { size: 18 }),
-            e(
-              'h2',
-              { className: 'dsh-mcp-page-title' },
-              t('skillsSettings.title'),
-            ),
+            'h2',
+            { className: 'dsh-mcp-page-title' },
+            t('skillsSettings.title'),
           ),
           e('p', { className: 'dsh-mcp-page-desc' }, t('skillsSettings.desc')),
-        ),
-        e(
-          'div',
-          { className: 'dsh-mcp-header-actions' },
           e(
-            'button',
+            'p',
             {
-              type: 'button',
-              className: 'dsh-sam-btn secondary',
-              title: t('sessionSettings.skills.refresh'),
-              onClick: loadSkills,
+              className: 'dsh-mcp-page-desc',
+              style: { marginTop: '4px' },
             },
-            e(IconRefreshOutline16, { size: 14 }),
-          ),
-          e(
-            'button',
-            {
-              type: 'button',
-              className: 'dsh-sam-btn primary',
-              disabled: saving,
-              onClick: handleSaveDefault,
-            },
-            saving
-              ? t('skillsSettings.actions.saving')
-              : t('skillsSettings.actions.saveSettings'),
+            t('skillsSettings.skillsStats', {
+              total: nonRuntimeSkills.length,
+              enabled: enabledCount,
+            }),
           ),
         ),
       ),
@@ -134,29 +112,37 @@ export function SkillsSettingsTab({
           e(SearchToolbar, {
             value: search,
             onChange: setSearch,
-            placeholder: t('sessionSettings.skills.searchPlaceholder'),
-            statsText: [
-              e(
-                'span',
-                { key: 'stats' },
-                t('sessionSettings.skills.effectiveInfoDefault', {
-                  total: nonRuntimeSkills.length,
-                  enabled: enabledCount,
-                }),
-              ),
-              search.trim()
-                ? e(
+            placeholder: t('skillsSettings.searchPlaceholder'),
+            statsText: search.trim()
+              ? [
+                  e(
                     'span',
                     { key: 'match' },
-                    `匹配到 ${filteredSkills.length} / ${skills.length} 个技能`,
-                  )
-                : null,
-            ].filter(Boolean),
+                    t('sessionSettings.skills.matchedCount', {
+                      matched: filteredSkills.length,
+                      total: skills.length,
+                    }),
+                  ),
+                ]
+              : undefined,
+            actions: e(
+              'button',
+              {
+                type: 'button',
+                className: 'dsh-mcp-text-btn',
+                disabled: loading,
+                onClick: loadSkills,
+              },
+              loading
+                ? e(IconLoadingOutline16, { size: 12, className: 'dsh-spin' })
+                : e(IconRefreshOutline16, { size: 12 }),
+              t('sessionSettings.skills.refresh'),
+            ),
           }),
 
           // Skill list cards
           filteredSkills.length === 0
-            ? e(EmptyState, { message: t('sessionSettings.skills.noMatch') })
+            ? e(EmptyState, { message: t('skillsSettings.noMatch') })
             : e(
                 'div',
                 { className: 'dsh-session-skills-list' },
@@ -180,9 +166,9 @@ export function SkillsSettingsTab({
       isModelDisabled: modalIsModelDisabled,
       isUserDisabled: modalIsUserDisabled,
       loadingContent: modalIsLoadingContent,
-      onToggleModelInvocable: handleToggleModelInvocable,
-      onToggleUserInvocable: handleToggleUserInvocable,
-      onClose: () => setSelectedSkillForModal(null),
+      saving,
+      onSave: handleSaveSkillModal,
+      onClose: handleCloseSkillModal,
       t,
     }),
   )

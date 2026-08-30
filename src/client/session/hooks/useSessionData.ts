@@ -1,84 +1,95 @@
 import * as React from 'react'
-import type {
-  ClientPageProps,
-  ModelProviderGroup,
-  GlobalMcpServerConfig,
-  SkillItem,
-  SubagentModelConfig,
-  SessionMcpConfig,
-  SessionSkillsConfig,
-  SessionSettingsConfig,
-  NavSection,
+import {
+  type ClientPageProps,
+  type ModelProviderGroup,
+  type GlobalMcpServerConfig,
+  type SkillItem,
+  type SubagentModelConfig,
+  type SessionMcpConfig,
+  type SessionSkillsConfig,
+  type SessionSettingsConfig,
+  type NavSection,
+  type SessionsState,
+  type WorkspacesState,
+  type WorkspaceInfo,
+  type SessionInfo,
+  API_ENDPOINTS,
 } from '../../types/index.ts'
+import { isSessionCustomized } from '../../utils/config.ts'
 
 export function useSessionData({
   api,
-  t: _t,
   sessionId,
-  sessionTitle: _sessionTitle,
   workspaceId: propWorkspaceId,
   workspaceTitle: propWorkspaceTitle,
   useSessions,
   useWorkspaces,
 }: ClientPageProps) {
-  const sessionsState = React.useMemo(() => {
+  const sessionsState = React.useMemo<SessionsState | null>(() => {
     if (!useSessions) return null
     try {
       if (typeof useSessions === 'function') {
-        return useSessions((s: any) => s) || useSessions()
+        const val = (useSessions((s) => s) ?? useSessions()) as
+          SessionsState | undefined
+        return val ?? null
       }
-      return useSessions
+      return (useSessions as SessionsState) ?? null
     } catch {
       return null
     }
   }, [useSessions])
 
-  const currentSession = Array.isArray(sessionsState?.items)
-    ? sessionsState.items.find((s: any) => s?.id === sessionId)
-    : sessionsState?.byId && sessionId
-      ? sessionsState.byId[sessionId]
-      : null
+  const currentSession: SessionInfo | null =
+    (Array.isArray(sessionsState?.items) && sessionId
+      ? sessionsState.items.find((s) => s?.id === sessionId)
+      : undefined) ??
+    (sessionsState?.byId && sessionId ? sessionsState.byId[sessionId] : null) ??
+    null
 
-  const workspacesState = React.useMemo(() => {
+  const workspacesState = React.useMemo<WorkspacesState | null>(() => {
     if (!useWorkspaces) return null
     try {
       if (typeof useWorkspaces === 'function') {
-        return useWorkspaces((w: any) => w) || useWorkspaces()
+        const val = (useWorkspaces((w) => w) ?? useWorkspaces()) as
+          WorkspacesState | undefined
+        return val ?? null
       }
-      return useWorkspaces
+      return (useWorkspaces as WorkspacesState) ?? null
     } catch {
       return null
     }
   }, [useWorkspaces])
 
-  const currentWorkspace = Array.isArray(workspacesState?.items)
-    ? workspacesState.items.find(
-        (w: any) =>
+  const currentWorkspace: WorkspaceInfo | null = Array.isArray(
+    workspacesState?.items,
+  )
+    ? (workspacesState.items.find(
+        (w) =>
           (sessionId &&
-            w?.sessionIds &&
-            Array.isArray(w.sessionIds) &&
+            Array.isArray(w?.sessionIds) &&
             w.sessionIds.includes(sessionId)) ||
-          (currentSession?.workspaceId &&
-            (w?.workspaceId === currentSession.workspaceId ||
-              w?.id === currentSession.workspaceId)) ||
+          (currentSession?.cwd &&
+            (w?.path === currentSession.cwd ||
+              w?.cwd === currentSession.cwd)) ||
           (propWorkspaceId &&
-            (w?.workspaceId === propWorkspaceId ||
-              w?.id === propWorkspaceId)) ||
-          w?.isCurrent ||
-          w?.active,
-      ) || workspacesState.items[0]
+            (w?.workspaceId === propWorkspaceId || w?.id === propWorkspaceId)),
+      ) ??
+      (!sessionId && workspacesState?.recentWorkspaceId
+        ? (workspacesState.items.find(
+            (w) =>
+              w.workspaceId === workspacesState.recentWorkspaceId ||
+              w.id === workspacesState.recentWorkspaceId,
+          ) ?? workspacesState.items[0])
+        : null) ??
+      null)
     : null
 
   const currentWorkspaceId =
-    propWorkspaceId ||
-    currentSession?.workspaceId ||
-    currentSession?.header?.workspaceId ||
-    currentWorkspace?.workspaceId ||
-    currentWorkspace?.id
+    propWorkspaceId ?? currentWorkspace?.workspaceId ?? currentWorkspace?.id
   const currentWorkspaceTitle =
-    propWorkspaceTitle ||
-    currentWorkspace?.title ||
-    currentWorkspace?.name ||
+    propWorkspaceTitle ??
+    currentWorkspace?.title ??
+    currentWorkspace?.name ??
     currentWorkspace?.path
 
   const [activeNav, setActiveNav] = React.useState<NavSection>('model')
@@ -98,7 +109,7 @@ export function useSessionData({
   >([])
   const [availableSkills, setAvailableSkills] = React.useState<SkillItem[]>([])
 
-  const defaultMode = currentWorkspaceId ? 'workspace' : 'default'
+  const defaultMode = currentWorkspaceId ? 'workspace' : 'global'
 
   // Form state
   const [modelConfig, setModelConfig] = React.useState<SubagentModelConfig>({
@@ -106,11 +117,9 @@ export function useSessionData({
   })
   const [mcpConfig, setMcpConfig] = React.useState<SessionMcpConfig>({
     mode: defaultMode,
-    enabledServerIds: [],
   })
   const [skillsConfig, setSkillsConfig] = React.useState<SessionSkillsConfig>({
     mode: defaultMode,
-    disabledSkills: [],
   })
 
   // Skills UI state
@@ -129,21 +138,28 @@ export function useSessionData({
   const [sessionToolsModalServer, setSessionToolsModalServer] =
     React.useState<GlobalMcpServerConfig | null>(null)
   const [sessionToolsMode, setSessionToolsMode] = React.useState<
-    'default' | 'custom'
-  >('default')
+    'global' | 'custom'
+  >('global')
   const [sessionDisabledToolsSet, setSessionDisabledToolsSet] = React.useState<
     Set<string>
   >(new Set())
   const [sessionToolsFetching, setSessionToolsFetching] =
     React.useState<boolean>(false)
-  const [sessionToolsList, setSessionToolsList] = React.useState<any[]>([])
+  const [sessionToolsError, setSessionToolsError] = React.useState<string>('')
+  const [sessionToolsList, setSessionToolsList] = React.useState<
+    Array<{ name?: string; id?: string; description?: string }>
+  >([])
 
-  const [defaultSettings, setDefaultSettings] =
-    React.useState<SessionSettingsConfig>({
-      subagentModel: { mode: 'inherit' },
-      mcp: { mode: 'default', enabledServerIds: [] },
-      skills: { mode: 'default', disabledSkills: [] },
-    })
+  const [globalConfig, setGlobalConfig] = React.useState<SessionSettingsConfig>(
+    {
+      subagentModel: {},
+      mcp: { enabledServerIds: [] },
+      skills: {
+        disabledModelSkills: [],
+        disabledUserSkills: [],
+      },
+    },
+  )
   const [workspaceSettings, setWorkspaceSettings] = React.useState<
     SessionSettingsConfig | undefined
   >(undefined)
@@ -162,20 +178,40 @@ export function useSessionData({
   const apiRef = React.useRef(api)
   apiRef.current = api
 
-  const sessionsMap =
-    typeof useSessions === 'function'
-      ? useSessions((s: any) => s?.byId || {})
-      : {}
+  const sessionsMap: Record<string, SessionInfo> = React.useMemo(() => {
+    const map: Record<string, SessionInfo> = {}
+    if (sessionsState?.byId) {
+      Object.assign(map, sessionsState.byId)
+    }
+    if (Array.isArray(sessionsState?.items)) {
+      for (const s of sessionsState.items) {
+        if (s?.id) {
+          map[s.id] = s
+        }
+      }
+    }
+    return map
+  }, [sessionsState])
 
   // Fetch models, mcp servers, and server-side config on mount or sessionId/workspaceId change
   React.useEffect(() => {
     let mounted = true
 
     async function loadModels() {
-      if (typeof apiRef.current?.llm?.models !== 'function') return
+      const llmService = apiRef.current?.llm as
+        | {
+            models?: (opts: unknown) => Promise<{
+              result?: {
+                ok?: boolean
+                value?: { groups?: ModelProviderGroup[] }
+              }
+            }>
+          }
+        | undefined
+      if (typeof llmService?.models !== 'function') return
       setLoadingModels(true)
       try {
-        const modelsRes = await apiRef.current.llm.models({})
+        const modelsRes = await llmService.models({})
         if (
           mounted &&
           modelsRes?.result?.ok &&
@@ -185,12 +221,19 @@ export function useSessionData({
           setProviders(groups)
           if (groups.length > 0) {
             setModelConfig((prev) => {
-              if (prev.mode === 'custom' && !prev.provider) {
+              if (
+                prev.mode === 'custom' &&
+                !prev.inherit &&
+                !prev.model?.provider
+              ) {
                 const firstGroup = groups[0]
                 return {
                   ...prev,
-                  provider: firstGroup.id,
-                  model: firstGroup.models?.[0]?.id || '',
+                  inherit: false,
+                  model: {
+                    provider: firstGroup.id,
+                    model: firstGroup.models?.[0]?.id || '',
+                  },
                 }
               }
               return prev
@@ -206,52 +249,108 @@ export function useSessionData({
       }
     }
 
-    async function loadData() {
+    async function loadMcpServers() {
       try {
-        await loadModels()
+        const res = await fetch(API_ENDPOINTS.mcpServersList)
+        if (res.ok && mounted) {
+          const data = (await res.json()) as {
+            ok?: boolean
+            servers?: GlobalMcpServerConfig[]
+          }
+          if (data && data.ok && Array.isArray(data.servers)) {
+            setAvailableMcpServers(data.servers)
+          }
+        }
+      } catch {}
+    }
 
-        const params = new URLSearchParams()
-        if (sessionId) params.set('sessionId', sessionId)
-        if (currentWorkspaceId) params.set('workspaceId', currentWorkspaceId)
-        const qs = params.toString()
-        const url = qs ? `/api/session-settings?${qs}` : '/api/session-settings'
+    async function loadSkills() {
+      try {
+        const qs = sessionId
+          ? `?sessionId=${encodeURIComponent(sessionId)}`
+          : ''
+        const res = await fetch(`${API_ENDPOINTS.skills}${qs}`)
+        if (res.ok && mounted) {
+          const data = (await res.json()) as {
+            ok?: boolean
+            skills?: SkillItem[]
+          }
+          if (data && data.ok && Array.isArray(data.skills)) {
+            setAvailableSkills(data.skills)
+          }
+        }
+      } catch {}
+    }
+
+    async function loadSessionSettings() {
+      try {
+        const qs = sessionId
+          ? `?sessionId=${encodeURIComponent(sessionId)}`
+          : ''
+        const url = `${API_ENDPOINTS.getSettings}${qs}`
         const res = await fetch(url)
         if (res.ok && mounted) {
-          const data = await res.json()
+          const data = (await res.json()) as {
+            ok?: boolean
+            globalConfig?: SessionSettingsConfig
+            workspaceConfig?: SessionSettingsConfig
+            workspaceId?: string
+            sessionConfig?: SessionSettingsConfig
+          }
           if (data && data.ok) {
-            if (data.defaultConfig) {
-              setDefaultSettings(data.defaultConfig)
+            if (data.globalConfig) {
+              setGlobalConfig(data.globalConfig)
             }
-            if (data.workspaceConfig && currentWorkspaceId) {
+            if (
+              data.workspaceConfig &&
+              (data.workspaceId || currentWorkspaceId)
+            ) {
               setWorkspaceSettings(data.workspaceConfig)
             } else {
               setWorkspaceSettings(undefined)
             }
 
-            if (data.hasSessionOverride !== undefined) {
-              setHasSessionOverride(Boolean(data.hasSessionOverride))
-            }
-            if (data.config && sessionId) {
-              setModelConfig(data.config.subagentModel)
-              setMcpConfig(data.config.mcp)
-              setSkillsConfig(data.config.skills)
-            } else if (!sessionId && data.effectiveConfig) {
-              setModelConfig(data.effectiveConfig.subagentModel)
-              setMcpConfig(data.effectiveConfig.mcp)
-              setSkillsConfig(data.effectiveConfig.skills)
-            }
-
-            if (Array.isArray(data.availableMcpServers)) {
-              setAvailableMcpServers(data.availableMcpServers)
-            }
-            if (Array.isArray(data.availableSkills)) {
-              setAvailableSkills(data.availableSkills)
+            if (data.sessionConfig && sessionId) {
+              setModelConfig(data.sessionConfig.subagentModel)
+              setMcpConfig(data.sessionConfig.mcp)
+              setSkillsConfig(data.sessionConfig.skills)
+              setHasSessionOverride(isSessionCustomized(data.sessionConfig))
+            } else if (!sessionId && data.globalConfig) {
+              setModelConfig({
+                mode: 'global',
+                ...(data.globalConfig.subagentModel?.inherit === false &&
+                data.globalConfig.subagentModel.model
+                  ? {
+                      inherit: false,
+                      model: data.globalConfig.subagentModel.model,
+                    }
+                  : { inherit: true }),
+              })
+              setMcpConfig({
+                mode: 'global',
+                enabledServerIds: data.globalConfig.mcp?.enabledServerIds || [],
+              })
+              setSkillsConfig({
+                mode: 'global',
+                disabledModelSkills:
+                  data.globalConfig.skills?.disabledModelSkills || [],
+                disabledUserSkills:
+                  data.globalConfig.skills?.disabledUserSkills || [],
+              })
+              setHasSessionOverride(false)
             }
           }
         }
-      } catch {
-        // ignore load errors
-      }
+      } catch {}
+    }
+
+    async function loadData() {
+      await Promise.all([
+        loadModels(),
+        loadMcpServers(),
+        loadSkills(),
+        loadSessionSettings(),
+      ])
     }
 
     loadData()
@@ -262,9 +361,7 @@ export function useSessionData({
   }, [sessionId, currentWorkspaceId])
 
   return {
-    sessionsState,
     currentSession,
-    workspacesState,
     currentWorkspace,
     currentWorkspaceId,
     currentWorkspaceTitle,
@@ -313,10 +410,12 @@ export function useSessionData({
     setSessionDisabledToolsSet,
     sessionToolsFetching,
     setSessionToolsFetching,
+    sessionToolsError,
+    setSessionToolsError,
     sessionToolsList,
     setSessionToolsList,
-    defaultSettings,
-    setDefaultSettings,
+    globalConfig,
+    setGlobalConfig,
     workspaceSettings,
     setWorkspaceSettings,
     hasSessionOverride,
@@ -328,6 +427,5 @@ export function useSessionData({
     isRestoringDefault,
     setIsRestoringDefault,
     sessionsMap,
-    apiRef,
   }
 }

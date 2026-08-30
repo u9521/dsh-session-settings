@@ -7,10 +7,7 @@ export interface ItemToggleCardProps {
   id?: string
   icon?: React.ReactNode
   title: React.ReactNode
-  badges?: Array<
-    | BadgeProps
-    | { label: string; variant?: string; className?: string; title?: string }
-  >
+  badges?: BadgeProps[]
   description?: React.ReactNode
   className?: string
   style?: React.CSSProperties
@@ -18,6 +15,7 @@ export interface ItemToggleCardProps {
 }
 
 export function ItemToggleCard({
+  id,
   icon,
   title,
   badges = [],
@@ -29,6 +27,8 @@ export function ItemToggleCard({
   return e(
     'div',
     {
+      id,
+      'data-id': id,
       className: `dsh-mcp-tool-card ${className}`.trim(),
       style: {
         ...(onClick ? { cursor: 'pointer' } : {}),
@@ -68,8 +68,8 @@ export function ItemToggleCard({
               e(Badge, {
                 key: idx,
                 label: b.label,
-                variant: (b as any).variant,
-                className: (b as any).className,
+                variant: b.variant,
+                className: b.className,
                 title: b.title,
               }),
             ),

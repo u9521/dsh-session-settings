@@ -1,7 +1,7 @@
-import type { SkillItem } from '../../types.ts'
+import type { ClientRemoteApi } from './session.ts'
 
 export interface SkillsSettingsProps {
-  api: any
+  api: ClientRemoteApi
   t: (key: string, vars?: Record<string, string | number>) => string
   close?: () => void
 }

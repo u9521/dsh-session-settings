@@ -1,12 +1,13 @@
 import * as React from 'react'
-import type {
-  ClientPageProps,
-  GlobalMcpServerConfig,
-  SkillItem,
-  McpDiscoveredTool,
-  SubagentModelMode,
-  SessionMcpMode,
-  SessionSkillsMode,
+import {
+  type ClientPageProps,
+  type GlobalMcpServerConfig,
+  type SkillItem,
+  type McpDiscoveredTool,
+  type SubagentModelMode,
+  type SessionMcpMode,
+  type SessionSkillsMode,
+  API_ENDPOINTS,
 } from '../types/index.ts'
 import { useSessionData } from './hooks/useSessionData.ts'
 import { useSessionActions } from './hooks/useSessionActions.ts'
@@ -40,12 +41,11 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
     modelConfig: data.modelConfig,
     mcpConfig: data.mcpConfig,
     skillsConfig: data.skillsConfig,
-    defaultSettings: data.defaultSettings,
-    workspaceSettings: data.workspaceSettings,
+    globalConfig: data.globalConfig,
     setModelConfig: data.setModelConfig,
     setMcpConfig: data.setMcpConfig,
     setSkillsConfig: data.setSkillsConfig,
-    setDefaultSettings: data.setDefaultSettings,
+    setGlobalConfig: data.setGlobalConfig,
     setWorkspaceSettings: data.setWorkspaceSettings,
     setHasSessionOverride: data.setHasSessionOverride,
     setSaveSuccessMsg: data.setSaveSuccessMsg,
@@ -66,24 +66,37 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
   const handleModelModeChange = (mode: SubagentModelMode) => {
     data.setSaveSuccessMsg('')
     data.setError('')
-    if (
-      mode === 'custom' &&
-      !data.modelConfig.provider &&
-      data.providers.length > 0
-    ) {
-      const firstGroup = data.providers[0]
-      const firstModel = firstGroup.models?.[0]?.id || ''
-      data.setModelConfig({
-        mode: 'custom',
-        provider: firstGroup.id,
-        model: firstModel,
-        reasoningEffort: undefined,
-      })
-    } else {
-      data.setModelConfig({
-        ...data.modelConfig,
-        mode,
-      })
+    if (mode === 'workspace') {
+      data.setModelConfig({ mode: 'workspace' })
+    } else if (mode === 'global') {
+      data.setModelConfig({ mode: 'global' })
+    } else if (mode === 'inherit') {
+      data.setModelConfig({ mode: 'custom', inherit: true })
+    } else if (mode === 'custom') {
+      if (data.modelConfig.model?.provider && data.modelConfig.model?.model) {
+        data.setModelConfig({
+          mode: 'custom',
+          inherit: false,
+          model: data.modelConfig.model,
+        })
+      } else if (data.providers.length > 0) {
+        const firstGroup = data.providers[0]
+        const firstModel = firstGroup.models?.[0]?.id || ''
+        data.setModelConfig({
+          mode: 'custom',
+          inherit: false,
+          model: {
+            provider: firstGroup.id,
+            model: firstModel,
+            reasoningEffort: undefined,
+          },
+        })
+      } else {
+        data.setModelConfig({
+          mode: 'custom',
+          inherit: true,
+        })
+      }
     }
   }
 
@@ -91,38 +104,49 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
     const group = data.providers.find((g) => g.id === providerId)
     const firstModel = group?.models?.[0]?.id || ''
     data.setModelConfig({
-      ...data.modelConfig,
-      provider: providerId,
-      model: firstModel,
-      reasoningEffort: undefined,
+      mode: 'custom',
+      inherit: false,
+      model: {
+        provider: providerId,
+        model: firstModel,
+        reasoningEffort: undefined,
+      },
     })
   }
 
   const handleModelSelectChange = (modelId: string) => {
-    const currentGroup = data.providers.find(
-      (g) => g.id === data.modelConfig.provider,
-    )
+    const currentProvider = data.modelConfig.model?.provider || ''
+    const currentGroup = data.providers.find((g) => g.id === currentProvider)
     const selectedModel = currentGroup?.models?.find((m) => m.id === modelId)
     const supportedEfforts = selectedModel?.reasoning?.efforts || []
     const isEffortValid =
-      !data.modelConfig.reasoningEffort ||
+      !data.modelConfig.model?.reasoningEffort ||
       supportedEfforts.some(
-        (eff) => eff.id === data.modelConfig.reasoningEffort,
+        (eff) => eff.id === data.modelConfig.model?.reasoningEffort,
       )
 
     data.setModelConfig({
-      ...data.modelConfig,
-      model: modelId,
-      reasoningEffort: isEffortValid
-        ? data.modelConfig.reasoningEffort
-        : undefined,
+      mode: 'custom',
+      inherit: false,
+      model: {
+        provider: currentProvider,
+        model: modelId,
+        reasoningEffort: isEffortValid
+          ? data.modelConfig.model?.reasoningEffort
+          : undefined,
+      },
     })
   }
 
   const handleReasoningEffortChange = (effortId: string) => {
+    if (!data.modelConfig.model) return
     data.setModelConfig({
-      ...data.modelConfig,
-      reasoningEffort: effortId || undefined,
+      mode: 'custom',
+      inherit: false,
+      model: {
+        ...data.modelConfig.model,
+        reasoningEffort: effortId || undefined,
+      },
     })
   }
 
@@ -182,41 +206,93 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
   // Session tools modal handlers
   const handleOpenSessionToolsModal = async (server: GlobalMcpServerConfig) => {
     data.setSessionToolsModalServer(server)
-    const currentToolsMode = data.mcpConfig.toolsMode?.[server.id] || 'default'
+    const currentToolsMode = data.mcpConfig.toolsMode?.[server.id] || 'global'
     data.setSessionToolsMode(currentToolsMode)
     data.setSessionDisabledToolsSet(
       new Set(
-        data.mcpConfig.disabledTools?.[server.id] || server.disabledTools || [],
+        data.mcpConfig.disabledTools?.[server.id] ||
+          (Array.isArray(server.disabledTools) ? server.disabledTools : []),
       ),
     )
 
-    if (Array.isArray(server.toolDetails) && server.toolDetails.length > 0) {
-      data.setSessionToolsList(server.toolDetails)
-      return
+    // Reset previous server's tools and error immediately
+    data.setSessionToolsList([])
+    data.setSessionToolsError('')
+    data.setSessionToolsFetching(true)
+
+    // 1. Try to read cached toolview first
+    try {
+      const res = await fetch(
+        `${API_ENDPOINTS.mcpServersToolview}?id=${encodeURIComponent(server.id)}`,
+      )
+      const resData = await res.json()
+      if (resData.ok) {
+        const cachedTools: McpDiscoveredTool[] = Array.isArray(
+          resData.toolDetails,
+        )
+          ? (resData.toolDetails as McpDiscoveredTool[])
+          : Array.isArray(resData.tools)
+            ? (resData.tools as unknown[]).map((t) =>
+                typeof t === 'string' ? { name: t } : (t as McpDiscoveredTool),
+              )
+            : []
+        if (cachedTools.length > 0) {
+          data.setSessionToolsList(cachedTools)
+          data.setSessionToolsFetching(false)
+          return
+        }
+      }
+    } catch {
+      // If toolview failed, continue to live tools discovery
     }
 
-    data.setSessionToolsFetching(true)
+    // 2. If no cached tools were found, live discover tools
     try {
-      const res = await fetch('/api/mcp-servers?action=tools', {
+      const res = await fetch(API_ENDPOINTS.mcpServersTools, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'tools', server }),
+        body: JSON.stringify({ server }),
       })
       const resData = await res.json()
       if (resData.ok) {
         const fetchedTools: McpDiscoveredTool[] = Array.isArray(
           resData.toolDetails,
         )
-          ? resData.toolDetails
+          ? (resData.toolDetails as McpDiscoveredTool[])
           : Array.isArray(resData.tools)
-            ? resData.tools.map((t: any) =>
-                typeof t === 'string' ? { name: t } : t,
+            ? (resData.tools as unknown[]).map((t) =>
+                typeof t === 'string' ? { name: t } : (t as McpDiscoveredTool),
               )
             : []
         data.setSessionToolsList(fetchedTools)
+        data.setSessionToolsError('')
+        data.setAvailableMcpServers((prev) =>
+          prev.map((s) =>
+            s.id === server.id
+              ? {
+                  ...s,
+                  toolDetails: fetchedTools,
+                  tools: fetchedTools.length,
+                  detectedTransport:
+                    resData.detectedTransport || s.detectedTransport,
+                  serverInfo: resData.serverInfo || s.serverInfo,
+                }
+              : s,
+          ),
+        )
+      } else {
+        data.setSessionToolsList([])
+        data.setSessionToolsError(
+          resData.message ||
+            resData.error ||
+            t('sessionSettings.toolsModal.fetchFailed'),
+        )
       }
-    } catch {
+    } catch (err: unknown) {
       data.setSessionToolsList([])
+      data.setSessionToolsError(
+        err instanceof Error ? err.message : String(err),
+      )
     } finally {
       data.setSessionToolsFetching(false)
     }
@@ -224,31 +300,55 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
 
   const handleFetchSessionTools = async () => {
     if (!data.sessionToolsModalServer) return
+    const server = data.sessionToolsModalServer
     data.setSessionToolsFetching(true)
+    data.setSessionToolsError('')
     try {
-      const res = await fetch('/api/mcp-servers?action=tools', {
+      const res = await fetch(API_ENDPOINTS.mcpServersTools, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'tools',
-          server: data.sessionToolsModalServer,
-        }),
+        body: JSON.stringify({ server }),
       })
       const resData = await res.json()
       if (resData.ok) {
         const fetchedTools: McpDiscoveredTool[] = Array.isArray(
           resData.toolDetails,
         )
-          ? resData.toolDetails
+          ? (resData.toolDetails as McpDiscoveredTool[])
           : Array.isArray(resData.tools)
-            ? resData.tools.map((t: any) =>
-                typeof t === 'string' ? { name: t } : t,
+            ? (resData.tools as unknown[]).map((t) =>
+                typeof t === 'string' ? { name: t } : (t as McpDiscoveredTool),
               )
             : []
         data.setSessionToolsList(fetchedTools)
+        data.setSessionToolsError('')
+        data.setAvailableMcpServers((prev) =>
+          prev.map((s) =>
+            s.id === server.id
+              ? {
+                  ...s,
+                  toolDetails: fetchedTools,
+                  tools: fetchedTools.length,
+                  detectedTransport:
+                    resData.detectedTransport || s.detectedTransport,
+                  serverInfo: resData.serverInfo || s.serverInfo,
+                }
+              : s,
+          ),
+        )
+      } else {
+        data.setSessionToolsList([])
+        data.setSessionToolsError(
+          resData.message ||
+            resData.error ||
+            t('sessionSettings.toolsModal.fetchFailed'),
+        )
       }
-    } catch {
+    } catch (err: unknown) {
       data.setSessionToolsList([])
+      data.setSessionToolsError(
+        err instanceof Error ? err.message : String(err),
+      )
     } finally {
       data.setSessionToolsFetching(false)
     }
@@ -268,15 +368,30 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
       data.setSessionDisabledToolsSet(new Set())
     } else {
       data.setSessionDisabledToolsSet(
-        new Set(data.sessionToolsList.map((t) => t.name)),
+        new Set(
+          data.sessionToolsList
+            .map((t) => t.name)
+            .filter((n): n is string => typeof n === 'string' && Boolean(n)),
+        ),
       )
     }
   }
 
   const handleResetSessionToolsToDefault = () => {
     data.setSessionDisabledToolsSet(
-      new Set(data.sessionToolsModalServer?.disabledTools || []),
+      new Set(
+        Array.isArray(data.sessionToolsModalServer?.disabledTools)
+          ? data.sessionToolsModalServer.disabledTools
+          : [],
+      ),
     )
+  }
+
+  const handleCloseSessionToolsModal = () => {
+    data.setSessionToolsModalServer(null)
+    data.setSessionToolsList([])
+    data.setSessionToolsError('')
+    data.setSessionToolsFetching(false)
   }
 
   const handleApplySessionTools = () => {
@@ -303,22 +418,18 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
       toolsMode: nextToolsMode,
       disabledTools: nextDisabledTools,
     })
-    data.setSessionToolsModalServer(null)
+    handleCloseSessionToolsModal()
   }
 
   // Skills change handlers
   const defaultDisabledModelSkills =
-    data.defaultSettings?.skills?.disabledModelSkills ||
-    data.defaultSettings?.skills?.disabledSkills ||
-    []
+    data.globalConfig?.skills?.disabledModelSkills || []
   const defaultDisabledUserSkills =
-    data.defaultSettings?.skills?.disabledUserSkills || []
+    data.globalConfig?.skills?.disabledUserSkills || []
 
   const workspaceDisabledModelSkills =
     data.workspaceSettings?.skills?.mode === 'custom'
-      ? data.workspaceSettings.skills.disabledModelSkills ||
-        data.workspaceSettings.skills.disabledSkills ||
-        []
+      ? data.workspaceSettings.skills.disabledModelSkills || []
       : defaultDisabledModelSkills
   const workspaceDisabledUserSkills =
     data.workspaceSettings?.skills?.mode === 'custom'
@@ -327,9 +438,7 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
 
   const effectiveDisabledModelList =
     data.skillsConfig.mode === 'custom'
-      ? data.skillsConfig.disabledModelSkills ||
-        data.skillsConfig.disabledSkills ||
-        []
+      ? data.skillsConfig.disabledModelSkills || []
       : data.skillsConfig.mode === 'workspace'
         ? workspaceDisabledModelSkills
         : defaultDisabledModelSkills
@@ -354,24 +463,12 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
     data.setSkillsConfig({
       ...data.skillsConfig,
       mode,
-      disabledSkills:
-        mode === 'custom'
-          ? data.skillsConfig.disabledSkills || []
-          : mode === 'workspace'
-            ? data.workspaceSettings?.skills?.mode === 'custom'
-              ? data.workspaceSettings.skills.disabledSkills || []
-              : []
-            : [],
       disabledModelSkills:
         mode === 'custom'
-          ? data.skillsConfig.disabledModelSkills ||
-            data.skillsConfig.disabledSkills ||
-            []
+          ? data.skillsConfig.disabledModelSkills || []
           : mode === 'workspace'
             ? data.workspaceSettings?.skills?.mode === 'custom'
-              ? data.workspaceSettings.skills.disabledModelSkills ||
-                data.workspaceSettings.skills.disabledSkills ||
-                []
+              ? data.workspaceSettings.skills.disabledModelSkills || []
               : []
             : [],
       disabledUserSkills:
@@ -385,54 +482,36 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
     })
   }
 
-  const handleToggleModelInvocable = (skillName: string) => {
+  const handleSaveSessionSkillModal = (
+    skillName: string,
+    modelDisabled: boolean,
+    userDisabled: boolean,
+  ) => {
     data.setSaveSuccessMsg('')
     data.setError('')
     const curModel =
       data.skillsConfig.mode === 'custom'
-        ? data.skillsConfig.disabledModelSkills ||
-          data.skillsConfig.disabledSkills ||
-          []
+        ? data.skillsConfig.disabledModelSkills || []
         : effectiveDisabledModelList
     const curUser =
       data.skillsConfig.mode === 'custom'
         ? data.skillsConfig.disabledUserSkills || []
         : effectiveDisabledUserList
-    const nextModel = curModel.includes(skillName)
-      ? curModel.filter((n) => n !== skillName)
-      : [...curModel, skillName]
-    data.setSkillsConfig({
-      ...data.skillsConfig,
-      mode: 'custom',
-      disabledSkills: nextModel,
-      disabledModelSkills: nextModel,
-      disabledUserSkills: curUser,
-    })
-  }
 
-  const handleToggleUserInvocable = (skillName: string) => {
-    data.setSaveSuccessMsg('')
-    data.setError('')
-    const curModel =
-      data.skillsConfig.mode === 'custom'
-        ? data.skillsConfig.disabledModelSkills ||
-          data.skillsConfig.disabledSkills ||
-          []
-        : effectiveDisabledModelList
-    const curUser =
-      data.skillsConfig.mode === 'custom'
-        ? data.skillsConfig.disabledUserSkills || []
-        : effectiveDisabledUserList
-    const nextUser = curUser.includes(skillName)
-      ? curUser.filter((n) => n !== skillName)
-      : [...curUser, skillName]
+    const nextModel = modelDisabled
+      ? Array.from(new Set([...curModel, skillName]))
+      : curModel.filter((n) => n !== skillName)
+    const nextUser = userDisabled
+      ? Array.from(new Set([...curUser, skillName]))
+      : curUser.filter((n) => n !== skillName)
+
     data.setSkillsConfig({
       ...data.skillsConfig,
       mode: 'custom',
-      disabledSkills: curModel,
-      disabledModelSkills: curModel,
+      disabledModelSkills: nextModel,
       disabledUserSkills: nextUser,
     })
+    data.setSessionSkillModalTarget(null)
   }
 
   const handleOpenSessionSkillModal = async (skill: SkillItem) => {
@@ -442,8 +521,8 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
       data.setSkillsLoadingMap((prev) => ({ ...prev, [skillName]: true }))
       try {
         const url = sessionId
-          ? `/api/session-settings/skills/content?name=${encodeURIComponent(skillName)}&sessionId=${encodeURIComponent(sessionId)}`
-          : `/api/session-settings/skills/content?name=${encodeURIComponent(skillName)}`
+          ? `${API_ENDPOINTS.skillsContent}?name=${encodeURIComponent(skillName)}&sessionId=${encodeURIComponent(sessionId)}`
+          : `${API_ENDPOINTS.skillsContent}?name=${encodeURIComponent(skillName)}`
         const res = await fetch(url)
         if (res.ok) {
           const resData = await res.json()
@@ -457,7 +536,7 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
               ...prev,
               [skillName]: {
                 ...skill,
-                content: '（暂未获取到该技能的详细指令内容）',
+                content: t('sessionSettings.skills.noContent'),
               },
             }))
           }
@@ -466,16 +545,18 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
             ...prev,
             [skillName]: {
               ...skill,
-              content: '（加载技能详细指令失败）',
+              content: t('sessionSettings.skills.loadError'),
             },
           }))
         }
-      } catch (err: any) {
+      } catch (err: unknown) {
         data.setSkillsContentMap((prev) => ({
           ...prev,
           [skillName]: {
             ...skill,
-            content: `（加载出错: ${err?.message || String(err)}）`,
+            content: t('sessionSettings.skills.loadErrorWithReason', {
+              reason: err instanceof Error ? err.message : String(err),
+            }),
           },
         }))
       } finally {
@@ -488,13 +569,13 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
     data.setRefreshingSkills(true)
     try {
       const url = sessionId
-        ? `/api/session-settings?sessionId=${encodeURIComponent(sessionId)}`
-        : '/api/session-settings'
+        ? `${API_ENDPOINTS.skills}?sessionId=${encodeURIComponent(sessionId)}`
+        : API_ENDPOINTS.skills
       const res = await fetch(url)
       if (res.ok) {
         const resData = await res.json()
-        if (resData?.ok && Array.isArray(resData.availableSkills)) {
-          data.setAvailableSkills(resData.availableSkills)
+        if (resData?.ok && Array.isArray(resData.skills)) {
+          data.setAvailableSkills(resData.skills)
         }
       }
     } catch {
@@ -504,18 +585,17 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
     }
   }
 
+  const defaultActiveMcpCount =
+    data.globalConfig?.mcp?.enabledServerIds?.length ??
+    data.availableMcpServers.filter((s) => s.enabledByDefault).length
+
   const effectiveActiveMcpCount =
     data.mcpConfig.mode === 'custom' || !sessionId
       ? (data.mcpConfig.enabledServerIds || []).length
-      : data.mcpConfig.mode === 'workspace'
-        ? data.workspaceSettings?.mcp?.mode === 'custom'
-          ? (data.workspaceSettings.mcp.enabledServerIds || []).length
-          : data.defaultSettings?.mcp?.mode === 'custom'
-            ? (data.defaultSettings.mcp.enabledServerIds || []).length
-            : data.availableMcpServers.filter((s) => s.enabledByDefault).length
-        : data.defaultSettings?.mcp?.mode === 'custom'
-          ? (data.defaultSettings.mcp.enabledServerIds || []).length
-          : data.availableMcpServers.filter((s) => s.enabledByDefault).length
+      : data.mcpConfig.mode === 'workspace' &&
+          data.workspaceSettings?.mcp?.mode === 'custom'
+        ? (data.workspaceSettings.mcp.enabledServerIds || []).length
+        : defaultActiveMcpCount
 
   return e(
     'div',
@@ -530,7 +610,7 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
       copiedId: data.copiedId,
       currentWorkspaceId: data.currentWorkspaceId,
       currentWorkspaceTitle: data.currentWorkspaceTitle,
-      currentWorkspace: data.currentWorkspace,
+      currentWorkspace: data.currentWorkspace || undefined,
       hasSessionOverride: data.hasSessionOverride,
       cloneSourceId: data.cloneSourceId,
       cloning: data.cloning,
@@ -583,7 +663,7 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
               loadingModels: data.loadingModels,
               currentWorkspaceId: data.currentWorkspaceId,
               workspaceSettings: data.workspaceSettings,
-              defaultSettings: data.defaultSettings,
+              globalConfig: data.globalConfig,
               onModelModeChange: handleModelModeChange,
               onProviderChange: handleProviderChange,
               onModelSelectChange: handleModelSelectChange,
@@ -599,7 +679,7 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
               availableMcpServers: data.availableMcpServers,
               currentWorkspaceId: data.currentWorkspaceId,
               workspaceSettings: data.workspaceSettings,
-              defaultSettings: data.defaultSettings,
+              globalConfig: data.globalConfig,
               onMcpModeChange: handleMcpModeChange,
               onToggleMcpServer: handleToggleMcpServer,
               onToggleSelectAllMcp: handleToggleSelectAllMcp,
@@ -614,7 +694,7 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
               availableSkills: data.availableSkills,
               currentWorkspaceId: data.currentWorkspaceId,
               workspaceSettings: data.workspaceSettings,
-              defaultSettings: data.defaultSettings,
+              globalConfig: data.globalConfig,
               skillsSearch: data.skillsSearch,
               refreshingSkills: data.refreshingSkills,
               effectiveDisabledModelSet,
@@ -674,7 +754,7 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
             type: 'button',
             className: 'dsh-sam-btn primary',
             disabled: actions.saving || actions.savingDefault,
-            onClick: () => actions.handleSave(false),
+            onClick: () => actions.handleSave(),
           },
           actions.saving
             ? t('sessionSettings.action.saving')
@@ -694,12 +774,13 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
       setIsRestoringDefault: data.setIsRestoringDefault,
       currentWorkspaceId: data.currentWorkspaceId,
       currentWorkspaceTitle: data.currentWorkspaceTitle,
-      currentWorkspace: data.currentWorkspace,
+      currentWorkspace: data.currentWorkspace || undefined,
       workspaceSettings: data.workspaceSettings,
-      defaultSettings: data.defaultSettings,
+      globalConfig: data.globalConfig,
       modelConfig: data.modelConfig,
       mcpConfig: data.mcpConfig,
       skillsConfig: data.skillsConfig,
+      availableSkills: data.availableSkills,
       savingDefault: actions.savingDefault,
       onClose: () => data.setSetDefaultModalOpen(false),
       onApply: () =>
@@ -716,12 +797,17 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
       toolsMode: data.sessionToolsMode,
       disabledToolsSet: data.sessionDisabledToolsSet,
       fetching: data.sessionToolsFetching,
-      toolsList: data.sessionToolsList,
+      error: data.sessionToolsError,
+      toolsList: data.sessionToolsList as McpDiscoveredTool[],
       onToolsModeChange: (val) => {
         data.setSessionToolsMode(val)
-        if (val === 'default') {
+        if (val === 'global') {
           data.setSessionDisabledToolsSet(
-            new Set(data.sessionToolsModalServer?.disabledTools || []),
+            new Set(
+              Array.isArray(data.sessionToolsModalServer?.disabledTools)
+                ? data.sessionToolsModalServer.disabledTools
+                : [],
+            ),
           )
         }
       },
@@ -729,7 +815,7 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
       onToggleAllTools: handleToggleAllSessionTools,
       onResetToDefault: handleResetSessionToolsToDefault,
       onFetchTools: handleFetchSessionTools,
-      onClose: () => data.setSessionToolsModalServer(null),
+      onClose: handleCloseSessionToolsModal,
       onApply: handleApplySessionTools,
       t,
     }),
@@ -750,18 +836,8 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
       loadingContent: data.sessionSkillModalTarget
         ? Boolean(data.skillsLoadingMap[data.sessionSkillModalTarget.name])
         : false,
-      onToggleModelInvocable: (name) => {
-        if (data.skillsConfig.mode !== 'custom') {
-          handleSkillsModeChange('custom')
-        }
-        handleToggleModelInvocable(name)
-      },
-      onToggleUserInvocable: (name) => {
-        if (data.skillsConfig.mode !== 'custom') {
-          handleSkillsModeChange('custom')
-        }
-        handleToggleUserInvocable(name)
-      },
+      isSessionContext: true,
+      onSave: handleSaveSessionSkillModal,
       onClose: () => data.setSessionSkillModalTarget(null),
       t,
     }),

@@ -4,29 +4,45 @@ export const SET_DEFAULT_MODAL_CSS = `
   max-width: 720px;
   width: min(720px, calc(100vw - 48px));
 }
+.dsh-set-default-title-row {
+  align-items: center;
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
 .dsh-modal-workspace-chip {
   cursor: default;
-  max-width: 340px;
+  font-size: 12px;
+  font-weight: 500;
+  max-width: 320px;
   overflow: hidden;
   text-overflow: ellipsis;
+  vertical-align: middle;
   white-space: nowrap;
+}
+.dsh-set-default-modal .dsh-sam-desc {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
+  line-height: 20px;
+  margin: 0;
 }
 .dsh-set-default-scope-row {
   align-items: center;
   display: flex;
-  gap: 10px;
-  margin-top: 4px;
+  gap: 12px;
+  margin-bottom: 16px;
 }
 .dsh-set-default-scope-label {
   color: var(--dsw-alias-label-primary);
   font-size: 13px;
   font-weight: 500;
+  line-height: 20px;
 }
 .dsh-set-default-scope-tabs {
   background: var(--dsw-alias-bg-layer-1);
   border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 6px;
-  display: flex;
+  display: inline-flex;
   padding: 2px;
 }
 .dsh-set-default-scope-btn {
@@ -36,7 +52,8 @@ export const SET_DEFAULT_MODAL_CSS = `
   color: var(--dsw-alias-label-secondary);
   cursor: pointer;
   font-size: 12px;
-  padding: 4px 12px;
+  font-weight: 500;
+  padding: 4px 14px;
   transition: background-color 0.15s, color 0.15s;
 }
 .dsh-set-default-scope-btn:hover {
@@ -117,10 +134,5 @@ export const SET_DEFAULT_MODAL_CSS = `
 .dsh-diff-col-value.changed {
   color: var(--dsw-alias-brand-primary, #1383fe);
   font-weight: 500;
-}
-.dsh-set-default-footer-right {
-  align-items: center;
-  display: flex;
-  gap: 10px;
 }
 `

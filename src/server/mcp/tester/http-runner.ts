@@ -25,19 +25,18 @@ export async function testHttpConnection(
   let parsedUrl: URL
   try {
     parsedUrl = new URL(urlStr)
-  } catch (err: any) {
+  } catch (err: unknown) {
     return {
       ok: false,
-      message: `URL 格式不正确: ${err?.message || String(err)}`,
+      message: `URL 格式不正确: ${err instanceof Error ? err.message : String(err)}`,
     }
   }
 
-  const isSsePath =
-    parsedUrl.pathname.endsWith('/sse') || parsedUrl.pathname.includes('/sse')
+  const isSsePath = parsedUrl.pathname.includes('/sse')
 
   const testTimeoutMs = 4000
   const probeTimeoutMs = 2000
-  const customHeaders = server.headers || {}
+  const customHeaders = server.headers ?? {}
 
   // Helper to run test with a specific transport
   const runTestWithTransport = async (
@@ -78,14 +77,25 @@ export async function testHttpConnection(
             : []
 
       const rawTools = listResult?.tools || []
-      const toolDetails: McpDiscoveredTool[] = rawTools.map((t: any) => ({
-        name: typeof t === 'string' ? t : t.name || t.id || '',
-        description: typeof t === 'object' ? t.description : undefined,
-        inputSchema:
-          typeof t === 'object'
-            ? (t.inputSchema as Record<string, any>)
-            : undefined,
-      }))
+      const toolDetails: McpDiscoveredTool[] = rawTools.map((t) => {
+        const item = t as Record<string, unknown>
+        return {
+          name:
+            typeof t === 'string'
+              ? t
+              : typeof item.name === 'string'
+                ? item.name
+                : typeof item.id === 'string'
+                  ? item.id
+                  : '',
+          description:
+            typeof item.description === 'string' ? item.description : undefined,
+          inputSchema:
+            item.inputSchema && typeof item.inputSchema === 'object'
+              ? (item.inputSchema as Record<string, unknown>)
+              : undefined,
+        }
+      })
 
       const toolNames = toolDetails.map((t) => t.name).filter(Boolean)
       const count = toolNames.length
@@ -124,10 +134,10 @@ export async function testHttpConnection(
         requestInit: { headers: customHeaders },
       })
       return await runTestWithTransport(sseTransport, 'sse')
-    } catch (err: any) {
+    } catch (err: unknown) {
       return {
         ok: false,
-        message: `SSE 连接测试失败: ${err?.message || String(err)}`,
+        message: `SSE 连接测试失败: ${err instanceof Error ? err.message : String(err)}`,
       }
     }
   }
@@ -144,8 +154,8 @@ export async function testHttpConnection(
       },
     })
     return await runTestWithTransport(httpTransport, 'streamable-http')
-  } catch (httpErr: any) {
-    const errMsg = httpErr?.message || String(httpErr)
+  } catch (httpErr: unknown) {
+    const errMsg = httpErr instanceof Error ? httpErr.message : String(httpErr)
 
     // Only attempt SSE fallback if the error indicates a method/content-type mismatch on a reachable server,
     // NEVER on a fatal network outage / connection refused / DNS failure / timeout
@@ -162,8 +172,11 @@ export async function testHttpConnection(
           requestInit: { headers: customHeaders },
         })
         return await runTestWithTransport(sseTransport, 'sse')
-      } catch {
-        // Fall back to original HTTP error
+      } catch (sseErr: unknown) {
+        return {
+          ok: false,
+          message: `Streamable HTTP 失败 (${errMsg})，尝试降级 SSE 亦失败: ${sseErr instanceof Error ? sseErr.message : String(sseErr)}`,
+        }
       }
     }
 

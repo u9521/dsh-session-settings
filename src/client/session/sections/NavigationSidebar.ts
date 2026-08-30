@@ -55,13 +55,13 @@ export function NavigationSidebar({
       e(
         'span',
         { className: 'dsh-view-item-badge' },
-        modelConfig.mode === 'custom' && modelConfig.model
-          ? modelConfig.model
-          : modelConfig.mode === 'inherit'
+        modelConfig.mode === 'custom'
+          ? modelConfig.inherit
             ? t('sessionSettings.status.inherit')
-            : modelConfig.mode === 'workspace'
-              ? t('sessionSettings.status.workspace')
-              : t('sessionSettings.status.default'),
+            : modelConfig.model?.model || t('sessionSettings.status.custom')
+          : modelConfig.mode === 'workspace'
+            ? t('sessionSettings.status.workspace')
+            : t('sessionSettings.status.default'),
       ),
     ),
     // 2. MCP Tab

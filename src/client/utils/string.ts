@@ -1,6 +1,6 @@
 import type { McpServerInfo } from '../../types.ts'
 
-export function capitalize(s: string): string {
+function capitalize(s: string): string {
   if (!s) return ''
   return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase()
 }
@@ -18,6 +18,7 @@ export function effortLabel(
 
 export function formatProtocolTitle(
   info?: McpServerInfo | null,
+  t?: (key: string, vars?: Record<string, string | number>) => string,
 ): string | undefined {
   if (!info) return undefined
   const parts: string[] = []
@@ -30,7 +31,10 @@ export function formatProtocolTitle(
   if (info.protocolVersion) {
     let protoStr = `MCP Protocol: ${info.protocolVersion}`
     if (info.supportedVersions && info.supportedVersions.length > 0) {
-      protoStr += ` (支持版本: ${info.supportedVersions.join(', ')})`
+      const vers = info.supportedVersions.join(', ')
+      protoStr += t
+        ? t('mcpServers.supportedVersions', { versions: vers })
+        : ` (Supported: ${vers})`
     }
     parts.push(protoStr)
   }

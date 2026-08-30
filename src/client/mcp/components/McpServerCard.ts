@@ -92,7 +92,7 @@ export function McpServerCard({
                 title: server.serverInfo.websiteUrl,
                 onClick: (evt: React.MouseEvent) => evt.stopPropagation(),
               },
-              '🔗 ' + t('table.website'),
+              '🔗 ' + t('mcpServers.table.website'),
             )
           : null,
         server.serverInfo?.version
@@ -100,7 +100,7 @@ export function McpServerCard({
               'span',
               {
                 className: 'dsh-mcp-proto-badge server-version',
-                title: formatProtocolTitle(server.serverInfo),
+                title: formatProtocolTitle(server.serverInfo, t),
               },
               server.serverInfo.name &&
                 server.serverInfo.name !== server.id &&
@@ -113,7 +113,7 @@ export function McpServerCard({
                 'span',
                 {
                   className: 'dsh-mcp-proto-badge server-version',
-                  title: formatProtocolTitle(server.serverInfo),
+                  title: formatProtocolTitle(server.serverInfo, t),
                 },
                 `MCP ${server.serverInfo.protocolVersion}`,
               )
@@ -122,36 +122,43 @@ export function McpServerCard({
           ? e(
               'span',
               { className: 'dsh-mcp-proto-badge timeout' },
-              `${server.toolCallTimeoutMs / 1000}s 超时`,
-            )
-          : null,
-        server.disabledTools && server.disabledTools.length > 0
-          ? e(
-              'span',
-              { className: 'dsh-mcp-proto-badge disabled-tools' },
-              t('toolsModal.disabledBadge', {
-                count: server.disabledTools.length,
+              t('sessionSettings.field.timeoutSeconds', {
+                seconds: server.toolCallTimeoutMs / 1000,
               }),
             )
           : null,
+        (() => {
+          const disabledCount =
+            typeof server.disabledTools === 'number'
+              ? server.disabledTools
+              : Array.isArray(server.disabledTools)
+                ? server.disabledTools.length
+                : 0
+          return disabledCount > 0
+            ? e(
+                'span',
+                { className: 'dsh-mcp-proto-badge disabled-tools' },
+                t('mcpServers.toolsModal.disabledBadge', {
+                  count: disabledCount,
+                }),
+              )
+            : null
+        })(),
         server.enabledByDefault
           ? e(
               'span',
               { className: 'dsh-mcp-default-badge' },
-              t('table.enabledDefault'),
+              t('mcpServers.table.enabledDefault'),
             )
           : null,
       ),
     ),
 
     // Description
-    server.description || server.serverInfo?.description
-      ? e(
-          'p',
-          { className: 'dsh-mcp-card-desc' },
-          server.description || server.serverInfo?.description,
-        )
-      : null,
+    (() => {
+      const desc = server.description || server.serverInfo?.description
+      return desc ? e('p', { className: 'dsh-mcp-card-desc' }, desc) : null
+    })(),
 
     // Target info (Command + args or URL)
     e(
@@ -200,7 +207,9 @@ export function McpServerCard({
             onClick: () => onTest(server),
           },
           isTesting ? e(IconLoadingOutline16, { className: 'dsh-spin' }) : null,
-          isTesting ? t('actions.testing') : t('actions.test'),
+          isTesting
+            ? t('mcpServers.actions.testing')
+            : t('mcpServers.actions.test'),
         ),
         e(
           'button',
@@ -209,7 +218,7 @@ export function McpServerCard({
             className: 'dsh-mcp-mini-btn',
             onClick: () => onOpenTools(server),
           },
-          t('actions.toolsList'),
+          t('mcpServers.actions.toolsList'),
         ),
       ),
       e(
@@ -220,7 +229,7 @@ export function McpServerCard({
           {
             type: 'button',
             className: 'dsh-mcp-icon-btn',
-            title: t('actions.edit'),
+            title: t('mcpServers.actions.edit'),
             onClick: () => onOpenEdit(server),
           },
           e(IconEditOutline16),
@@ -230,7 +239,7 @@ export function McpServerCard({
           {
             type: 'button',
             className: 'dsh-mcp-icon-btn danger',
-            title: t('actions.delete'),
+            title: t('mcpServers.actions.delete'),
             onClick: () => onDelete(server),
           },
           e(IconTrashOutline16),

@@ -1,9 +1,20 @@
 import type { Context } from '@deepseek-ai/cordis'
-import type { McpServerStore, SessionSettingsStore } from '../../types.ts'
+import type {
+  AssembleContext,
+  McpServerStore,
+  PreToolDecision,
+  PromptAssembly,
+  SessionSettingsStore,
+  ToolExecution,
+  ToolSchema,
+} from '../../types.ts'
 import type { McpManager } from './manager.ts'
 import { publicToolName } from './naming.ts'
 import { resolveEffectiveMcp } from '../session/storage.ts'
-import { resolveWorkspaceForSession } from '../session/routes.ts'
+import {
+  resolveAgentSessionId,
+  resolveWorkspaceForSession,
+} from '../session/resolution.ts'
 
 export function registerMcpInterceptors(
   ctx: Context,
@@ -12,9 +23,13 @@ export function registerMcpInterceptors(
   mcpManager?: McpManager,
 ): void {
   // 1. Filter prompt assembly tools: remove disabled MCP tools and tools from disabled MCP servers
-  ;(ctx as any).on(
+  ctx.on(
     'system-prompt/assemble',
-    async (_assembly: any, context: any, next: any) => {
+    async (
+      _assembly: PromptAssembly,
+      context: AssembleContext,
+      next: () => Promise<PromptAssembly>,
+    ): Promise<PromptAssembly> => {
       const transformed = await next()
       if (
         !transformed ||
@@ -24,13 +39,8 @@ export function registerMcpInterceptors(
         return transformed
       }
 
-      const sessionId =
-        context?.agent?.session?.id ||
-        context?.agent?.session?.header?.parentSession ||
-        context?.agent?.id
-      const workspaceId =
-        context?.agent?.session?.header?.workspaceId ||
-        resolveWorkspaceForSession(ctx, sessionId)
+      const sessionId = resolveAgentSessionId(context?.agent)
+      const workspaceId = await resolveWorkspaceForSession(ctx, sessionId)
 
       const sessionSettingsStore = getSessionSettingsStore()
       const mcpStore = getMcpStore()
@@ -47,9 +57,7 @@ export function registerMcpInterceptors(
       const disabledPublicNamesByServer = new Map<string, Set<string>>()
       for (const server of allServers) {
         const disabledList =
-          effectiveMcp.effectiveDisabledTools[server.id] ??
-          server.disabledTools ??
-          []
+          effectiveMcp.effectiveDisabledTools[server.id] ?? []
         if (disabledList.length > 0) {
           const disabledSet = new Set<string>()
           for (const rawName of disabledList) {
@@ -60,7 +68,7 @@ export function registerMcpInterceptors(
         }
       }
 
-      const filteredTools = transformed.tools.filter((tool: any) => {
+      const filteredTools = transformed.tools.filter((tool: ToolSchema) => {
         if (!tool || typeof tool.name !== 'string') return true
 
         // 1. Precise check via McpManager metadata map
@@ -70,9 +78,7 @@ export function registerMcpInterceptors(
             return false
           }
           const disabledList =
-            effectiveMcp.effectiveDisabledTools[meta.serverId] ??
-            mcpStore.servers[meta.serverId]?.disabledTools ??
-            []
+            effectiveMcp.effectiveDisabledTools[meta.serverId] ?? []
           if (disabledList.includes(meta.rawName)) {
             return false
           }
@@ -108,83 +114,80 @@ export function registerMcpInterceptors(
   )
 
   // 2. Pre-execution guard: deny any execution attempt of disabled MCP tools with standard unknown tool error
-  ;(ctx as any).on('tools/pre-execute', async (exec: any, next: any) => {
-    const toolName = exec?.name
-    if (
-      typeof toolName === 'string' &&
-      (toolName.startsWith('mcp__') || mcpManager?.isMcpTool(toolName))
-    ) {
-      const sessionId =
-        exec?.agent?.session?.id ||
-        exec?.agent?.session?.header?.parentSession ||
-        exec?.agent?.id
-      const workspaceId =
-        exec?.agent?.session?.header?.workspaceId ||
-        resolveWorkspaceForSession(ctx, sessionId)
+  ctx.on(
+    'tools/pre-execute',
+    async (
+      exec: ToolExecution,
+      next: () => Promise<PreToolDecision>,
+    ): Promise<PreToolDecision> => {
+      const toolName = exec?.name
+      if (
+        typeof toolName === 'string' &&
+        (toolName.startsWith('mcp__') || mcpManager?.isMcpTool(toolName))
+      ) {
+        const sessionId = resolveAgentSessionId(exec?.agent)
+        const workspaceId = await resolveWorkspaceForSession(ctx, sessionId)
 
-      const sessionSettingsStore = getSessionSettingsStore()
-      const mcpStore = getMcpStore()
-      const effectiveMcp = resolveEffectiveMcp(
-        sessionSettingsStore,
-        mcpStore,
-        sessionId,
-        workspaceId,
-      )
-      const enabledServerIds = new Set(effectiveMcp.enabledServerIds)
+        const sessionSettingsStore = getSessionSettingsStore()
+        const mcpStore = getMcpStore()
+        const effectiveMcp = resolveEffectiveMcp(
+          sessionSettingsStore,
+          mcpStore,
+          sessionId,
+          workspaceId,
+        )
+        const enabledServerIds = new Set(effectiveMcp.enabledServerIds)
 
-      // 1. Precise check via McpManager
-      const meta = mcpManager?.getToolMeta(toolName)
-      if (meta) {
-        if (!enabledServerIds.has(meta.serverId)) {
-          return {
-            kind: 'deny',
-            reason: `unknown tool "${toolName}"`,
-          }
-        }
-        const disabledList =
-          effectiveMcp.effectiveDisabledTools[meta.serverId] ??
-          mcpStore.servers[meta.serverId]?.disabledTools ??
-          []
-        if (disabledList.includes(meta.rawName)) {
-          return {
-            kind: 'deny',
-            reason: `unknown tool "${toolName}"`,
-          }
-        }
-        return next()
-      }
-
-      // 2. Fallback prefix check
-      for (const server of Object.values(mcpStore.servers)) {
-        const prefix = `mcp__${server.id}__`
-        if (toolName.startsWith(prefix)) {
-          if (!enabledServerIds.has(server.id)) {
+        // 1. Precise check via McpManager
+        const meta = mcpManager?.getToolMeta(toolName)
+        if (meta) {
+          if (!enabledServerIds.has(meta.serverId)) {
             return {
               kind: 'deny',
               reason: `unknown tool "${toolName}"`,
             }
           }
           const disabledList =
-            effectiveMcp.effectiveDisabledTools[server.id] ??
-            server.disabledTools ??
-            []
-          if (disabledList.length > 0) {
-            const disabledNames = new Set(
-              disabledList.flatMap((raw) => [
-                publicToolName(server.id, raw),
-                `mcp__${server.id}__${raw}`,
-              ]),
-            )
-            if (disabledNames.has(toolName)) {
+            effectiveMcp.effectiveDisabledTools[meta.serverId] ?? []
+          if (disabledList.includes(meta.rawName)) {
+            return {
+              kind: 'deny',
+              reason: `unknown tool "${toolName}"`,
+            }
+          }
+          return next()
+        }
+
+        // 2. Fallback prefix check
+        for (const server of Object.values(mcpStore.servers)) {
+          const prefix = `mcp__${server.id}__`
+          if (toolName.startsWith(prefix)) {
+            if (!enabledServerIds.has(server.id)) {
               return {
                 kind: 'deny',
                 reason: `unknown tool "${toolName}"`,
               }
             }
+            const disabledList =
+              effectiveMcp.effectiveDisabledTools[server.id] ?? []
+            if (disabledList.length > 0) {
+              const disabledNames = new Set(
+                disabledList.flatMap((raw) => [
+                  publicToolName(server.id, raw),
+                  `mcp__${server.id}__${raw}`,
+                ]),
+              )
+              if (disabledNames.has(toolName)) {
+                return {
+                  kind: 'deny',
+                  reason: `unknown tool "${toolName}"`,
+                }
+              }
+            }
           }
         }
       }
-    }
-    return next()
-  })
+      return next()
+    },
+  )
 }

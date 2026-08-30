@@ -18,8 +18,7 @@ export type BadgeVariant =
   | 'streamable-http'
   | 'streamable-http-or-sse'
   | 'http'
-  | 'downgrade'
-  | 'incompatible'
+  | 'timeout'
   | 'disabled-tools'
   | 'server-version'
   | 'count'
@@ -54,8 +53,7 @@ export function Badge({
     variant === 'streamable-http' ||
     variant === 'streamable-http-or-sse' ||
     variant === 'http' ||
-    variant === 'downgrade' ||
-    variant === 'incompatible' ||
+    variant === 'timeout' ||
     variant === 'disabled-tools' ||
     variant === 'server-version' ||
     variant === 'count'

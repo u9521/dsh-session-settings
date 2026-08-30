@@ -1,12 +1,52 @@
+import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
-import { getSkillDetail } from './discovery.ts'
+import { getAvailableSkills, getSkillDetail } from './discovery.ts'
+import { API_ENDPOINTS, type WebServer } from '../../types.ts'
 
-export function registerSkillsRoutes(ctx: Context, webServer: any): () => void {
+export function registerSkillsRoutes(
+  ctx: Context,
+  webServer: WebServer,
+): () => void {
+  const unregisterSkillsListRoute = webServer.register({
+    kind: 'exact',
+    path: API_ENDPOINTS.skills,
+    handler: async (req: IncomingMessage, res: ServerResponse) => {
+      res.setHeader('Content-Type', 'application/json; charset=utf-8')
+      if (req.method !== 'GET') {
+        res.writeHead(405)
+        res.end(JSON.stringify({ ok: false, error: 'Method Not Allowed' }))
+        return
+      }
+      const url = new URL(req.url ?? '/', 'http://localhost')
+      const reqSessionId =
+        (url.searchParams.get('sessionId') || '').trim() || undefined
+
+      try {
+        const skills = await getAvailableSkills(ctx, reqSessionId)
+        res.writeHead(200)
+        res.end(JSON.stringify({ ok: true, skills }))
+      } catch (err: unknown) {
+        res.writeHead(500)
+        res.end(
+          JSON.stringify({
+            ok: false,
+            error: err instanceof Error ? err.message : String(err),
+          }),
+        )
+      }
+    },
+  })
+
   const unregisterSkillContentRoute = webServer.register({
     kind: 'exact',
-    path: '/api/session-settings/skills/content',
-    handler: async (req: any, res: any) => {
+    path: API_ENDPOINTS.skillsContent,
+    handler: async (req: IncomingMessage, res: ServerResponse) => {
       res.setHeader('Content-Type', 'application/json; charset=utf-8')
+      if (req.method !== 'GET') {
+        res.writeHead(405)
+        res.end(JSON.stringify({ ok: false, error: 'Method Not Allowed' }))
+        return
+      }
       const url = new URL(req.url ?? '/', 'http://localhost')
       const skillName = (url.searchParams.get('name') || '').trim()
       const reqSessionId =
@@ -18,22 +58,35 @@ export function registerSkillsRoutes(ctx: Context, webServer: any): () => void {
         return
       }
 
-      const skill = await getSkillDetail(ctx, skillName, reqSessionId)
-      if (!skill) {
-        res.writeHead(404)
+      try {
+        const skill = await getSkillDetail(ctx, skillName, reqSessionId)
+        if (!skill) {
+          res.writeHead(404)
+          res.end(
+            JSON.stringify({
+              ok: false,
+              error: `Skill "${skillName}" not found`,
+            }),
+          )
+          return
+        }
+
+        res.writeHead(200)
+        res.end(JSON.stringify({ ok: true, skill }))
+      } catch (err: unknown) {
+        res.writeHead(500)
         res.end(
           JSON.stringify({
             ok: false,
-            error: `Skill "${skillName}" not found`,
+            error: err instanceof Error ? err.message : String(err),
           }),
         )
-        return
       }
-
-      res.writeHead(200)
-      res.end(JSON.stringify({ ok: true, skill }))
     },
   })
 
-  return unregisterSkillContentRoute
+  return () => {
+    unregisterSkillsListRoute()
+    unregisterSkillContentRoute()
+  }
 }

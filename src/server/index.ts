@@ -21,13 +21,10 @@ export function apply(ctx: Context): void {
   const mcpManager = new McpManager(
     ctx,
     () => mcpStore,
-    (s) => {
-      mcpStore = s
-    },
     () => sessionSettingsStore,
   )
 
-  const webServer = ctx.get('webServer' as any) as any
+  const webServer = ctx.get('webServer')
   if (webServer) {
     const unregisterMcp = registerMcpRoutes(
       webServer,
@@ -48,7 +45,6 @@ export function apply(ctx: Context): void {
       (s) => {
         sessionSettingsStore = s
       },
-      () => mcpStore,
       mcpManager,
     )
     const unregisterSkills = registerSkillsRoutes(ctx, webServer)
@@ -83,6 +79,7 @@ export function apply(ctx: Context): void {
 }
 
 // Domain Exports
+export * from '../types.ts'
 export * from './common/paths.ts'
 export * from './common/http.ts'
 export * from './mcp/storage.ts'

@@ -4,24 +4,25 @@ export const HERO_CHIP_CSS = `
   align-items: center;
   display: inline-flex;
   flex-shrink: 0;
+  margin-left: 4px;
 }
 .dsh-hero-session-settings-chip {
   align-items: center;
-  background: var(--dsw-alias-bg-layer-1, #1e1e20);
+  background: 0 0;
   border: 1px solid var(--dsw-alias-border-l2, rgba(255, 255, 255, 0.08));
   border-radius: 16px;
   box-sizing: border-box;
-  color: var(--dsw-alias-label-secondary, #9ca3af);
+  color: var(--dsw-alias-label-primary, #ffffff);
   cursor: pointer;
   display: inline-flex;
   font-family: inherit;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 500;
-  gap: 6px;
-  height: 28px;
-  line-height: 16px;
-  max-width: 220px;
-  padding: 0 10px;
+  gap: 4px;
+  min-height: 28px;
+  line-height: 20px;
+  max-width: 240px;
+  padding: 0 8px;
   transition: background-color 0.15s, border-color 0.15s, color 0.15s;
   user-select: none;
 }

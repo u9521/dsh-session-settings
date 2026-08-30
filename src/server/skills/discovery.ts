@@ -1,10 +1,16 @@
 import type { Context } from '@deepseek-ai/cordis'
-import type { SkillItem } from '../../types.ts'
+import type {
+  Agent,
+  SessionHeader,
+  SkillDefinition,
+  SkillItem,
+  SkillsService,
+} from '../../types.ts'
+import { resolveSessionCwd } from '../session/resolution.ts'
 
-export function classifySkillSource(skill: {
+function classifySkillSource(skill: {
   provider?: string
   source?: string
-  path?: string
   metadata?: Readonly<Record<string, unknown>>
 }): { isRuntime: boolean; source: string } {
   if (!skill) return { isRuntime: false, source: 'user-dsh' }
@@ -41,7 +47,6 @@ export function classifySkillSource(skill: {
 
   // 2. Official SkillSource enumeration contract from DSH (@deepseek-ai/dsh-skill)
   const src = (skill.source || '').toLowerCase()
-  const provider = (skill.provider || '').toLowerCase()
 
   switch (src) {
     case 'user-dsh':
@@ -67,30 +72,11 @@ export function classifySkillSource(skill: {
       if (src.includes('project')) {
         return { isRuntime: false, source: 'project-dsh' }
       }
-      if (
-        provider &&
-        provider !== 'filesystem' &&
-        provider !== 'project-dsh' &&
-        provider !== 'user-dsh' &&
-        provider !== 'project-agents' &&
-        provider !== 'user-agents'
-      ) {
-        return { isRuntime: true, source: src || 'runtime' }
-      }
       return { isRuntime: true, source: src || 'runtime' }
   }
 }
 
-export function isRuntimeSkill(skill: {
-  provider?: string
-  source?: string
-  path?: string
-  metadata?: Readonly<Record<string, unknown>>
-}): boolean {
-  return classifySkillSource(skill).isRuntime
-}
-
-export function compareSkills(a: SkillItem, b: SkillItem): number {
+function compareSkills(a: SkillItem, b: SkillItem): number {
   const aRuntime = Boolean(a.isRuntime)
   const bRuntime = Boolean(b.isRuntime)
   // Non-runtime skills first, runtime skills last (置底)
@@ -100,11 +86,15 @@ export function compareSkills(a: SkillItem, b: SkillItem): number {
   return a.name.localeCompare(b.name)
 }
 
-function resolveSessionPreset(session: any): string | undefined {
+function resolveSessionPreset(session?: {
+  events?: readonly unknown[]
+  header?: SessionHeader
+}): string | undefined {
   if (!session) return undefined
   if (Array.isArray(session.events)) {
     for (let index = session.events.length - 1; index >= 0; index -= 1) {
-      const event = session.events[index]
+      const event = session.events[index] as
+        { type?: string; data?: { agentPreset?: string } } | undefined
       if (event?.type === 'agent-preset/selected')
         return event.data?.agentPreset
     }
@@ -112,10 +102,13 @@ function resolveSessionPreset(session: any): string | undefined {
   return session.header?.agentPreset
 }
 
-async function resolveScopes(ctx: Context, sessionId?: string): Promise<any[]> {
-  const sessionsService = ctx.get('sessions' as any) as any
-  const agentsService = ctx.get('agents' as any) as any
-  const presets = ctx.get('agentPresets' as any) as any
+async function resolveScopes(
+  ctx: Context,
+  sessionId?: string,
+): Promise<unknown[]> {
+  const sessionsService = ctx.get('sessions')
+  const agentsService = ctx.get('agents')
+  const presets = ctx.get('agentPresets')
 
   if (sessionId) {
     const session = sessionsService?.get?.(sessionId)
@@ -127,7 +120,7 @@ async function resolveScopes(ctx: Context, sessionId?: string): Promise<any[]> {
       try {
         let presetId = resolveSessionPreset(session)
         if (!presetId) {
-          const persistence = ctx.get('sessionPersistence' as any) as any
+          const persistence = ctx.get('sessionPersistence')
           if (persistence && typeof persistence.inspect === 'function') {
             try {
               const inspected = await persistence.inspect(sessionId)
@@ -156,6 +149,29 @@ async function resolveScopes(ctx: Context, sessionId?: string): Promise<any[]> {
   return [undefined]
 }
 
+function resolveSkillRegistryService(
+  ctx: Context,
+  scope: unknown,
+): SkillsService | undefined {
+  const presets = ctx.get('agentPresets')
+  if (
+    scope &&
+    typeof scope === 'object' &&
+    'ctx' in scope &&
+    presets &&
+    typeof presets.serviceFor === 'function'
+  ) {
+    try {
+      const service = presets.serviceFor<SkillsService>(
+        scope as Agent,
+        'skills',
+      )
+      if (service) return service
+    } catch {}
+  }
+  return ctx.get('skills')
+}
+
 export async function getAvailableSkills(
   ctx: Context,
   sessionId?: string,
@@ -163,44 +179,13 @@ export async function getAvailableSkills(
   const map = new Map<string, SkillItem>()
 
   // 1. Try resolving session cwd if session exists. For global scope, keep cwd undefined so project scanning is skipped.
-  let targetCwd: string | undefined = undefined
-  if (sessionId) {
-    try {
-      const sessionsService = ctx.get('sessions' as any) as any
-      const session = sessionsService?.get?.(sessionId)
-      if (session?.header?.cwd) {
-        targetCwd = session.header.cwd
-      } else {
-        const persistence = ctx.get('sessionPersistence' as any) as any
-        if (persistence && typeof persistence.inspect === 'function') {
-          const inspected = await persistence.inspect(sessionId)
-          if (inspected?.meta?.cwd) {
-            targetCwd = inspected.meta.cwd
-          }
-        }
-      }
-    } catch {}
-  }
+  const targetCwd = await resolveSessionCwd(ctx, sessionId)
 
   // 2. Query official Cordis Skill Registry across resolved scopes
-  const presets = ctx.get('agentPresets' as any) as any
   const scopes = await resolveScopes(ctx, sessionId)
 
   for (const scope of scopes) {
-    let skillsService: any = undefined
-    if (
-      scope &&
-      scope.ctx &&
-      presets &&
-      typeof presets.serviceFor === 'function'
-    ) {
-      try {
-        skillsService = presets.serviceFor(scope, 'skills')
-      } catch {}
-    }
-    if (!skillsService) {
-      skillsService = ctx.get('skills' as any) as any
-    }
+    const skillsService = resolveSkillRegistryService(ctx, scope)
 
     if (skillsService && typeof skillsService.list === 'function') {
       try {
@@ -212,18 +197,12 @@ export async function getAvailableSkills(
           for (const s of list) {
             if (!map.has(s.name)) {
               const { isRuntime, source } = classifySkillSource(s)
-              const resolvedPath =
-                s.path ||
-                (s.resourceBase?.kind === 'directory'
-                  ? s.resourceBase.path
-                  : undefined)
               map.set(s.name, {
                 name: s.name,
                 description: s.description || '',
                 whenToUse: s.whenToUse,
                 provider: s.provider || 'skills-registry',
                 source,
-                path: resolvedPath,
                 modelInvocable: s.invocation?.modelInvocable ?? true,
                 userInvocable: s.invocation?.userInvocable ?? true,
                 isRuntime,
@@ -243,48 +222,21 @@ export async function getSkillDetail(
   name: string,
   sessionId?: string,
 ): Promise<SkillItem | null> {
-  let targetCwd: string | undefined = undefined
-  if (sessionId) {
-    try {
-      const sessionsService = ctx.get('sessions' as any) as any
-      const session = sessionsService?.get?.(sessionId)
-      if (session?.header?.cwd) {
-        targetCwd = session.header.cwd
-      } else {
-        const persistence = ctx.get('sessionPersistence' as any) as any
-        if (persistence && typeof persistence.inspect === 'function') {
-          const inspected = await persistence.inspect(sessionId)
-          if (inspected?.meta?.cwd) {
-            targetCwd = inspected.meta.cwd
-          }
-        }
-      }
-    } catch {}
-  }
+  const targetCwd = await resolveSessionCwd(ctx, sessionId)
 
   // Query official Cordis Skill Registry across resolved scopes
-  const presets = ctx.get('agentPresets' as any) as any
   const scopes = await resolveScopes(ctx, sessionId)
 
   for (const scope of scopes) {
-    let skillsService: any = undefined
-    if (
-      scope &&
-      scope.ctx &&
-      presets &&
-      typeof presets.serviceFor === 'function'
-    ) {
-      try {
-        skillsService = presets.serviceFor(scope, 'skills')
-      } catch {}
-    }
-    if (!skillsService) {
-      skillsService = ctx.get('skills' as any) as any
-    }
+    const skillsService = resolveSkillRegistryService(ctx, scope)
 
     if (skillsService && typeof skillsService.get === 'function') {
       try {
-        const s = await skillsService.get(name, {
+        const s:
+          | (SkillDefinition & {
+              resourceBase?: { kind?: string; path?: string }
+            })
+          | undefined = await skillsService.get(name, {
           cwd: targetCwd,
           scope,
         })

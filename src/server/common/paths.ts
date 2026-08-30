@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 
-export function getStorageDir(): string {
+function getStorageDir(): string {
   const dshHome = process.env.DSH_HOME || path.join(os.homedir(), '.dsh')
   const storageDir = path.join(dshHome, 'storages')
   try {

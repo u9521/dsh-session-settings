@@ -8,6 +8,7 @@ import type {
 } from '../../types/index.ts'
 import { ModeSelector } from '../../components/index.ts'
 import { effortLabel } from '../../utils/index.ts'
+import { resolveEffectiveSubagentModel } from '../../utils/config.ts'
 
 const e = React.createElement
 
@@ -17,7 +18,7 @@ export interface SubagentModelSectionProps {
   loadingModels?: boolean
   currentWorkspaceId?: string
   workspaceSettings?: SessionSettingsConfig
-  defaultSettings: SessionSettingsConfig
+  globalConfig: SessionSettingsConfig
   onModelModeChange: (mode: SubagentModelMode) => void
   onProviderChange: (providerId: string) => void
   onModelSelectChange: (modelId: string) => void
@@ -31,33 +32,44 @@ export function SubagentModelSection({
   loadingModels = false,
   currentWorkspaceId,
   workspaceSettings,
-  defaultSettings,
+  globalConfig,
   onModelModeChange,
   onProviderChange,
   onModelSelectChange,
   onReasoningEffortChange,
   t,
 }: SubagentModelSectionProps) {
+  const currentProvider = modelConfig.model?.provider || ''
+  const currentModel = modelConfig.model?.model || ''
+  const currentEffort = modelConfig.model?.reasoningEffort || ''
+
   const currentProviderGroup = Array.isArray(providers)
-    ? providers.find((g) => g.id === modelConfig.provider)
+    ? providers.find((g) => g.id === currentProvider)
     : null
   const currentModelItem = Array.isArray(currentProviderGroup?.models)
-    ? currentProviderGroup?.models?.find((m) => m.id === modelConfig.model)
+    ? currentProviderGroup.models.find((m) => m.id === currentModel)
     : null
-  const availableEfforts = currentModelItem?.reasoning?.efforts || []
+  const availableEfforts = currentModelItem?.reasoning?.efforts ?? []
 
-  const effectiveModelConfig: SubagentModelConfig =
-    modelConfig.mode === 'workspace'
-      ? workspaceSettings?.subagentModel?.mode === 'custom'
-        ? workspaceSettings.subagentModel
-        : defaultSettings?.subagentModel?.mode === 'custom'
-          ? defaultSettings.subagentModel
-          : { mode: 'inherit' }
-      : modelConfig.mode === 'default'
-        ? defaultSettings?.subagentModel?.mode === 'custom'
-          ? defaultSettings.subagentModel
-          : { mode: 'inherit' }
-        : modelConfig
+  const hasGlobalCustomModel = Boolean(
+    globalConfig?.subagentModel?.inherit === false &&
+    globalConfig?.subagentModel?.model?.provider &&
+    globalConfig?.subagentModel?.model?.model,
+  )
+
+  const effectiveModelConfig = resolveEffectiveSubagentModel(
+    { subagentModel: modelConfig, mcp: {}, skills: {} },
+    workspaceSettings,
+    globalConfig,
+  )
+
+  const defaultMode = currentWorkspaceId ? 'workspace' : 'global'
+  const selectedModeValue: SubagentModelMode =
+    modelConfig.mode === 'custom'
+      ? modelConfig.inherit
+        ? 'inherit'
+        : 'custom'
+      : (modelConfig.mode ?? defaultMode)
 
   return e(
     'div',
@@ -81,8 +93,8 @@ export function SubagentModelSection({
     // Mode Selector
     e(ModeSelector, {
       name: 'subagentModelMode',
-      value: modelConfig.mode,
-      onChange: onModelModeChange,
+      value: selectedModeValue,
+      onChange: (val) => onModelModeChange(val as SubagentModelMode),
       options: [
         {
           value: 'workspace',
@@ -90,34 +102,34 @@ export function SubagentModelSection({
           title: t('sessionSettings.mode.workspace.title'),
           badges: [
             workspaceSettings?.subagentModel?.mode === 'custom'
-              ? {
-                  label: `${t('sessionSettings.badge.custom')}: ${workspaceSettings?.subagentModel?.provider || ''} / ${workspaceSettings?.subagentModel?.model || ''}`,
-                  variant: 'custom',
-                }
-              : workspaceSettings?.subagentModel?.mode === 'inherit'
+              ? workspaceSettings.subagentModel.inherit
                 ? {
                     label: t('sessionSettings.badge.inherit'),
                     variant: 'inherit',
                   }
-                : defaultSettings?.subagentModel?.mode === 'custom'
-                  ? {
-                      label: `${t('sessionSettings.badge.custom')}: ${defaultSettings?.subagentModel?.provider || ''} / ${defaultSettings?.subagentModel?.model || ''}`,
-                      variant: 'custom',
-                    }
-                  : {
-                      label: t('sessionSettings.badge.inherit'),
-                      variant: 'inherit',
-                    },
+                : {
+                    label: `${t('sessionSettings.badge.custom')}: ${workspaceSettings.subagentModel.model?.provider || ''} / ${workspaceSettings.subagentModel.model?.model || ''}`,
+                    variant: 'custom',
+                  }
+              : hasGlobalCustomModel
+                ? {
+                    label: `${t('sessionSettings.badge.custom')}: ${globalConfig?.subagentModel?.model?.provider || ''} / ${globalConfig?.subagentModel?.model?.model || ''}`,
+                    variant: 'custom',
+                  }
+                : {
+                    label: t('sessionSettings.badge.inherit'),
+                    variant: 'inherit',
+                  },
           ],
           desc: t('sessionSettings.mode.workspace.desc'),
         },
         {
-          value: 'default',
+          value: 'global',
           title: t('sessionSettings.mode.default.title'),
           badges: [
-            defaultSettings?.subagentModel?.mode === 'custom'
+            hasGlobalCustomModel
               ? {
-                  label: `${t('sessionSettings.badge.custom')}: ${defaultSettings?.subagentModel?.provider || ''} / ${defaultSettings?.subagentModel?.model || ''}`,
+                  label: `${t('sessionSettings.badge.custom')}: ${globalConfig?.subagentModel?.model?.provider || ''} / ${globalConfig?.subagentModel?.model?.model || ''}`,
                   variant: 'custom',
                 }
               : {
@@ -140,8 +152,8 @@ export function SubagentModelSection({
       ],
     }),
 
-    // Custom Mode Fields
-    modelConfig.mode === 'custom'
+    // Custom Mode Fields (Only when mode === 'custom' and inherit !== true)
+    modelConfig.mode === 'custom' && !modelConfig.inherit
       ? e(
           'div',
           { className: 'dsh-sam-fields-panel' },
@@ -157,7 +169,7 @@ export function SubagentModelSection({
               'select',
               {
                 className: 'dsh-sam-select',
-                value: modelConfig.provider || '',
+                value: currentProvider,
                 disabled: loadingModels || providers.length === 0,
                 onChange: (evt: React.ChangeEvent<HTMLSelectElement>) =>
                   onProviderChange(evt.target.value),
@@ -174,7 +186,7 @@ export function SubagentModelSection({
                       { value: '', disabled: true },
                       t('sessionSettings.field.noModelsFound'),
                     )
-                  : !modelConfig.provider
+                  : !currentProvider
                     ? e(
                         'option',
                         { value: '', disabled: true },
@@ -190,12 +202,12 @@ export function SubagentModelSection({
                     : p.name || p.id,
                 ),
               ),
-              modelConfig.provider &&
-                !providers.some((p) => p.id === modelConfig.provider)
+              currentProvider &&
+                !providers.some((p) => p.id === currentProvider)
                 ? e(
                     'option',
-                    { key: modelConfig.provider, value: modelConfig.provider },
-                    modelConfig.provider,
+                    { key: currentProvider, value: currentProvider },
+                    currentProvider,
                   )
                 : null,
             ),
@@ -213,15 +225,15 @@ export function SubagentModelSection({
               'select',
               {
                 className: 'dsh-sam-select',
-                value: modelConfig.model || '',
+                value: currentModel,
                 disabled:
                   loadingModels ||
-                  !modelConfig.provider ||
+                  !currentProvider ||
                   !currentProviderGroup?.models?.length,
                 onChange: (evt: React.ChangeEvent<HTMLSelectElement>) =>
                   onModelSelectChange(evt.target.value),
               },
-              !modelConfig.model
+              !currentModel
                 ? e(
                     'option',
                     { value: '', disabled: true },
@@ -231,14 +243,14 @@ export function SubagentModelSection({
               (currentProviderGroup?.models || []).map((m) =>
                 e('option', { key: m.id, value: m.id }, m.name || m.id),
               ),
-              modelConfig.model &&
+              currentModel &&
                 !currentProviderGroup?.models?.some(
-                  (m) => m.id === modelConfig.model,
+                  (m) => m.id === currentModel,
                 )
                 ? e(
                     'option',
-                    { key: modelConfig.model, value: modelConfig.model },
-                    modelConfig.model,
+                    { key: currentModel, value: currentModel },
+                    currentModel,
                   )
                 : null,
             ),
@@ -257,7 +269,7 @@ export function SubagentModelSection({
                   'select',
                   {
                     className: 'dsh-sam-select',
-                    value: modelConfig.reasoningEffort || '',
+                    value: currentEffort,
                     onChange: (evt: React.ChangeEvent<HTMLSelectElement>) =>
                       onReasoningEffortChange(evt.target.value),
                   },
@@ -279,9 +291,10 @@ export function SubagentModelSection({
         )
       : null,
 
-    // Effective Preview Card
-    (modelConfig.mode === 'workspace' || modelConfig.mode === 'default') &&
-      effectiveModelConfig.mode === 'custom'
+    // Effective Preview Card (when inheriting workspace/global and effective model is custom)
+    (modelConfig.mode === 'workspace' || modelConfig.mode === 'global') &&
+      !effectiveModelConfig.inherit &&
+      effectiveModelConfig.model
       ? e(
           'div',
           { className: 'dsh-sam-effective-model-card' },
@@ -297,10 +310,9 @@ export function SubagentModelSection({
             e(
               'span',
               { className: 'dsh-sam-effective-model-source' },
-              modelConfig.mode === 'workspace'
-                ? workspaceSettings?.subagentModel?.mode === 'custom'
-                  ? t('sessionSettings.preview.fromWorkspace')
-                  : t('sessionSettings.preview.fromGlobal')
+              modelConfig.mode === 'workspace' &&
+                workspaceSettings?.subagentModel?.mode === 'custom'
+                ? t('sessionSettings.preview.fromWorkspace')
                 : t('sessionSettings.preview.fromGlobal'),
             ),
           ),
@@ -318,7 +330,7 @@ export function SubagentModelSection({
               e(
                 'span',
                 { className: 'dsh-sam-effective-model-value' },
-                effectiveModelConfig.provider || '-',
+                effectiveModelConfig.model.provider || '-',
               ),
             ),
             e(
@@ -332,10 +344,10 @@ export function SubagentModelSection({
               e(
                 'span',
                 { className: 'dsh-sam-effective-model-value' },
-                effectiveModelConfig.model || '-',
+                effectiveModelConfig.model.model || '-',
               ),
             ),
-            effectiveModelConfig.reasoningEffort
+            effectiveModelConfig.model.reasoningEffort
               ? e(
                   'div',
                   { className: 'dsh-sam-effective-model-item' },
@@ -347,7 +359,7 @@ export function SubagentModelSection({
                   e(
                     'span',
                     { className: 'dsh-sam-effective-model-value' },
-                    effortLabel(t, effectiveModelConfig.reasoningEffort),
+                    effortLabel(t, effectiveModelConfig.model.reasoningEffort),
                   ),
                 )
               : null,
