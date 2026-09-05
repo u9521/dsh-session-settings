@@ -72,15 +72,29 @@ export function SetDefaultModal({
 
   const formatSubagentModelSummary = (cfg?: SubagentModelConfig) => {
     if (!cfg) return t('sessionSettings.status.default')
+    let base = t('sessionSettings.status.default')
     if (cfg.mode === 'custom') {
-      if (cfg.inherit) return t('sessionSettings.status.inherit')
-      if (cfg.model?.provider && cfg.model?.model) {
-        return `${cfg.model.provider} / ${cfg.model.model}`
+      if (cfg.inherit) base = t('sessionSettings.status.inherit')
+      else if (cfg.model?.provider && cfg.model?.model) {
+        base = `${cfg.model.provider} / ${cfg.model.model}`
+      } else {
+        base = t('sessionSettings.badge.custom')
       }
-      return t('sessionSettings.badge.custom')
+    } else if (cfg.mode === 'workspace') {
+      base = t('sessionSettings.status.workspace')
     }
-    if (cfg.mode === 'workspace') return t('sessionSettings.status.workspace')
-    return t('sessionSettings.status.default')
+
+    const agentSelect =
+      cfg.allowAgentSelectModel === false
+        ? t('sessionSettings.switch.allowAgentSelectModel.summaryForced')
+        : t('sessionSettings.switch.allowAgentSelectModel.summaryAuto')
+
+    const forkOverride =
+      cfg.overrideForkModel === true
+        ? t('sessionSettings.switch.overrideForkModel.summaryEnabled')
+        : ''
+
+    return [base, agentSelect, forkOverride].filter(Boolean).join(' · ')
   }
 
   const beforeModelText =

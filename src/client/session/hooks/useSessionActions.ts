@@ -225,10 +225,27 @@ export function useSessionActions({
                   ? {
                       inherit: false,
                       model: modelConfig.model,
+                      allowAgentSelectModel: modelConfig.allowAgentSelectModel,
+                      overrideForkModel: modelConfig.overrideForkModel,
                     }
                   : modelConfig.mode === 'custom'
-                    ? { inherit: true }
-                    : (globalConfig.subagentModel ?? { inherit: true }),
+                    ? {
+                        inherit: true,
+                        allowAgentSelectModel: modelConfig.allowAgentSelectModel,
+                        overrideForkModel: modelConfig.overrideForkModel,
+                      }
+                    : {
+                        ...(globalConfig.subagentModel ?? { inherit: true }),
+                        ...(modelConfig.allowAgentSelectModel !== undefined
+                          ? {
+                              allowAgentSelectModel:
+                                modelConfig.allowAgentSelectModel,
+                            }
+                          : {}),
+                        ...(modelConfig.overrideForkModel !== undefined
+                          ? { overrideForkModel: modelConfig.overrideForkModel }
+                          : {}),
+                      },
               mcp:
                 mcpConfig.mode === 'custom'
                   ? {

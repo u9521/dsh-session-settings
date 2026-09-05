@@ -36,8 +36,16 @@ export async function testStdioConnection(
     }
   })
 
-  const testTimeoutMs = 4000
-  const probeTimeoutMs = 2000
+  const defaultTimeoutMs = 60000
+  const testTimeoutMs =
+    typeof server.toolCallTimeoutMs === 'number' && server.toolCallTimeoutMs > 0
+      ? Math.max(server.toolCallTimeoutMs, 5000)
+      : defaultTimeoutMs
+
+  const probeTimeoutMs = Math.min(
+    Math.max(Math.floor(testTimeoutMs / 4), 5000),
+    15000,
+  )
 
   const client = new Client(
     { name: 'dsh-mcp-tester', version: '1.0.0' },
@@ -54,10 +62,11 @@ export async function testStdioConnection(
 
   try {
     await client.connect(transport, {
-      timeout: probeTimeoutMs,
+      timeout: testTimeoutMs,
       signal: AbortSignal.timeout(testTimeoutMs),
     })
     const listResult = await client.listTools(undefined, {
+      timeout: testTimeoutMs,
       signal: AbortSignal.timeout(testTimeoutMs),
     })
 
@@ -122,9 +131,17 @@ export async function testStdioConnection(
     const stderrDetail = stderrBuffer.trim()
       ? `\n(stderr: ${stderrBuffer.trim().slice(-300)})`
       : ''
+    const isTimeout =
+      err instanceof Error &&
+      (err.name === 'TimeoutError' ||
+        err.name === 'AbortError' ||
+        /timeout|timed out|aborted/i.test(err.message))
+    const timeoutHint = isTimeout
+      ? ` (已等待 ${Math.round(testTimeoutMs / 1000)} 秒)`
+      : ''
     return {
       ok: false,
-      message: `STDIO 连接测试失败: ${err instanceof Error ? err.message : String(err)}${stderrDetail}`,
+      message: `STDIO 连接测试失败${timeoutHint}: ${err instanceof Error ? err.message : String(err)}${stderrDetail}`,
     }
   } finally {
     await client.close().catch(() => {})

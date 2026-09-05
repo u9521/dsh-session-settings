@@ -6,6 +6,7 @@ import {
   LOCALE_NS,
   API_ENDPOINTS,
   type ClientRemoteApi,
+  type ClientRemoteServiceRef,
   type SessionsState,
   type WorkspacesState,
   type WorkspaceInfo,
@@ -16,7 +17,8 @@ import { isSessionCustomized } from '../utils/config.ts'
 const e = React.createElement
 
 export interface SessionSettingsHeroChipProps {
-  api: ClientRemoteApi
+  api?: ClientRemoteApi
+  remote?: ClientRemoteServiceRef
   locale?: {
     bind?: (
       ns: string,
@@ -38,6 +40,7 @@ export interface SessionSettingsHeroChipProps {
 
 export function SessionSettingsHeroChip({
   api,
+  remote,
   locale,
   sessions,
   workspaces,
@@ -192,6 +195,7 @@ export function SessionSettingsHeroChip({
               },
               e(SessionSettingsViewPage, {
                 api,
+                remote,
                 t,
                 sessionId: currentSessionId,
                 workspaceId: currentWorkspaceId,

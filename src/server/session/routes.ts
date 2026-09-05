@@ -144,7 +144,11 @@ export function registerSessionSettingsRoutes(
         if (isSaveDefault) {
           if (parsed.isRestoringDefault) {
             sessionSettingsStore.globalConfig = {
-              subagentModel: {},
+              subagentModel: {
+                inherit: true,
+                allowAgentSelectModel: true,
+                overrideForkModel: false,
+              },
               mcp: { enabledServerIds: [] },
               skills: { disabledModelSkills: [], disabledUserSkills: [] },
             }
@@ -214,6 +218,9 @@ export function registerSessionSettingsRoutes(
           } else {
             const isPureWorkspaceInherit =
               incomingConfig.subagentModel.mode === 'workspace' &&
+              incomingConfig.subagentModel.allowAgentSelectModel ===
+                undefined &&
+              incomingConfig.subagentModel.overrideForkModel === undefined &&
               incomingConfig.mcp.mode === 'workspace' &&
               incomingConfig.skills.mode === 'workspace'
 

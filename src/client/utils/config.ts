@@ -12,6 +12,8 @@ export function isSessionCustomized(
   if (!sessionConfig) return false
   return Boolean(
     sessionConfig.subagentModel?.mode === 'custom' ||
+    sessionConfig.subagentModel?.allowAgentSelectModel !== undefined ||
+    sessionConfig.subagentModel?.overrideForkModel !== undefined ||
     sessionConfig.mcp?.mode === 'custom' ||
     sessionConfig.skills?.mode === 'custom',
   )
@@ -23,34 +25,102 @@ export function resolveEffectiveSubagentModel(
   globalConfig?: SessionSettingsConfig,
 ): SubagentModelConfig {
   const globalCfg = globalConfig?.subagentModel
+  const globalAllow = globalCfg?.allowAgentSelectModel !== false
+  const globalOverrideFork = globalCfg?.overrideForkModel === true
+
   const globalResult: SubagentModelConfig =
     globalCfg?.inherit === false && globalCfg?.model
       ? {
           mode: 'custom',
           inherit: false,
           model: globalCfg.model,
+          allowAgentSelectModel: globalAllow,
+          overrideForkModel: globalOverrideFork,
         }
       : {
           mode: 'custom',
           inherit: true,
+          allowAgentSelectModel: globalAllow,
+          overrideForkModel: globalOverrideFork,
         }
+
+  const wsCfg = workspaceConfig?.subagentModel
+  const wsAllow =
+    wsCfg?.allowAgentSelectModel !== undefined
+      ? wsCfg.allowAgentSelectModel
+      : globalAllow
+  const wsOverrideFork =
+    wsCfg?.overrideForkModel !== undefined
+      ? wsCfg.overrideForkModel
+      : globalOverrideFork
+
+  const workspaceResult: SubagentModelConfig =
+    wsCfg?.mode === 'custom' && wsCfg.inherit === false && wsCfg.model
+      ? {
+          mode: 'custom',
+          inherit: false,
+          model: wsCfg.model,
+          allowAgentSelectModel: wsAllow,
+          overrideForkModel: wsOverrideFork,
+        }
+      : wsCfg?.mode === 'custom' && wsCfg.inherit === true
+        ? {
+            mode: 'custom',
+            inherit: true,
+            allowAgentSelectModel: wsAllow,
+            overrideForkModel: wsOverrideFork,
+          }
+        : {
+            ...globalResult,
+            allowAgentSelectModel: wsAllow,
+            overrideForkModel: wsOverrideFork,
+          }
 
   if (sessionConfig?.subagentModel) {
     const sModel = sessionConfig.subagentModel
-    if (sModel.mode === 'custom') return sModel
-    if (sModel.mode === 'workspace') {
-      if (workspaceConfig?.subagentModel?.mode === 'custom') {
-        return workspaceConfig.subagentModel
+    if (sModel.mode === 'custom') {
+      return {
+        ...sModel,
+        allowAgentSelectModel:
+          sModel.allowAgentSelectModel !== undefined
+            ? sModel.allowAgentSelectModel
+            : wsAllow,
+        overrideForkModel:
+          sModel.overrideForkModel !== undefined
+            ? sModel.overrideForkModel
+            : wsOverrideFork,
       }
-      return globalResult
+    }
+    if (sModel.mode === 'workspace') {
+      return {
+        ...workspaceResult,
+        allowAgentSelectModel:
+          sModel.allowAgentSelectModel !== undefined
+            ? sModel.allowAgentSelectModel
+            : wsAllow,
+        overrideForkModel:
+          sModel.overrideForkModel !== undefined
+            ? sModel.overrideForkModel
+            : wsOverrideFork,
+      }
     }
     if (sModel.mode === 'global') {
-      return globalResult
+      return {
+        ...globalResult,
+        allowAgentSelectModel:
+          sModel.allowAgentSelectModel !== undefined
+            ? sModel.allowAgentSelectModel
+            : globalAllow,
+        overrideForkModel:
+          sModel.overrideForkModel !== undefined
+            ? sModel.overrideForkModel
+            : globalOverrideFork,
+      }
     }
   }
 
-  if (workspaceConfig?.subagentModel?.mode === 'custom') {
-    return workspaceConfig.subagentModel
+  if (wsCfg) {
+    return workspaceResult
   }
 
   return globalResult

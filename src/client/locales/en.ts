@@ -14,12 +14,28 @@ export const en = {
       modelTitle: 'Subagent Model',
       modelDesc:
         'Model and reasoning effort used when executing subagents (Subagent, Subagent Fork, Workflow, etc.) in this session.',
+      behaviorControlTitle: 'Subagent Behavior & Routing',
+      behaviorControlDesc:
+        'Control whether the parent Agent may autonomously select child subagent models, and manage fork inheritance behavior.',
       mcpTitle: 'MCP Servers',
       mcpDesc:
         'Manage Model Context Protocol (MCP) servers available for this session.',
       skillsTitle: 'Skills',
       skillsDesc:
         'Manage skills invocable in this session, including built-in, user-defined, and project-specific skills.',
+    },
+    switch: {
+      allowAgentSelectModel: {
+        title: 'Allow Agent to Select Subagent Models',
+        desc: 'Overrides the official "Allow Agent to select model for Subagent" option. When enabled, the Agent can autonomously select models and use list_subagent_models; when disabled, forced mode is used, removing list_subagent_models and the model parameter from the subagent tool.',
+        summaryAuto: 'Agent Selection: ON',
+        summaryForced: 'Agent Selection: OFF (Forced Mode)',
+      },
+      overrideForkModel: {
+        title: 'Replace Model for Subagent Fork',
+        desc: 'Disabled by default. DSH natively prevents forked subagents (subagent_fork) from changing models to preserve KV Cache reuse from the parent session. Enabling this forces replacing the model for forked subagents, but invalidates parent KV Cache reuse and triggers full prompt recomputation.',
+        summaryEnabled: 'Replace Fork Model',
+      },
     },
     scope: {
       sessionCustom: 'Configured for this session',
@@ -327,9 +343,10 @@ export const en = {
       enabledByDefaultDesc:
         'When enabled, sessions in default mode will automatically load this MCP server',
       advancedTitle: 'Advanced Settings',
-      toolCallTimeoutMs: 'Call Timeout (ms)',
+      toolCallTimeoutMs: 'Call / Test Timeout (ms)',
       toolCallTimeoutMsPlaceholder: 'Default 60000 ms (60s)',
-      toolCallTimeoutMsDesc: 'Maximum timeout duration for each tool execution',
+      toolCallTimeoutMsDesc:
+        'Maximum timeout duration for tool execution and connection testing',
       failOnStartupError: 'Fail Activation on Startup Error',
       failOnStartupErrorDesc:
         'Refuse plugin activation if initial connection or tool sync fails (Default off)',

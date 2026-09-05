@@ -23,6 +23,8 @@ export interface SubagentModelSectionProps {
   onProviderChange: (providerId: string) => void
   onModelSelectChange: (modelId: string) => void
   onReasoningEffortChange: (effortId: string) => void
+  onAllowAgentSelectModelChange?: (allow: boolean) => void
+  onOverrideForkModelChange?: (override: boolean) => void
   t: (key: string, vars?: Record<string, string | number>) => string
 }
 
@@ -37,6 +39,8 @@ export function SubagentModelSection({
   onProviderChange,
   onModelSelectChange,
   onReasoningEffortChange,
+  onAllowAgentSelectModelChange,
+  onOverrideForkModelChange,
   t,
 }: SubagentModelSectionProps) {
   const currentProvider = modelConfig.model?.provider || ''
@@ -62,6 +66,10 @@ export function SubagentModelSection({
     workspaceSettings,
     globalConfig,
   )
+
+  const isAllowAgentSelect =
+    effectiveModelConfig.allowAgentSelectModel !== false
+  const isOverrideFork = effectiveModelConfig.overrideForkModel === true
 
   const defaultMode = currentWorkspaceId ? 'workspace' : 'global'
   const selectedModeValue: SubagentModelMode =
@@ -366,5 +374,132 @@ export function SubagentModelSection({
           ),
         )
       : null,
+
+    // Behavior Control Options Section
+    e(
+      'div',
+      { style: { marginTop: 24, marginBottom: 8 } },
+      e(
+        'h4',
+        {
+          style: {
+            fontSize: '13px',
+            fontWeight: 600,
+            margin: '0 0 4px 0',
+            color: 'var(--dsh-color-fg-default)',
+          },
+        },
+        t('sessionSettings.section.behaviorControlTitle'),
+      ),
+      e(
+        'p',
+        {
+          style: {
+            fontSize: '12px',
+            margin: 0,
+            color: 'var(--dsh-color-fg-muted)',
+          },
+        },
+        t('sessionSettings.section.behaviorControlDesc'),
+      ),
+    ),
+
+    // Switch 1: 允许 Agent 选择子代理模型
+    e(
+      'div',
+      {
+        className: `dsh-mcp-switch-card ${isAllowAgentSelect ? 'active' : ''}`,
+        style: { marginBottom: 12 },
+        tabIndex: 0,
+        role: 'switch',
+        'aria-checked': isAllowAgentSelect,
+        onClick: () => {
+          if (onAllowAgentSelectModelChange) {
+            onAllowAgentSelectModelChange(!isAllowAgentSelect)
+          }
+        },
+        onKeyDown: (evt: React.KeyboardEvent) => {
+          if (evt.key === ' ' || evt.key === 'Enter') {
+            evt.preventDefault()
+            if (onAllowAgentSelectModelChange) {
+              onAllowAgentSelectModelChange(!isAllowAgentSelect)
+            }
+          }
+        },
+      },
+      e(
+        'div',
+        { className: 'dsh-mcp-switch-text' },
+        e(
+          'div',
+          { className: 'dsh-mcp-switch-title' },
+          t('sessionSettings.switch.allowAgentSelectModel.title'),
+        ),
+        e(
+          'div',
+          { className: 'dsh-mcp-switch-desc' },
+          t('sessionSettings.switch.allowAgentSelectModel.desc'),
+        ),
+      ),
+      e(
+        'button',
+        {
+          type: 'button',
+          className: `dsh-mcp-switch-btn ${isAllowAgentSelect ? 'active' : ''}`,
+          tabIndex: -1,
+          'aria-hidden': 'true',
+        },
+        e('span', { className: 'dsh-mcp-switch-thumb' }),
+      ),
+    ),
+
+    // Switch 2: 替换 subagent fork 的模型
+    e(
+      'div',
+      {
+        className: `dsh-mcp-switch-card ${isOverrideFork ? 'active' : ''}`,
+        style: { marginBottom: 16 },
+        tabIndex: 0,
+        role: 'switch',
+        'aria-checked': isOverrideFork,
+        onClick: () => {
+          if (onOverrideForkModelChange) {
+            onOverrideForkModelChange(!isOverrideFork)
+          }
+        },
+        onKeyDown: (evt: React.KeyboardEvent) => {
+          if (evt.key === ' ' || evt.key === 'Enter') {
+            evt.preventDefault()
+            if (onOverrideForkModelChange) {
+              onOverrideForkModelChange(!isOverrideFork)
+            }
+          }
+        },
+      },
+      e(
+        'div',
+        { className: 'dsh-mcp-switch-text' },
+        e(
+          'div',
+          { className: 'dsh-mcp-switch-title' },
+          t('sessionSettings.switch.overrideForkModel.title'),
+        ),
+        e(
+          'div',
+          { className: 'dsh-mcp-switch-desc' },
+          t('sessionSettings.switch.overrideForkModel.desc'),
+        ),
+      ),
+      e(
+        'button',
+        {
+          type: 'button',
+          className: `dsh-mcp-switch-btn ${isOverrideFork ? 'active' : ''}`,
+          tabIndex: -1,
+          'aria-hidden': 'true',
+        },
+        e('span', { className: 'dsh-mcp-switch-thumb' }),
+      ),
+    ),
   )
 }

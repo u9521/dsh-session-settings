@@ -5,6 +5,7 @@ import * as locales from './locales/index.ts'
 import {
   LOCALE_NS,
   type ClientRemoteApi,
+  type ClientRemoteServiceRef,
   type SessionsState,
   type WorkspacesState,
 } from './types/index.ts'
@@ -22,6 +23,8 @@ export const inject = [
   'locale',
   'sessions',
   'workspaces',
+  'remote',
+  'remote.session',
 ]
 
 interface ClientSlotsService {
@@ -61,6 +64,9 @@ export function apply(ctx: Context) {
   const connection = ctx.get('connection') as
     ClientConnectionService | undefined
   const locale = ctx.get('locale') as ClientLocaleService | undefined
+  const remote = (ctx.get('remote') || (ctx as any).remote) as
+    | ClientRemoteServiceRef
+    | undefined
 
   if (!slots || !connection || !locale) return
 
@@ -146,6 +152,7 @@ export function apply(ctx: Context) {
           ClientStoreService<WorkspacesState> | undefined
         return e(SessionSettingsViewPage, {
           ...props,
+          remote,
           api: connection.api,
           t: translator,
           useSessions: (selector) => {
@@ -282,6 +289,7 @@ export function apply(ctx: Context) {
 
       currentRoot.render(
         e(SessionSettingsHeroChip, {
+          remote,
           api: connection.api,
           locale: ctx.get('locale') as unknown as {
             bind?: (

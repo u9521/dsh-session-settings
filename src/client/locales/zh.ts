@@ -13,11 +13,27 @@ export const zh = {
       modelTitle: '子代理模型',
       modelDesc:
         '此会话执行子代理（Subagent、Subagent Fork、Workflow 等）时所使用的模型与思考等级。',
+      behaviorControlTitle: '子代理调用与路由控制',
+      behaviorControlDesc:
+        '控制主 Agent 为子代理选择模型的权限，以及分叉子代理（Fork）的模型继承行为。',
       mcpTitle: 'MCP 服务器',
       mcpDesc: '管理当前会话可调用的 Model Context Protocol (MCP) 服务器。',
       skillsTitle: '技能 (Skills)',
       skillsDesc:
         '管理当前会话可调用的技能（Skills），包括内置、用户定义和项目专属技能。',
+    },
+    switch: {
+      allowAgentSelectModel: {
+        title: '允许 Agent 选择子代理模型',
+        desc: '覆盖官方的「允许 Agent 为 Subagent 选择模型」选项。开启时 Agent 可自主在支持的模型中选择并使用 list_subagent_models；关闭时使用强制模式，从工具列表剔除 list_subagent_models 与 subagent 的 model 参数。',
+        summaryAuto: 'Agent自选: 开启',
+        summaryForced: 'Agent自选: 关闭(强制模式)',
+      },
+      overrideForkModel: {
+        title: '替换 subagent fork 的模型',
+        desc: '默认关闭。DSH 原生禁止基于分叉的子代理（subagent_fork）更换模型，以保证历史会话能够完整复用 KV 缓存。开启此选项后将允许强制替换 fork 子代理的模型，但会导致父会话历史的 KV 缓存失效，引起全量 Prompt 重新计算。',
+        summaryEnabled: '替换Fork模型',
+      },
     },
     scope: {
       sessionCustom: '已为此会话单独配置',
@@ -317,9 +333,9 @@ export const zh = {
       enabledByDefault: '默认开启',
       enabledByDefaultDesc: '启用后，会话在默认模式下将自动加载此 MCP 服务器',
       advancedTitle: '高级配置',
-      toolCallTimeoutMs: '调用超时 (毫秒)',
+      toolCallTimeoutMs: '调用/连接超时 (毫秒)',
       toolCallTimeoutMsPlaceholder: '默认 60000 毫秒 (60秒)',
-      toolCallTimeoutMsDesc: '每次工具调用的最长超时等待时间',
+      toolCallTimeoutMsDesc: '每次工具调用及连接测试的最长超时等待时间',
       failOnStartupError: '启动失败时拒绝激活',
       failOnStartupErrorDesc:
         '初始连接或工具同步失败时直接拒绝插件激活 (默认关闭)',

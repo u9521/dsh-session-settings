@@ -13,6 +13,8 @@ import { getSessionSettingsStoragePath } from '../common/paths.ts'
 const DEFAULT_GLOBAL_SETTINGS: SessionSettingsConfig = {
   subagentModel: {
     inherit: true,
+    allowAgentSelectModel: true,
+    overrideForkModel: false,
   },
   mcp: {
     enabledServerIds: [],
@@ -57,7 +59,10 @@ export function normalizeGlobalSettings(
     return { ...DEFAULT_GLOBAL_SETTINGS }
   }
 
-  const subagentModel: SubagentModelConfig = {}
+  const subagentModel: SubagentModelConfig = {
+    allowAgentSelectModel: raw.subagentModel?.allowAgentSelectModel !== false,
+    overrideForkModel: raw.subagentModel?.overrideForkModel === true,
+  }
   if (raw.subagentModel && typeof raw.subagentModel === 'object') {
     if (raw.subagentModel.inherit === true) {
       subagentModel.inherit = true
@@ -144,11 +149,26 @@ function normalizeSubagentModelConfig(
         ? 'global'
         : 'workspace'
 
+  const allowAgentSelectModel =
+    raw.allowAgentSelectModel !== undefined
+      ? Boolean(raw.allowAgentSelectModel)
+      : undefined
+  const overrideForkModel =
+    raw.overrideForkModel !== undefined
+      ? Boolean(raw.overrideForkModel)
+      : undefined
+
+  const extraFlags = {
+    ...(allowAgentSelectModel !== undefined ? { allowAgentSelectModel } : {}),
+    ...(overrideForkModel !== undefined ? { overrideForkModel } : {}),
+  }
+
   if (mode === 'custom') {
     if (raw.inherit === true) {
       return {
         mode: 'custom',
         inherit: true,
+        ...extraFlags,
       }
     }
     const modelPayload =
@@ -160,15 +180,17 @@ function normalizeSubagentModelConfig(
         mode: 'custom',
         inherit: false,
         model: target,
+        ...extraFlags,
       }
     }
     return {
       mode: 'custom',
       inherit: true,
+      ...extraFlags,
     }
   }
 
-  return { mode }
+  return { mode, ...extraFlags }
 }
 
 function normalizeMcpConfig(raw?: Partial<SessionMcpConfig>): SessionMcpConfig {
@@ -407,36 +429,109 @@ export function resolveEffectiveSubagentModel(
   workspaceId?: string,
 ): SubagentModelConfig {
   const globalCfg = store.globalConfig?.subagentModel
+  const globalAllow = globalCfg?.allowAgentSelectModel !== false
+  const globalOverrideFork = globalCfg?.overrideForkModel === true
+
   const globalResult: SubagentModelConfig =
     globalCfg?.inherit === false && globalCfg?.model
       ? {
           mode: 'custom',
           inherit: false,
           model: globalCfg.model,
+          allowAgentSelectModel: globalAllow,
+          overrideForkModel: globalOverrideFork,
         }
       : {
           mode: 'custom',
           inherit: true,
+          allowAgentSelectModel: globalAllow,
+          overrideForkModel: globalOverrideFork,
         }
+
+  const wsModel = workspaceId
+    ? store.workspaces?.[workspaceId]?.subagentModel
+    : undefined
+
+  const wsAllow =
+    wsModel?.allowAgentSelectModel !== undefined
+      ? wsModel.allowAgentSelectModel
+      : globalAllow
+
+  const wsOverrideFork =
+    wsModel?.overrideForkModel !== undefined
+      ? wsModel.overrideForkModel
+      : globalOverrideFork
+
+  const workspaceResult: SubagentModelConfig =
+    wsModel?.mode === 'custom' && wsModel.inherit === false && wsModel.model
+      ? {
+          mode: 'custom',
+          inherit: false,
+          model: wsModel.model,
+          allowAgentSelectModel: wsAllow,
+          overrideForkModel: wsOverrideFork,
+        }
+      : wsModel?.mode === 'custom' && wsModel.inherit === true
+        ? {
+            mode: 'custom',
+            inherit: true,
+            allowAgentSelectModel: wsAllow,
+            overrideForkModel: wsOverrideFork,
+          }
+        : {
+            ...globalResult,
+            allowAgentSelectModel: wsAllow,
+            overrideForkModel: wsOverrideFork,
+          }
 
   // 1. Check session override
   if (sessionId && store.sessions?.[sessionId]?.subagentModel) {
     const sModel = store.sessions[sessionId].subagentModel
-    if (sModel.mode === 'custom') return sModel
-    if (sModel.mode === 'workspace') {
-      if (workspaceId && store.workspaces?.[workspaceId]?.subagentModel) {
-        const wsModel = store.workspaces[workspaceId].subagentModel
-        if (wsModel.mode === 'custom') return wsModel
+
+    if (sModel.mode === 'custom') {
+      return {
+        ...sModel,
+        allowAgentSelectModel:
+          sModel.allowAgentSelectModel !== undefined
+            ? sModel.allowAgentSelectModel
+            : wsAllow,
+        overrideForkModel:
+          sModel.overrideForkModel !== undefined
+            ? sModel.overrideForkModel
+            : wsOverrideFork,
       }
-      return globalResult
     }
-    if (sModel.mode === 'global') return globalResult
+    if (sModel.mode === 'workspace') {
+      return {
+        ...workspaceResult,
+        allowAgentSelectModel:
+          sModel.allowAgentSelectModel !== undefined
+            ? sModel.allowAgentSelectModel
+            : wsAllow,
+        overrideForkModel:
+          sModel.overrideForkModel !== undefined
+            ? sModel.overrideForkModel
+            : wsOverrideFork,
+      }
+    }
+    if (sModel.mode === 'global') {
+      return {
+        ...globalResult,
+        allowAgentSelectModel:
+          sModel.allowAgentSelectModel !== undefined
+            ? sModel.allowAgentSelectModel
+            : globalAllow,
+        overrideForkModel:
+          sModel.overrideForkModel !== undefined
+            ? sModel.overrideForkModel
+            : globalOverrideFork,
+      }
+    }
   }
 
   // 2. Check workspace default
-  if (workspaceId && store.workspaces?.[workspaceId]?.subagentModel) {
-    const wsModel = store.workspaces[workspaceId].subagentModel
-    if (wsModel.mode === 'custom') return wsModel
+  if (workspaceId && wsModel) {
+    return workspaceResult
   }
 
   return globalResult

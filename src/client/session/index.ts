@@ -66,35 +66,34 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
   const handleModelModeChange = (mode: SubagentModelMode) => {
     data.setSaveSuccessMsg('')
     data.setError('')
+    const extraFlags = {
+      allowAgentSelectModel: data.modelConfig.allowAgentSelectModel,
+      overrideForkModel: data.modelConfig.overrideForkModel,
+    }
     if (mode === 'workspace') {
-      data.setModelConfig({ mode: 'workspace' })
+      data.setModelConfig({ mode: 'workspace', ...extraFlags })
     } else if (mode === 'global') {
-      data.setModelConfig({ mode: 'global' })
+      data.setModelConfig({ mode: 'global', ...extraFlags })
     } else if (mode === 'inherit') {
-      data.setModelConfig({ mode: 'custom', inherit: true })
+      data.setModelConfig({ mode: 'custom', inherit: true, ...extraFlags })
     } else if (mode === 'custom') {
       if (data.modelConfig.model?.provider && data.modelConfig.model?.model) {
         data.setModelConfig({
           mode: 'custom',
           inherit: false,
           model: data.modelConfig.model,
-        })
-      } else if (data.providers.length > 0) {
-        const firstGroup = data.providers[0]
-        const firstModel = firstGroup.models?.[0]?.id || ''
-        data.setModelConfig({
-          mode: 'custom',
-          inherit: false,
-          model: {
-            provider: firstGroup.id,
-            model: firstModel,
-            reasoningEffort: undefined,
-          },
+          ...extraFlags,
         })
       } else {
         data.setModelConfig({
           mode: 'custom',
-          inherit: true,
+          inherit: false,
+          model: {
+            provider: '',
+            model: '',
+            reasoningEffort: undefined,
+          },
+          ...extraFlags,
         })
       }
     }
@@ -111,6 +110,8 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
         model: firstModel,
         reasoningEffort: undefined,
       },
+      allowAgentSelectModel: data.modelConfig.allowAgentSelectModel,
+      overrideForkModel: data.modelConfig.overrideForkModel,
     })
   }
 
@@ -135,6 +136,8 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
           ? data.modelConfig.model?.reasoningEffort
           : undefined,
       },
+      allowAgentSelectModel: data.modelConfig.allowAgentSelectModel,
+      overrideForkModel: data.modelConfig.overrideForkModel,
     })
   }
 
@@ -147,6 +150,26 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
         ...data.modelConfig.model,
         reasoningEffort: effortId || undefined,
       },
+      allowAgentSelectModel: data.modelConfig.allowAgentSelectModel,
+      overrideForkModel: data.modelConfig.overrideForkModel,
+    })
+  }
+
+  const handleAllowAgentSelectModelChange = (allow: boolean) => {
+    data.setSaveSuccessMsg('')
+    data.setError('')
+    data.setModelConfig({
+      ...data.modelConfig,
+      allowAgentSelectModel: allow,
+    })
+  }
+
+  const handleOverrideForkModelChange = (override: boolean) => {
+    data.setSaveSuccessMsg('')
+    data.setError('')
+    data.setModelConfig({
+      ...data.modelConfig,
+      overrideForkModel: override,
     })
   }
 
@@ -668,6 +691,8 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
               onProviderChange: handleProviderChange,
               onModelSelectChange: handleModelSelectChange,
               onReasoningEffortChange: handleReasoningEffortChange,
+              onAllowAgentSelectModelChange: handleAllowAgentSelectModelChange,
+              onOverrideForkModelChange: handleOverrideForkModelChange,
               t,
             })
           : null,

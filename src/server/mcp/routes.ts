@@ -394,11 +394,15 @@ export function registerMcpRoutes(
         const parsed = JSON.parse(bodyStr || '{}') as Record<string, unknown>
         const testPayload = (parsed.server ||
           parsed) as Partial<GlobalMcpServerConfig>
-        const testResult = await testMcpConnection(testPayload)
         const mcpStore = getMcpStore()
         const targetId = (
           typeof testPayload.id === 'string' ? testPayload.id : ''
         ).trim()
+        const existing = targetId ? mcpStore.servers[targetId] : undefined
+        const effectiveServer = existing
+          ? { ...existing, ...testPayload }
+          : testPayload
+        const testResult = await testMcpConnection(effectiveServer)
 
         if (targetId && mcpStore.servers[targetId] && testResult.ok) {
           const s = mcpStore.servers[targetId]
@@ -439,11 +443,15 @@ export function registerMcpRoutes(
         const parsed = JSON.parse(bodyStr || '{}') as Record<string, unknown>
         const testPayload = (parsed.server ||
           parsed) as Partial<GlobalMcpServerConfig>
-        const testResult = await testMcpConnection(testPayload)
         const mcpStore = getMcpStore()
         const targetId = (
           typeof testPayload.id === 'string' ? testPayload.id : ''
         ).trim()
+        const existing = targetId ? mcpStore.servers[targetId] : undefined
+        const effectiveServer = existing
+          ? { ...existing, ...testPayload }
+          : testPayload
+        const testResult = await testMcpConnection(effectiveServer)
 
         if (targetId && mcpStore.servers[targetId] && testResult.ok) {
           const s = mcpStore.servers[targetId]

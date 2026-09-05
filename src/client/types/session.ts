@@ -35,6 +35,26 @@ export interface ClientRemoteApi {
   [key: string]: unknown
 }
 
+export interface ClientRemoteSessionService {
+  modelCatalog?: () => Promise<{
+    ok?: boolean
+    value?: {
+      groups?: ModelProviderGroup[]
+      failures?: unknown[]
+    }
+    error?: {
+      code?: string
+      message?: string
+    }
+  }>
+  [key: string]: unknown
+}
+
+export interface ClientRemoteServiceRef {
+  session?: ClientRemoteSessionService
+  [key: string]: unknown
+}
+
 export interface WorkspaceInfo {
   id?: string
   workspaceId?: string
@@ -72,7 +92,8 @@ export type UseWorkspacesHook = (
 ) => unknown
 
 export interface ClientPageProps {
-  api: ClientRemoteApi
+  api?: ClientRemoteApi
+  remote?: ClientRemoteServiceRef
   t: (key: string, vars?: Record<string, string | number>) => string
   sessionId?: string
   sessionTitle?: string

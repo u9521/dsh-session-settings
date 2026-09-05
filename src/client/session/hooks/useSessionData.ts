@@ -19,6 +19,7 @@ import { isSessionCustomized } from '../../utils/config.ts'
 
 export function useSessionData({
   api,
+  remote,
   sessionId,
   workspaceId: propWorkspaceId,
   workspaceTitle: propWorkspaceTitle,
@@ -177,6 +178,8 @@ export function useSessionData({
 
   const apiRef = React.useRef(api)
   apiRef.current = api
+  const remoteRef = React.useRef(remote)
+  remoteRef.current = remote
 
   const sessionsMap: Record<string, SessionInfo> = React.useMemo(() => {
     const map: Record<string, SessionInfo> = {}
@@ -198,47 +201,17 @@ export function useSessionData({
     let mounted = true
 
     async function loadModels() {
-      const llmService = apiRef.current?.llm as
-        | {
-            models?: (opts: unknown) => Promise<{
-              result?: {
-                ok?: boolean
-                value?: { groups?: ModelProviderGroup[] }
-              }
-            }>
-          }
-        | undefined
-      if (typeof llmService?.models !== 'function') return
+      const remoteSession = remoteRef.current?.session
+      if (typeof remoteSession?.modelCatalog !== 'function') return
       setLoadingModels(true)
       try {
-        const modelsRes = await llmService.models({})
+        const catalogRes = await remoteSession.modelCatalog()
         if (
           mounted &&
-          modelsRes?.result?.ok &&
-          Array.isArray(modelsRes.result.value?.groups)
+          catalogRes?.ok &&
+          Array.isArray(catalogRes.value?.groups)
         ) {
-          const groups = modelsRes.result.value.groups
-          setProviders(groups)
-          if (groups.length > 0) {
-            setModelConfig((prev) => {
-              if (
-                prev.mode === 'custom' &&
-                !prev.inherit &&
-                !prev.model?.provider
-              ) {
-                const firstGroup = groups[0]
-                return {
-                  ...prev,
-                  inherit: false,
-                  model: {
-                    provider: firstGroup.id,
-                    model: firstGroup.models?.[0]?.id || '',
-                  },
-                }
-              }
-              return prev
-            })
-          }
+          setProviders(catalogRes.value.groups)
         }
       } catch {
         // ignore fetch failure
@@ -325,6 +298,11 @@ export function useSessionData({
                       model: data.globalConfig.subagentModel.model,
                     }
                   : { inherit: true }),
+                allowAgentSelectModel:
+                  data.globalConfig.subagentModel?.allowAgentSelectModel !==
+                  false,
+                overrideForkModel:
+                  data.globalConfig.subagentModel?.overrideForkModel === true,
               })
               setMcpConfig({
                 mode: 'global',

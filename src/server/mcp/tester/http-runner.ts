@@ -34,8 +34,16 @@ export async function testHttpConnection(
 
   const isSsePath = parsedUrl.pathname.includes('/sse')
 
-  const testTimeoutMs = 4000
-  const probeTimeoutMs = 2000
+  const defaultTimeoutMs = 30000
+  const testTimeoutMs =
+    typeof server.toolCallTimeoutMs === 'number' && server.toolCallTimeoutMs > 0
+      ? Math.max(server.toolCallTimeoutMs, 3000)
+      : defaultTimeoutMs
+
+  const probeTimeoutMs = Math.min(
+    Math.max(Math.floor(testTimeoutMs / 3), 3000),
+    10000,
+  )
   const customHeaders = server.headers ?? {}
 
   // Helper to run test with a specific transport
@@ -58,10 +66,11 @@ export async function testHttpConnection(
 
     try {
       await client.connect(transport, {
-        timeout: probeTimeoutMs,
+        timeout: testTimeoutMs,
         signal: AbortSignal.timeout(testTimeoutMs),
       })
       const listResult = await client.listTools(undefined, {
+        timeout: testTimeoutMs,
         signal: AbortSignal.timeout(testTimeoutMs),
       })
 

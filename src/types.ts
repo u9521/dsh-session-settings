@@ -34,6 +34,8 @@ export interface SubagentModelConfig {
   mode?: SettingsMode
   inherit?: boolean
   model?: SubagentModelTarget
+  allowAgentSelectModel?: boolean
+  overrideForkModel?: boolean
 }
 
 export type McpTransportType = 'stdio' | 'streamable-http-or-sse'
