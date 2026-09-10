@@ -12,12 +12,6 @@ export interface ToolMeta {
 }
 
 let cachedOfficialPlugin: Plugin | null = null
-let officialPluginChecked = false
-
-interface LoaderServiceWithImport {
-  import?: (name: string) => Promise<unknown>
-  unwrapExports?: (exports: unknown) => unknown
-}
 
 /**
  * Resolve the official @deepseek-ai/dsh-mcp-client Cordis plugin module directly via ctx.loader.
@@ -25,32 +19,88 @@ interface LoaderServiceWithImport {
 async function loadOfficialMcpClientPlugin(
   ctx: Context,
 ): Promise<Plugin | null> {
-  if (officialPluginChecked) return cachedOfficialPlugin
-  officialPluginChecked = true
+  if (cachedOfficialPlugin) return cachedOfficialPlugin
 
-  const loader = ctx.get('loader') as LoaderServiceWithImport | undefined
-  if (loader && typeof loader.import === 'function') {
-    try {
-      const raw = await loader.import('@deepseek-ai/dsh-mcp-client')
-      const mod = (
-        loader.unwrapExports
-          ? loader.unwrapExports(raw)
-          : ((raw as { default?: unknown })?.default ?? raw)
-      ) as Plugin | null
-      if (
-        mod &&
-        (typeof mod === 'function' ||
-          typeof (mod as { apply?: unknown }).apply === 'function')
-      ) {
-        cachedOfficialPlugin = mod
-        return mod
+  const loader =
+    (
+      ctx as {
+        loader?: {
+          import?: (name: string) => Promise<unknown>
+          unwrapExports?: (exports: unknown) => unknown
+        }
       }
-    } catch (err: unknown) {
+    ).loader ?? (typeof ctx.get === 'function' ? ctx.get('loader') : undefined)
+
+  if (!loader) {
+    console.warn(
+      '[session-settings] [MCP-LOADER] Cordis loader service is not available on context.',
+      {
+        hasCtx: Boolean(ctx),
+        availableServices:
+          typeof (ctx as { reflect?: { store?: Record<string, unknown> } })
+            .reflect?.store === 'object'
+            ? Object.keys(
+                (ctx as { reflect?: { store?: Record<string, unknown> } })
+                  .reflect?.store ?? {},
+              )
+            : undefined,
+      },
+    )
+    return null
+  }
+
+  if (typeof loader.import !== 'function') {
+    console.warn(
+      '[session-settings] [MCP-LOADER] Loader service exists but does not have .import() method.',
+      {
+        loaderType: typeof loader,
+        loaderKeys: Object.keys(loader),
+      },
+    )
+    return null
+  }
+
+  try {
+    const raw = await loader.import('@deepseek-ai/dsh-mcp-client')
+    const mod = (
+      typeof loader.unwrapExports === 'function'
+        ? loader.unwrapExports(raw)
+        : raw
+    ) as Plugin | null
+    if (
+      mod &&
+      (typeof mod === 'function' ||
+        typeof (mod as { apply?: unknown }).apply === 'function')
+    ) {
+      cachedOfficialPlugin = mod
+      return mod
+    } else {
       console.warn(
-        '[session-settings] Failed to load @deepseek-ai/dsh-mcp-client via ctx.loader:',
-        err instanceof Error ? err.message : String(err),
+        '[session-settings] [MCP-LOADER] Imported @deepseek-ai/dsh-mcp-client, but module shape does not match Cordis Plugin:',
+        {
+          rawType: typeof raw,
+          rawKeys:
+            raw && typeof raw === 'object' ? Object.keys(raw) : undefined,
+          modType: typeof mod,
+          modKeys:
+            mod && typeof mod === 'object' ? Object.keys(mod) : undefined,
+        },
       )
     }
+  } catch (err: unknown) {
+    const errorObj = err instanceof Error ? err : new Error(String(err))
+    console.warn(
+      '[session-settings] [MCP-LOADER] Failed to import @deepseek-ai/dsh-mcp-client via loader:',
+      {
+        name: errorObj.name,
+        message: errorObj.message,
+        code: (errorObj as { code?: string }).code,
+        stack: errorObj.stack,
+        baseUrl:
+          (ctx as { baseUrl?: string }).baseUrl ??
+          (ctx.root as { baseUrl?: string })?.baseUrl,
+      },
+    )
   }
 
   return null
@@ -156,15 +206,8 @@ export class McpManager {
   ): Promise<boolean> {
     this.unmountOfficialClient(server.id)
 
-    const officialConfig = {
+    const baseConfig = {
       serverName: server.id,
-      transport: server.transport === 'stdio' ? 'stdio' : 'streamable-http',
-      command: server.command ?? '',
-      args: server.args ?? [],
-      env: server.env ?? {},
-      cwd: server.cwd ?? '',
-      url: server.url ?? '',
-      headers: server.headers ?? {},
       toolCallTimeoutMs: server.toolCallTimeoutMs ?? 60000,
       failOnStartupError: Boolean(server.failOnStartupError),
       reconnect: {
@@ -174,6 +217,23 @@ export class McpManager {
         maxAttempts: server.reconnect?.maxAttempts ?? 10,
       },
     }
+
+    const officialConfig =
+      server.transport === 'stdio'
+        ? {
+            ...baseConfig,
+            transport: 'stdio' as const,
+            command: server.command ?? '',
+            args: server.args ?? [],
+            env: server.env ?? {},
+            cwd: server.cwd ?? '',
+          }
+        : {
+            ...baseConfig,
+            transport: 'streamable-http' as const,
+            url: server.url ?? '',
+            headers: server.headers ?? {},
+          }
 
     try {
       const fork = this.ctx.plugin(officialPlugin, officialConfig)
@@ -192,9 +252,18 @@ export class McpManager {
 
       return true
     } catch (err: unknown) {
-      console.warn(
-        `[session-settings] Failed to mount official mcp-client for "${server.id}":`,
-        err instanceof Error ? err.message : String(err),
+      console.error(
+        `[session-settings] [MCP-MOUNT] Failed to mount official mcp-client for server "${server.name || server.id}" (${server.id}):`,
+        {
+          error: err instanceof Error ? err.message : String(err),
+          stack: err instanceof Error ? err.stack : undefined,
+          config: {
+            serverName: server.id,
+            transport: server.transport,
+            endpoint:
+              server.transport === 'stdio' ? server.command : server.url,
+          },
+        },
       )
       return false
     }
@@ -219,6 +288,21 @@ export class McpManager {
       }
       this.serverToolMap.delete(serverId)
     }
+  }
+
+  /**
+   * Ensure all servers in the given list are mounted on-demand.
+   */
+  public async ensureServersMounted(serverIds: string[]): Promise<void> {
+    if (!Array.isArray(serverIds) || serverIds.length === 0) return
+    const store = this.getMcpStore()
+    const pending = serverIds
+      .filter((id) => !this.officialForks.has(id))
+      .map((id) => store.servers[id])
+      .filter((s): s is GlobalMcpServerConfig => Boolean(s))
+
+    if (pending.length === 0) return
+    await Promise.all(pending.map((server) => this.syncServer(server)))
   }
 
   /**
@@ -248,13 +332,25 @@ export class McpManager {
           await this.mountOfficialClient(liveServer, officialPlugin)
         } else {
           console.error(
-            '[session-settings] Official @deepseek-ai/dsh-mcp-client plugin not found in DSH environment.',
+            `[session-settings] [MCP-SYNC] Official @deepseek-ai/dsh-mcp-client plugin not found in DSH environment. Skipping mount for server "${server.name || server.id}" (${server.id}).`,
+            {
+              serverId: server.id,
+              serverName: server.name,
+              transport: server.transport,
+              target:
+                server.transport === 'stdio'
+                  ? `${server.command} ${(server.args || []).join(' ')}`
+                  : server.url,
+            },
           )
         }
       } catch (err: unknown) {
-        console.warn(
-          `[session-settings] Sync failed for MCP server "${server.name || server.id}":`,
-          err instanceof Error ? err.message : String(err),
+        console.error(
+          `[session-settings] [MCP-SYNC] Sync failed for MCP server "${server.name || server.id}" (${server.id}):`,
+          {
+            error: err instanceof Error ? err.message : String(err),
+            stack: err instanceof Error ? err.stack : undefined,
+          },
         )
       } finally {
         this.activeSyncs.delete(server.id)

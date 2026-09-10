@@ -87,16 +87,18 @@ function compareSkills(a: SkillItem, b: SkillItem): number {
 }
 
 function resolveSessionPreset(session?: {
-  events?: readonly unknown[]
   header?: SessionHeader
+  snapshotEvents?: () => readonly unknown[]
 }): string | undefined {
   if (!session) return undefined
-  if (Array.isArray(session.events)) {
-    for (let index = session.events.length - 1; index >= 0; index -= 1) {
-      const event = session.events[index] as
+  if (typeof session.snapshotEvents === 'function') {
+    const events = session.snapshotEvents()
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+      const event = events[index] as
         { type?: string; data?: { agentPreset?: string } } | undefined
-      if (event?.type === 'agent-preset/selected')
+      if (event?.type === 'agent-preset/selected') {
         return event.data?.agentPreset
+      }
     }
   }
   return session.header?.agentPreset
@@ -121,13 +123,10 @@ async function resolveScopes(
         let presetId = resolveSessionPreset(session)
         if (!presetId) {
           const persistence = ctx.get('sessionPersistence')
-          if (persistence && typeof persistence.inspect === 'function') {
+          if (persistence && typeof persistence.stat === 'function') {
             try {
-              const inspected = await persistence.inspect(sessionId)
-              presetId = resolveSessionPreset({
-                header: inspected?.meta,
-                events: inspected?.events,
-              })
+              const stated = await persistence.stat(sessionId)
+              presetId = stated?.header?.agentPreset
             } catch {}
           }
         }

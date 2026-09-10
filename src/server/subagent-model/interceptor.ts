@@ -14,10 +14,27 @@ import {
 } from '../session/resolution.ts'
 
 /**
+ * Set of child session IDs where the calling Agent explicitly provided provider/model
+ * in the delegation tool call (subagent / subagent_fork).
+ */
+const explicitModelSubagents = new Set<string>()
+
+/**
  * Checks whether the child agent was spawned by the "fork" provider.
  */
-function isForkSubagent(agent: any, session: any): boolean {
+function isForkSubagent(session: any): boolean {
   if (!session) return false
+
+  // 1. Official session header check (O(1), established immediately upon creation)
+  // In DSH architecture, a subagent session with isSeeded: true is strictly a forked subagent.
+  if (
+    session.header?.origin === 'subagent' &&
+    session.header?.isSeeded === true
+  ) {
+    return true
+  }
+
+  // 2. Official subagent descriptor check in session events (fallback for zero-history forks & cold restores)
   if (typeof session.snapshotEvents === 'function') {
     const events = session.snapshotEvents()
     for (let i = events.length - 1; i >= 0; i--) {
@@ -27,7 +44,7 @@ function isForkSubagent(agent: any, session: any): boolean {
       }
     }
   }
-  if (agent?.options?.provider === 'fork') return true
+
   return false
 }
 
@@ -35,15 +52,55 @@ function isForkSubagent(agent: any, session: any): boolean {
  * Checks whether the Agent explicitly selected a custom provider/model
  * for this child subagent run.
  */
-function hasAgentSelectedModel(session: any): boolean {
-  if (!session || typeof session.snapshotEvents !== 'function') return false
-  const events = session.snapshotEvents()
-  for (let i = events.length - 1; i >= 0; i--) {
-    const ev = events[i]
-    if (ev?.type === 'subagent/descriptor') {
-      return Boolean(ev.data?.agentProvider && ev.data?.agentModel)
+function hasAgentSelectedModel(session: any, ctx?: Context): boolean {
+  if (!session?.header?.id) return false
+  if (explicitModelSubagents.has(session.header.id)) return true
+
+  // Fallback check in parent session events (for cold sessions or after server restarts)
+  if (ctx && session.header?.parentSession) {
+    try {
+      const sessionsService = ctx.get('sessions') as any
+      const parentSession = sessionsService?.get?.(session.header.parentSession)
+      if (parentSession && typeof parentSession.snapshotEvents === 'function') {
+        const events = parentSession.snapshotEvents()
+        let matchedCallId: string | undefined
+        for (let i = events.length - 1; i >= 0; i--) {
+          const ev = events[i]
+          if (ev?.type === 'tool/result') {
+            const val = ev.data?.message?.content?.[0]?.value
+            const subId = val?.subagentId
+            if (subId === session.header.id) {
+              matchedCallId = ev.data?.message?.source?.callId
+              break
+            }
+          }
+        }
+
+        if (matchedCallId) {
+          for (let i = events.length - 1; i >= 0; i--) {
+            const ev = events[i]
+            if (
+              ev?.type === 'assistant/message' &&
+              Array.isArray(ev.data?.message?.content)
+            ) {
+              for (const block of ev.data.message.content) {
+                if (block?.type === 'tool-call' && block.id === matchedCallId) {
+                  const args = block.args as any
+                  if (args?.provider && args?.model) {
+                    explicitModelSubagents.add(session.header.id)
+                    return true
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    } catch {
+      // Ignore lookup errors
     }
   }
+
   return false
 }
 
@@ -51,6 +108,21 @@ export function registerSubagentModelInterceptor(
   ctx: Context,
   getSessionSettingsStore: () => SessionSettingsStore,
 ): void {
+  // 0. Observe tool results to track explicit model requests on delegation tools
+  ctx.on('tools/result', (exec: any, result: any) => {
+    if (exec?.name === 'subagent' || exec?.name?.startsWith('subagent_')) {
+      const args = exec?.args as any
+      const hasExplicitModel = Boolean(args?.provider && args?.model)
+      const subagentId =
+        result?.value?.subagentId ??
+        result?.value?.childId ??
+        (result?.content?.[0] as any)?.value?.subagentId
+      if (subagentId && hasExplicitModel) {
+        explicitModelSubagents.add(subagentId)
+      }
+    }
+  })
+
   // 1. Guard against list_subagent_models execution when allowAgentSelectModel is disabled
   ctx.inject(['tools'], (toolsCtx: any) => {
     if (typeof toolsCtx?.tools?.guard === 'function') {
@@ -176,7 +248,7 @@ export function registerSubagentModelInterceptor(
 
       // B. If this is a subagent assembling its own prompt, sync {{model}} and {{provider}} variables
       if (isSubagent) {
-        const isFork = isForkSubagent(agent, session)
+        const isFork = isForkSubagent(session)
         if (isFork && effectiveCfg.overrideForkModel !== true) {
           return transformed
         }
@@ -188,7 +260,7 @@ export function registerSubagentModelInterceptor(
         const shouldApply =
           effectiveCfg.allowAgentSelectModel === false
             ? hasCustomModel
-            : hasCustomModel && !hasAgentSelectedModel(session)
+            : hasCustomModel && !hasAgentSelectedModel(session, ctx)
 
         if (shouldApply && effectiveCfg.model) {
           if (agent?.options) {
@@ -236,7 +308,7 @@ export function registerSubagentModelInterceptor(
       )
 
       // Subagent fork check: preserve KV cache unless overrideForkModel is explicitly enabled
-      const isFork = isForkSubagent(payload?.agent, session)
+      const isFork = isForkSubagent(session)
       if (isFork && effectiveCfg.overrideForkModel !== true) {
         return proposal
       }
@@ -270,7 +342,7 @@ export function registerSubagentModelInterceptor(
 
       // When allowAgentSelectModel is true (default):
       // If the Agent explicitly chose a model, do NOT overwrite it!
-      if (hasAgentSelectedModel(session)) {
+      if (hasAgentSelectedModel(session, ctx)) {
         return proposal
       }
 

@@ -29,9 +29,14 @@
 
 - [功能特性](#功能特性)
 - [界面预览](#界面预览)
+- [主线兼容说明](#主线兼容说明)
 - [插件安装](#插件安装)
   - [🚀 一行命令安装（推荐）](#-一行命令安装推荐)
   - [从源码安装教程（开发者）](#从源码安装教程开发者)
+- [插件更新与升级](#插件更新与升级)
+  - [方式 1：在线安装更新（推荐）](#方式-1在线安装更新推荐)
+  - [方式 2：本地源码升级（开发者）](#方式-2本地源码升级开发者)
+- [插件卸载](#插件卸载)
 - [常用开发与维护命令](#常用开发与维护命令)
 - [常见问题 (FAQ)](#常见问题-faq)
 - [开源协议](#开源协议)
@@ -47,6 +52,16 @@
   - **跟随当前会话**：子代理无条件继承父会话选用的模型与思考等级。
   - **自定义配置**：为当前会话单独指定子代理模型、可用 MCP 服务及单独禁用指定工具或技能。
 - **即时动态生效**：配置保存后对下一次子代理调用、MCP 工具执行及技能调用立即生效，无需重启服务或刷新页面。
+
+---
+
+## 主线兼容说明
+
+| 插件分支 | 兼容的 DeepSeek Harness (DSH) 主线版本 | 架构与机制支持 |
+| :--- | :--- | :--- |
+| **`main` 分支** | **`>= 0.1.5-rc.1`** | 原生对齐 **Session Format V3**、**Cordis 4.0.2** 响应式框架、全新 `subagent/descriptor` 会话契约与 `SystemPromptProjection` 动态提示词组装机制。 |
+
+> **⚠️ 注意**：本插件的 `main` 分支已针对 DSH 0.1.5-rc.1 及以上主线版本进行原生对齐，移除了旧版格式补丁，**不再向下兼容 DSH ≤ 0.1.2 的旧版本**。请确保运行环境的 DSH 已升级至最新主线版本。
 
 ---
 
@@ -69,9 +84,9 @@ dsh plugin --profile web add github:u9521/dsh-session-settings#dist
 
 ---
 
-## 从源码安装教程（开发者）
+### 从源码安装教程（开发者）
 
-### 第 1 步：获取源码
+#### 第 1 步：获取源码
 
 将插件代码克隆到本地：
 
@@ -83,31 +98,85 @@ git clone https://github.com/u9521/dsh-session-settings.git
 cd dsh-session-settings
 ```
 
-### 第 2 步：安装依赖与构建
+#### 第 2 步：安装依赖与构建
 
 ```sh
 pnpm install
 pnpm run build
 ```
 
-### 第 3 步：安装到 DSH Web Profile
+#### 第 3 步：安装到 DSH Web Profile
 
 ```sh
 dsh plugin --profile web add .
 ```
 
-#### 验证安装状态
+##### 验证安装状态
 列出 Web Profile 中的已安装插件，确认包含 `@local/dsh-session-settings`：
 
 ```sh
 dsh plugin --profile web list
 ```
 
-### 第 4 步：启动并验证
+#### 第 4 步：启动并验证
 
 ```sh
 dsh web
 ```
+
+---
+
+## 插件更新与升级
+
+### 方式 1：在线安装更新（推荐）
+
+若通过 GitHub dist 分支一行命令安装，可直接使用 `dsh plugin --profile web update` 更新至最新发布：
+
+```sh
+dsh plugin --profile web update github:u9521/dsh-session-settings#dist
+```
+
+> **提示**：更新完成后，启动或重启 Web 服务即可生效：
+> ```sh
+> dsh web
+> ```
+
+---
+
+### 方式 2：本地源码升级（开发者）
+
+若从本地源码克隆安装，请拉取 `main` 分支最新提交并重新构建：
+
+```sh
+# 第 1 步：进入插件源码目录
+cd ~/.dsh/plugins/dsh-session-settings
+
+# 第 2 步：拉取 main 分支最新代码
+git pull origin main
+
+# 第 3 步：更新依赖并重新编译生成产物
+pnpm install
+pnpm run build
+
+# 第 4 步：重启 Web 服务生效
+dsh web
+```
+
+---
+
+## 插件卸载
+
+若需停用并彻底移除本插件，可使用 DSH CLI 从 `web` profile 中移除：
+
+```sh
+dsh plugin --profile web remove @local/dsh-session-settings
+```
+
+> **提示**：若安装时使用的是 github 别名源形式，亦可执行：
+> ```sh
+> dsh plugin --profile web remove github:u9521/dsh-session-settings#dist
+> ```
+> 卸载完成后，启动或重启 `dsh web` 即可恢复 DSH 默认原生界面。
 
 ---
 
@@ -128,10 +197,7 @@ dsh web
 **A**: 不需要。插件在宿主端挂载了实时请求拦截器与动态规则注入机制，保存后后端即时更新并生效。
 
 ### Q2: 如何卸载或移除本插件？
-**A**: 可以通过 DSH CLI 随时从 Web Profile 中移除：
-```sh
-dsh plugin --profile web remove @local/dsh-session-settings
-```
+**A**: 请参考 [插件卸载](#插件卸载) 章节，使用 `dsh plugin --profile web remove` 命令从对应 profile 中移除即可。
 
 ---
 

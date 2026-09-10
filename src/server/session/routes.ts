@@ -118,7 +118,7 @@ export function registerSessionSettingsRoutes(
         const sessionSettingsStore = getSessionSettingsStore()
 
         const incomingConfig: SessionSettingsConfig = normalizeSessionSettings(
-          parsed.config ?? parsed.sessionConfig ?? parsed,
+          (parsed.config ?? parsed) as Partial<SessionSettingsConfig>,
         )
 
         if (
@@ -154,10 +154,9 @@ export function registerSessionSettingsRoutes(
             }
           } else {
             const incomingGlobal = normalizeGlobalSettings(
-              parsed.globalConfig ??
+              (parsed.globalConfig ??
                 parsed.config ??
-                parsed.sessionConfig ??
-                parsed,
+                parsed) as Partial<SessionSettingsConfig>,
             )
             // Runtime skills cannot be set as global defaults
             try {
@@ -237,6 +236,8 @@ export function registerSessionSettingsRoutes(
 
         mcpManager?.syncAll()
 
+        ctx.emit('skills/change')
+
         const sessionEntry =
           targetSessionId && sessionSettingsStore.sessions[targetSessionId]
         const workspaceEntry =
@@ -312,6 +313,8 @@ export function registerSessionSettingsRoutes(
           saveSessionSettingsStore(sessionSettingsStore)
           setSessionSettingsStore(sessionSettingsStore)
           mcpManager?.syncAll()
+
+          ctx.emit('skills/change')
         }
 
         res.writeHead(200)

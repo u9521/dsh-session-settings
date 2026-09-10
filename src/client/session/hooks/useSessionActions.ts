@@ -231,7 +231,8 @@ export function useSessionActions({
                   : modelConfig.mode === 'custom'
                     ? {
                         inherit: true,
-                        allowAgentSelectModel: modelConfig.allowAgentSelectModel,
+                        allowAgentSelectModel:
+                          modelConfig.allowAgentSelectModel,
                         overrideForkModel: modelConfig.overrideForkModel,
                       }
                     : {

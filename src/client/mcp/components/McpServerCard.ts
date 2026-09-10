@@ -48,7 +48,7 @@ export function McpServerCard({
         ? 'sse'
         : server.detectedTransport === 'streamable-http'
           ? 'streamable-http'
-          : 'streamable-http-or-sse'
+          : 'streamable-http'
 
   return e(
     'div',

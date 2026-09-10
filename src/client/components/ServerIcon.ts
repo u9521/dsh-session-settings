@@ -41,8 +41,7 @@ export function ServerIcon({
     setImgError(false)
   }, [iconSrc])
 
-  const transportType =
-    transport || server?.transport || 'streamable-http-or-sse'
+  const transportType = transport || server?.transport || 'streamable-http'
   const isStdio = transportType === 'stdio'
 
   if (iconSrc) {

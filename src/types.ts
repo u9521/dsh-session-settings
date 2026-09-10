@@ -38,7 +38,7 @@ export interface SubagentModelConfig {
   overrideForkModel?: boolean
 }
 
-export type McpTransportType = 'stdio' | 'streamable-http-or-sse'
+export type McpTransportType = 'stdio' | 'streamable-http'
 
 export interface McpReconnectConfig {
   enabled?: boolean
@@ -221,7 +221,7 @@ export interface SessionHeader {
   readonly createdAt: number
   readonly cwd?: string
   readonly parentSession?: string
-  readonly seedLength?: number
+  readonly isSeeded?: boolean
   readonly origin?: 'subagent'
   readonly delegationDepth?: number
   readonly agentPreset?: string
@@ -230,7 +230,7 @@ export interface SessionHeader {
 export interface Session {
   readonly id: string
   readonly header: SessionHeader
-  readonly events?: readonly unknown[]
+  snapshotEvents?(fromSeq?: number, toSeqExclusive?: number): readonly unknown[]
 }
 
 export interface SessionsService {
@@ -267,14 +267,18 @@ export interface AgentPresetsService {
   serviceFor<T = unknown>(agent: { ctx: Context }, name: string): T | undefined
 }
 
-export interface SessionInspection {
-  readonly meta: SessionHeader
-  readonly events: readonly unknown[]
+export interface SessionPersistenceStat {
+  readonly header: SessionHeader
+  readonly revision: string
+  readonly sizeBytes?: number
 }
 
 export interface SessionPersistenceService {
-  inspect(id: string, signal?: AbortSignal): Promise<SessionInspection>
-  list(signal?: AbortSignal): Promise<SessionHeader[]>
+  stat(
+    id: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<SessionPersistenceStat | undefined>
+  list(options?: { signal?: AbortSignal }): Promise<string[]>
 }
 
 export interface LoaderEntry {
@@ -284,8 +288,10 @@ export interface LoaderEntry {
 }
 
 export interface LoaderService {
-  entries: Map<string, LoaderEntry>
-  locate(fiber?: unknown): string | undefined
+  entries?: Map<string, LoaderEntry>
+  locate?(fiber?: unknown): string | undefined
+  import?(name: string): Promise<unknown>
+  unwrapExports?(exports: unknown): unknown
 }
 
 // --------------------------------------------------------------------------
@@ -373,6 +379,8 @@ declare module '@deepseek-ai/cordis' {
       exec: ToolExecution,
       next: () => Promise<PreToolDecision>,
     ): Promise<PreToolDecision>
+
+    'tools/result'(exec: ToolExecution, result: unknown): void
 
     'skills/change'(): void
   }

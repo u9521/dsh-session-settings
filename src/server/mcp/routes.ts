@@ -59,15 +59,15 @@ function parseServerConfig(
   const transport: McpTransportType | null =
     rawTransport === 'stdio'
       ? 'stdio'
-      : rawTransport === 'streamable-http-or-sse' ||
-          rawTransport === 'streamable-http' ||
+      : rawTransport === 'streamable-http' ||
+          rawTransport === 'streamable-http-or-sse' ||
           rawTransport === 'sse'
-        ? 'streamable-http-or-sse'
+        ? 'streamable-http'
         : null
 
   if (!transport) {
     return {
-      error: 'Valid transport (stdio, streamable-http-or-sse) is required',
+      error: 'Valid transport (stdio, streamable-http) is required',
     }
   }
 
@@ -523,12 +523,12 @@ export function registerMcpRoutes(
           const transport: McpTransportType =
             raw.transport === 'stdio'
               ? 'stdio'
-              : raw.transport === 'streamable-http-or-sse' ||
-                  raw.transport === 'streamable-http' ||
+              : raw.transport === 'streamable-http' ||
+                  raw.transport === 'streamable-http-or-sse' ||
                   raw.transport === 'sse'
-                ? 'streamable-http-or-sse'
+                ? 'streamable-http'
                 : raw.url
-                  ? 'streamable-http-or-sse'
+                  ? 'streamable-http'
                   : 'stdio'
 
           const existing = mcpStore.servers[id]

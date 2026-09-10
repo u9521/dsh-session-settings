@@ -364,7 +364,7 @@ export function McpServerFormModal({
           e('option', { value: 'stdio' }, t('mcpServers.form.transportStdio')),
           e(
             'option',
-            { value: 'streamable-http-or-sse' },
+            { value: 'streamable-http' },
             t('mcpServers.form.transportHttp'),
           ),
         ),

@@ -11,7 +11,7 @@ import { registerMcpInterceptors } from './mcp/interceptor.ts'
 import { registerSkillsInterceptors } from './skills/interceptor.ts'
 
 export const name = 'session-settings'
-export const inject = ['webServer']
+export const inject = ['webServer', 'loader']
 
 export function apply(ctx: Context): void {
   let mcpStore: McpServerStore = loadMcpStore()
@@ -57,9 +57,6 @@ export function apply(ctx: Context): void {
       }
     }, 'session-settings: webServer routes')
   }
-
-  // Sync tools on startup
-  mcpManager.syncAll()
 
   ctx.effect(() => {
     return () => {

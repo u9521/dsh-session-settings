@@ -23,7 +23,10 @@ export async function testMcpConnection(
   }
 
   // 2. Streamable HTTP / SSE Transport
-  if (server.transport === 'streamable-http-or-sse') {
+  if (
+    server.transport === 'streamable-http' ||
+    (server.transport as string) === 'streamable-http-or-sse'
+  ) {
     return testHttpConnection(server)
   }
 

@@ -65,8 +65,7 @@ export function apply(ctx: Context) {
     ClientConnectionService | undefined
   const locale = ctx.get('locale') as ClientLocaleService | undefined
   const remote = (ctx.get('remote') || (ctx as any).remote) as
-    | ClientRemoteServiceRef
-    | undefined
+    ClientRemoteServiceRef | undefined
 
   if (!slots || !connection || !locale) return
 

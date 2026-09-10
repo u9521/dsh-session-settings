@@ -98,7 +98,7 @@ export function McpToolsModal({
     e(
       'span',
       {
-        className: `dsh-mcp-proto-badge ${server.transport === 'stdio' ? 'stdio' : (detectedTransport ?? server.transport ?? 'streamable-http-or-sse')}`,
+        className: `dsh-mcp-proto-badge ${server.transport === 'stdio' ? 'stdio' : (detectedTransport ?? server.transport ?? 'streamable-http')}`,
       },
       server.transport === 'stdio'
         ? 'STDIO'

@@ -67,11 +67,7 @@ export function normalizeGlobalSettings(
     if (raw.subagentModel.inherit === true) {
       subagentModel.inherit = true
     } else {
-      const modelPayload =
-        raw.subagentModel.model ||
-        ('provider' in raw.subagentModel
-          ? (raw.subagentModel as Partial<SubagentModelTarget>)
-          : undefined)
+      const modelPayload = raw.subagentModel.model
       const target = normalizeSubagentModelTarget(modelPayload)
       if (target) {
         subagentModel.inherit = false
@@ -171,9 +167,7 @@ function normalizeSubagentModelConfig(
         ...extraFlags,
       }
     }
-    const modelPayload =
-      raw.model ||
-      ('provider' in raw ? (raw as Partial<SubagentModelTarget>) : undefined)
+    const modelPayload = raw.model
     const target = normalizeSubagentModelTarget(modelPayload)
     if (target) {
       return {
@@ -302,9 +296,7 @@ export function loadSessionSettingsStore(): SessionSettingsStore {
       if (content.trim()) {
         const data = JSON.parse(content)
         if (data && typeof data === 'object') {
-          const globalConfig = normalizeGlobalSettings(
-            data.globalConfig ?? data.global ?? data.default,
-          )
+          const globalConfig = normalizeGlobalSettings(data.globalConfig)
           const workspaces: Record<string, SessionSettingsConfig> = {}
           if (data.workspaces && typeof data.workspaces === 'object') {
             for (const [id, w] of Object.entries(data.workspaces)) {

@@ -61,10 +61,10 @@ export async function resolveSessionCwd(
     }
 
     const persistence = ctx.get('sessionPersistence')
-    if (persistence && typeof persistence.inspect === 'function') {
-      const inspected = await persistence.inspect(sessionId)
-      if (inspected?.meta?.cwd) {
-        return inspected.meta.cwd
+    if (persistence && typeof persistence.stat === 'function') {
+      const stated = await persistence.stat(sessionId)
+      if (stated?.header?.cwd) {
+        return stated.header.cwd
       }
     }
   } catch {

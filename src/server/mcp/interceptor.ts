@@ -30,15 +30,6 @@ export function registerMcpInterceptors(
       context: AssembleContext,
       next: () => Promise<PromptAssembly>,
     ): Promise<PromptAssembly> => {
-      const transformed = await next()
-      if (
-        !transformed ||
-        !Array.isArray(transformed.tools) ||
-        transformed.tools.length === 0
-      ) {
-        return transformed
-      }
-
       const sessionId = resolveAgentSessionId(context?.agent)
       const workspaceId = await resolveWorkspaceForSession(ctx, sessionId)
 
@@ -51,6 +42,21 @@ export function registerMcpInterceptors(
         workspaceId,
       )
       const enabledServerIds = new Set(effectiveMcp.enabledServerIds)
+
+      // On-demand lazy mount: ensure servers needed for this session are mounted BEFORE tools are assembled
+      if (effectiveMcp.enabledServerIds.length > 0) {
+        await mcpManager?.ensureServersMounted(effectiveMcp.enabledServerIds)
+      }
+
+      const transformed = await next()
+      if (
+        !transformed ||
+        !Array.isArray(transformed.tools) ||
+        transformed.tools.length === 0
+      ) {
+        return transformed
+      }
+
       const allServers = Object.values(mcpStore.servers)
 
       // Map of serverId -> Set of disabled public tool names
@@ -155,6 +161,7 @@ export function registerMcpInterceptors(
               reason: `unknown tool "${toolName}"`,
             }
           }
+          await mcpManager?.ensureServersMounted([meta.serverId])
           return next()
         }
 

@@ -180,7 +180,7 @@ export function SessionMcpSection({
                     ? 'sse'
                     : server.detectedTransport === 'streamable-http'
                       ? 'streamable-http'
-                      : 'streamable-http-or-sse'
+                      : 'streamable-http'
 
               const isCustomTools =
                 mcpConfig.toolsMode?.[server.id] === 'custom'
