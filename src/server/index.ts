@@ -14,37 +14,49 @@ export const name = 'session-settings'
 export const inject = ['webServer', 'loader']
 
 export function apply(ctx: Context): void {
-  let mcpStore: McpServerStore = loadMcpStore()
-  let sessionSettingsStore: SessionSettingsStore = loadSessionSettingsStore()
+  let mcpStore: McpServerStore | null = null
+  let sessionSettingsStore: SessionSettingsStore | null = null
+
+  const getMcpStore = (): McpServerStore => {
+    if (!mcpStore) {
+      mcpStore = loadMcpStore()
+    }
+    return mcpStore
+  }
+
+  const setMcpStore = (s: McpServerStore): void => {
+    mcpStore = s
+  }
+
+  const getSessionSettingsStore = (): SessionSettingsStore => {
+    if (!sessionSettingsStore) {
+      sessionSettingsStore = loadSessionSettingsStore()
+    }
+    return sessionSettingsStore
+  }
+
+  const setSessionSettingsStore = (s: SessionSettingsStore): void => {
+    sessionSettingsStore = s
+  }
 
   // MCP Manager to handle tool discovery, registration on ctx.tools, and execution
-  const mcpManager = new McpManager(
-    ctx,
-    () => mcpStore,
-    () => sessionSettingsStore,
-  )
+  const mcpManager = new McpManager(ctx, getMcpStore, getSessionSettingsStore)
 
   const webServer = ctx.get('webServer')
   if (webServer) {
     const unregisterMcp = registerMcpRoutes(
       webServer,
-      () => mcpStore,
-      (s) => {
-        mcpStore = s
-      },
+      getMcpStore,
+      setMcpStore,
       mcpManager,
-      () => sessionSettingsStore,
-      (s) => {
-        sessionSettingsStore = s
-      },
+      getSessionSettingsStore,
+      setSessionSettingsStore,
     )
     const unregisterSessionSettings = registerSessionSettingsRoutes(
       ctx,
       webServer,
-      () => sessionSettingsStore,
-      (s) => {
-        sessionSettingsStore = s
-      },
+      getSessionSettingsStore,
+      setSessionSettingsStore,
       mcpManager,
     )
     const unregisterSkills = registerSkillsRoutes(ctx, webServer)
@@ -65,14 +77,9 @@ export function apply(ctx: Context): void {
   }, 'session-settings: mcpManager')
 
   // Register domain interceptors
-  registerSubagentModelInterceptor(ctx, () => sessionSettingsStore)
-  registerMcpInterceptors(
-    ctx,
-    () => sessionSettingsStore,
-    () => mcpStore,
-    mcpManager,
-  )
-  registerSkillsInterceptors(ctx, () => sessionSettingsStore)
+  registerSubagentModelInterceptor(ctx, getSessionSettingsStore)
+  registerMcpInterceptors(ctx, getSessionSettingsStore, getMcpStore, mcpManager)
+  registerSkillsInterceptors(ctx, getSessionSettingsStore)
 }
 
 // Domain Exports

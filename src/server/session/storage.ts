@@ -337,7 +337,7 @@ export function loadSessionSettingsStore(): SessionSettingsStore {
 
 export function saveSessionSettingsStore(store: SessionSettingsStore): void {
   try {
-    const file = getSessionSettingsStoragePath()
+    const file = getSessionSettingsStoragePath(true)
     const tmp = `${file}.tmp`
     fs.writeFileSync(tmp, JSON.stringify(store, null, 2), 'utf8')
     fs.renameSync(tmp, file)

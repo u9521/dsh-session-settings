@@ -25,7 +25,7 @@ export function loadMcpStore(): McpServerStore {
 
 export function saveMcpStore(store: McpServerStore): void {
   try {
-    const file = getMcpStoragePath()
+    const file = getMcpStoragePath(true)
     const tmp = `${file}.tmp`
     fs.writeFileSync(tmp, JSON.stringify(store, null, 2), 'utf8')
     fs.renameSync(tmp, file)
