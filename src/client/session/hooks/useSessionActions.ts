@@ -36,6 +36,12 @@ export interface UseSessionActionsProps {
   setCloneError: (err: string) => void
   setCopiedId: (copied: boolean) => void
   sessionsMap: Record<string, SessionInfo>
+  /**
+   * Re-read the global MCP server list after a successful save: the server runs
+   * `syncAll()` on save, which may mount/unmount official mcp-client forks and
+   * therefore changes the runtime status shown by the MCP section.
+   */
+  reloadMcpServers?: () => void | Promise<void>
   onSave?: (config: SessionSettingsConfig) => void
   t: (key: string, vars?: Record<string, string | number>) => string
 }
@@ -64,6 +70,7 @@ export function useSessionActions({
   setCloneError,
   setCopiedId,
   sessionsMap,
+  reloadMcpServers,
   onSave,
   t,
 }: UseSessionActionsProps) {
@@ -184,6 +191,15 @@ export function useSessionActions({
         if (onSave) {
           onSave(payloadConfig)
         }
+
+        // The save endpoint runs syncAll() on the MCP manager, so the runtime
+        // status of the official clients may have just changed.
+        if (reloadMcpServers) {
+          void Promise.resolve()
+            .then(() => reloadMcpServers())
+            .catch(() => {})
+        }
+
         setTimeout(() => setSaveSuccessMsg(''), 3000)
       } else {
         setError(

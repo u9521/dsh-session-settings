@@ -149,6 +149,53 @@ export const SESSION_MCP_CSS = `
   gap: 6px;
   margin: 2px 0;
 }
+/* Official mcp-client failure badge — clickable to remount the client */
+.dsh-session-mcp-client-status {
+  align-items: center;
+  background: transparent;
+  border: 1px solid currentColor;
+  border-radius: 10px;
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  gap: 4px;
+  line-height: 16px;
+  padding: 1px 8px;
+  transition: background-color 0.15s, opacity 0.15s;
+}
+.dsh-session-mcp-client-status.error {
+  color: var(--dsw-alias-state-error-primary, #da3633);
+}
+.dsh-session-mcp-client-status.error:hover {
+  background: color-mix(
+    in srgb,
+    var(--dsw-alias-state-error-primary, #da3633) 12%,
+    transparent
+  );
+}
+.dsh-session-mcp-client-status.refreshing {
+  color: var(--dsw-alias-label-secondary);
+  cursor: progress;
+}
+.dsh-session-mcp-client-status:disabled {
+  opacity: 0.75;
+}
+.dsh-session-mcp-client-spinner {
+  display: inline-block;
+  height: 10px;
+  width: 10px;
+}
+.dsh-session-mcp-client-error {
+  color: var(--dsw-alias-state-error-primary, #da3633);
+  font-size: 11px;
+  line-height: 16px;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .dsh-session-mcp-desc {
   color: var(--dsw-alias-label-secondary);
   font-size: 13px;

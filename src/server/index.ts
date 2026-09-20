@@ -71,9 +71,7 @@ export function apply(ctx: Context): void {
   }
 
   ctx.effect(() => {
-    return () => {
-      mcpManager.dispose()
-    }
+    return () => mcpManager.dispose()
   }, 'session-settings: mcpManager')
 
   // Register domain interceptors

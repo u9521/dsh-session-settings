@@ -17,6 +17,25 @@ import { formatProtocolTitle } from '../../utils/string.ts'
 
 const e = React.createElement
 
+/**
+ * A server is "unavailable" when the official @deepseek-ai/dsh-mcp-client failed
+ * to activate (`lastError`), or when we attempted a mount but no
+ * `mcp__<serverId>__*` tool ended up registered on ctx.tools.
+ *
+ * The second condition is the important one: once the bridge exhausts its
+ * reconnect budget it unregisters every tool but keeps its fiber alive, so the
+ * server stays silently broken until the client is remounted by hand.
+ *
+ * `mountAttempted` keeps "never mounted yet" (unknown) from being reported as a
+ * failure — a server this session has not tried to use shows no badge.
+ */
+export function isMcpClientUnavailable(server: GlobalMcpServerConfig): boolean {
+  const runtime = server.runtime
+  if (!runtime) return false
+  if (runtime.lastError) return true
+  return runtime.mountAttempted && runtime.registeredToolCount === 0
+}
+
 export interface SessionMcpSectionProps {
   sessionId?: string
   mcpConfig: SessionMcpConfig
@@ -24,10 +43,13 @@ export interface SessionMcpSectionProps {
   currentWorkspaceId?: string
   workspaceSettings?: SessionSettingsConfig
   globalConfig: SessionSettingsConfig
+  refreshingClientId?: string
+  clientRefreshResults?: Record<string, { ok: boolean; message: string }>
   onMcpModeChange: (mode: SessionMcpMode) => void
   onToggleMcpServer: (serverId: string) => void
   onToggleSelectAllMcp: () => void
   onOpenSessionToolsModal: (server: GlobalMcpServerConfig) => void
+  onRefreshClient?: (server: GlobalMcpServerConfig) => void
   t: (key: string, vars?: Record<string, string | number>) => string
 }
 
@@ -38,10 +60,13 @@ export function SessionMcpSection({
   currentWorkspaceId,
   workspaceSettings,
   globalConfig,
+  refreshingClientId,
+  clientRefreshResults,
   onMcpModeChange,
   onToggleMcpServer,
   onToggleSelectAllMcp,
   onOpenSessionToolsModal,
+  onRefreshClient,
   t,
 }: SessionMcpSectionProps) {
   const isAllMcpSelected =
@@ -188,7 +213,48 @@ export function SessionMcpSection({
                 mcpConfig.disabledTools?.[server.id] || []
               ).length
 
+              // Official mcp-client recovery affordance: only for servers this
+              // session actually intends to use (checked here, or inherited via
+              // workspace/global mode).
+              const clientUnavailable =
+                isChecked && isMcpClientUnavailable(server)
+              const isRefreshingClient = refreshingClientId === server.id
+              const clientResult = clientRefreshResults?.[server.id]
+              const clientMessage =
+                clientResult?.message || server.runtime?.lastError
+              const handleRefreshClientClick = (evt: React.MouseEvent) => {
+                evt.stopPropagation()
+                if (isRefreshingClient) return
+                onRefreshClient?.(server)
+              }
+
               const badges: React.ReactNode[] = [
+                clientUnavailable
+                  ? e(
+                      'button',
+                      {
+                        key: 'client-status',
+                        type: 'button',
+                        className: `dsh-session-mcp-client-status ${
+                          isRefreshingClient ? 'refreshing' : 'error'
+                        }`,
+                        disabled: isRefreshingClient,
+                        title:
+                          clientMessage ||
+                          t('sessionSettings.mcp.clientStatus.refreshHint'),
+                        onClick: handleRefreshClientClick,
+                      },
+                      isRefreshingClient
+                        ? e('span', {
+                            className:
+                              'dsh-spin dsh-session-mcp-client-spinner',
+                          })
+                        : null,
+                      isRefreshingClient
+                        ? t('sessionSettings.mcp.clientStatus.refreshing')
+                        : t('sessionSettings.mcp.clientStatus.failed'),
+                    )
+                  : null,
                 e(Badge, {
                   key: 'proto',
                   label: protoLabel,
@@ -324,6 +390,18 @@ export function SessionMcpSection({
                       'div',
                       { className: 'dsh-session-mcp-badges-row' },
                       badges,
+                    )
+                  : null,
+
+                // Client failure detail (probe outcome / activation error)
+                clientUnavailable && clientMessage
+                  ? e(
+                      'p',
+                      {
+                        className: 'dsh-session-mcp-client-error',
+                        title: clientMessage,
+                      },
+                      clientMessage,
                     )
                   : null,
 

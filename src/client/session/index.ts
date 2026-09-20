@@ -58,9 +58,18 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
     setCloneError: data.setCloneError,
     setCopiedId: data.setCopiedId,
     sessionsMap: data.sessionsMap,
+    reloadMcpServers: data.reloadMcpServers,
     onSave,
     t,
   })
+
+  // Runtime status of the official MCP clients does not change on its own —
+  // re-read it whenever the MCP section becomes active.
+  React.useEffect(() => {
+    if (data.activeNav === 'mcp') {
+      void data.reloadMcpServers()
+    }
+  }, [data.activeNav, data.reloadMcpServers])
 
   // Model change handlers
   const handleModelModeChange = (mode: SubagentModelMode) => {
@@ -705,10 +714,13 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
               currentWorkspaceId: data.currentWorkspaceId,
               workspaceSettings: data.workspaceSettings,
               globalConfig: data.globalConfig,
+              refreshingClientId: data.refreshingClientId,
+              clientRefreshResults: data.clientRefreshResults,
               onMcpModeChange: handleMcpModeChange,
               onToggleMcpServer: handleToggleMcpServer,
               onToggleSelectAllMcp: handleToggleSelectAllMcp,
               onOpenSessionToolsModal: handleOpenSessionToolsModal,
+              onRefreshClient: data.handleRefreshClient,
               t,
             })
           : null,

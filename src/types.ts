@@ -15,6 +15,7 @@ export const API_ENDPOINTS = {
   mcpServersTools: `${API_BASE}/mcp-servers/tools`,
   mcpServersTest: `${API_BASE}/mcp-servers/test`,
   mcpServersImport: `${API_BASE}/mcp-servers/import`,
+  mcpServersRefresh: `${API_BASE}/mcp-servers/refresh`,
   skills: `${API_BASE}/skills`,
   skillsContent: `${API_BASE}/skills/content`,
 } as const
@@ -70,6 +71,55 @@ export interface GlobalMcpServerConfig {
   lastTestedAt?: number
   createdAt?: number
   updatedAt?: number
+  /**
+   * Live runtime status of the official @deepseek-ai/dsh-mcp-client fork.
+   * Response-only: attached by the MCP routes, never persisted to disk.
+   */
+  runtime?: McpServerRuntimeStatus
+}
+
+/**
+ * Live status of the official @deepseek-ai/dsh-mcp-client fork for one server.
+ *
+ * The official bridge exposes no status API, so this is inferred from three
+ * observable facts:
+ *  - whether we ever attempted to mount the official client in this process,
+ *  - whether a (not yet disposed) Cordis fork exists,
+ *  - how many `mcp__<serverId>__*` tools are currently registered on ctx.tools.
+ *
+ * The bridge unregisters every tool once its reconnect budget is exhausted
+ * ("giving up"), while the fork itself stays alive — hence `mounted` alone
+ * cannot tell a healthy server from a permanently disabled one.
+ */
+export interface McpServerRuntimeStatus {
+  /** True once this process attempted to mount the official client for the server. */
+  mountAttempted: boolean
+  /** True while the Cordis fork exists and has not been disposed (fork.uid !== null). */
+  mounted: boolean
+  /** Number of currently registered `mcp__<serverId>__*` tools on ctx.tools. */
+  registeredToolCount: number
+  /** Activation/mount error (invalid config, fork startup rejection). Not set for plain connection failures. */
+  lastError?: string
+  /** Timestamp of the last manual client refresh for this server. */
+  lastRefreshAt?: number
+}
+
+/** Result of a manual "remount the official MCP client" refresh request. */
+export interface McpRefreshResult {
+  id: string
+  name: string
+  /** Connection probe succeeded (server reachable and tools/list returned). */
+  ok: boolean
+  /** Human readable probe outcome, surfaced inline on the card when it fails. */
+  message: string
+  /** Tool count reported by the probe (0 when the probe failed). */
+  toolCount: number
+  /** Wall-clock duration of the whole refresh (probe + remount settle). */
+  durationMs: number
+  /** True when the official client fork was actually remounted (not just probed). */
+  remounted: boolean
+  /** Runtime status read after the remount settled. */
+  status: McpServerRuntimeStatus
 }
 
 export interface McpDiscoveredTool {

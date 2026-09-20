@@ -169,6 +169,15 @@ export const zh = {
       toolsAllActiveBadge: '工具: 全部启用',
       toolsCount: '{count} 个工具',
       toolsEnabledCount: '已启用 {enabled} / {total}',
+      clientStatus: {
+        failed: '客户端连接失败',
+        refreshing: '重新挂载中...',
+        refreshHint: '点击重新挂载官方 MCP 客户端并立即刷新状态',
+      },
+      notices: {
+        refreshSuccess: '已重新挂载「{name}」的 MCP 客户端',
+        refreshFailed: 'MCP 客户端重新挂载失败：{message}',
+      },
     },
     toolsModal: {
       title: '会话工具配置',

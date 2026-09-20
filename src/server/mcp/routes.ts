@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import {
   type GlobalMcpServerConfig,
+  type McpRefreshResult,
   type McpServerStore,
   type McpTransportType,
   type McpReconnectConfig,
@@ -18,6 +19,12 @@ import { testMcpConnection } from './tester/index.ts'
 import type { McpManager } from './manager.ts'
 import { readRequestBody } from '../common/http.ts'
 
+/**
+ * How long a manual refresh waits for the freshly mounted official client to
+ * settle before reading its runtime status. Bounded so the request stays snappy.
+ */
+const MCP_REFRESH_SETTLE_MS = 3000
+
 function sendJson(
   res: ServerResponse,
   statusCode: number,
@@ -32,14 +39,31 @@ function sendMethodNotAllowed(res: ServerResponse): void {
   sendJson(res, 405, { ok: false, error: 'Method Not Allowed' })
 }
 
-function getSanitizedServers(store: McpServerStore): GlobalMcpServerConfig[] {
+/**
+ * Build the client-facing representation of the MCP servers.
+ *
+ * Heavy fields (`toolDetails`) are stripped down to counts, and the live
+ * `runtime` status of the official mcp-client fork is attached. `runtime` is
+ * response-only and never persisted: `saveMcpStore` always serializes the store
+ * itself, never this projection.
+ */
+function getSanitizedServers(
+  store: McpServerStore,
+  mcpManager?: McpManager,
+): GlobalMcpServerConfig[] {
+  // The registry is walked once and shared by every server in the response.
+  const registeredNames = mcpManager?.collectRegisteredToolNames()
   return Object.values(store.servers).map((s) => {
     const { toolDetails, tools, disabledTools, ...rest } = s
-    return {
+    const server = {
       ...rest,
       tools: Array.isArray(tools) ? tools.length : 0,
       disabledTools: Array.isArray(disabledTools) ? disabledTools.length : 0,
+    } as GlobalMcpServerConfig
+    if (mcpManager) {
+      server.runtime = mcpManager.getServerStatus(s.id, registeredNames)
     }
+    return server
   })
 }
 
@@ -188,7 +212,7 @@ export function registerMcpRoutes(
       try {
         const currentStore = loadMcpStore()
         setMcpStore(currentStore)
-        const sanitizedServers = getSanitizedServers(currentStore)
+        const sanitizedServers = getSanitizedServers(currentStore, mcpManager)
         sendJson(res, 200, { ok: true, servers: sanitizedServers })
       } catch (err: unknown) {
         sendJson(res, 500, {
@@ -278,7 +302,7 @@ export function registerMcpRoutes(
 
         if (isRename && originalId !== id) {
           delete mcpStore.servers[originalId]
-          mcpManager?.unmountOfficialClient(originalId)
+          await mcpManager?.unmountOfficialClient(originalId)
 
           const currentSessionSettings = getSessionSettingsStore
             ? getSessionSettingsStore()
@@ -333,7 +357,7 @@ export function registerMcpRoutes(
           delete mcpStore.servers[targetId]
           saveMcpStore(mcpStore)
           setMcpStore(mcpStore)
-          mcpManager?.unmountOfficialClient(targetId)
+          await mcpManager?.unmountOfficialClient(targetId)
         }
 
         sendJson(res, 200, { ok: true, id: targetId })
@@ -595,7 +619,7 @@ export function registerMcpRoutes(
 
         mcpManager?.syncAll()
 
-        const sanitizedServers = getSanitizedServers(mcpStore)
+        const sanitizedServers = getSanitizedServers(mcpStore, mcpManager)
         sendJson(res, 200, {
           ok: true,
           count,
@@ -610,6 +634,103 @@ export function registerMcpRoutes(
     },
   })
 
+  // 9. POST /mcp-servers/refresh
+  //
+  // Tear down and remount the official mcp-client for a single server, then
+  // report the fresh runtime status. This is the recovery path for a server
+  // whose bridge already exhausted its reconnect budget: such a fiber stays
+  // alive while every tool has been unregistered, so nothing else ever retries
+  // it (the lazy mount path skips servers that still have a live fork).
+  const unregisterRefreshRoute = webServer.register({
+    kind: 'exact',
+    path: API_ENDPOINTS.mcpServersRefresh,
+    handler: async (req: IncomingMessage, res: ServerResponse) => {
+      if (req.method !== 'POST') {
+        sendMethodNotAllowed(res)
+        return
+      }
+
+      try {
+        const bodyStr = await readRequestBody(req)
+        const parsed = JSON.parse(bodyStr || '{}') as {
+          id?: string
+          serverId?: string
+          force?: boolean
+        }
+        const targetId = (parsed.id || parsed.serverId || '').trim()
+        if (!targetId) {
+          sendJson(res, 400, { ok: false, error: 'Server ID is required' })
+          return
+        }
+
+        const mcpStore = getMcpStore()
+        const server = mcpStore.servers[targetId]
+        if (!server) {
+          sendJson(res, 404, {
+            ok: false,
+            error: `Unknown MCP server "${targetId}"`,
+          })
+          return
+        }
+
+        const startedAt = Date.now()
+
+        // 1. Probe for real: gives the card a human readable failure reason and
+        //    refreshes the cached tool list / server info on success.
+        const probe = await testMcpConnection(server)
+
+        if (probe.ok) {
+          const live = mcpStore.servers[targetId]
+          if (probe.tools) live.tools = probe.tools
+          if (probe.toolDetails) live.toolDetails = probe.toolDetails
+          if (probe.detectedTransport)
+            live.detectedTransport = probe.detectedTransport
+          if (probe.serverInfo) live.serverInfo = probe.serverInfo
+          live.lastTestedAt = Date.now()
+
+          saveMcpStore(mcpStore)
+          setMcpStore(mcpStore)
+        }
+
+        // 2. Remount. `settleMs` makes the response wait (bounded) for the new
+        //    fork to register its tools, so the client can update the badge from
+        //    this single response without polling.
+        const outcome = mcpManager
+          ? await mcpManager.refreshServer(mcpStore.servers[targetId], {
+              force: parsed.force === true,
+              settleMs: probe.ok ? MCP_REFRESH_SETTLE_MS : 0,
+            })
+          : undefined
+
+        const result: McpRefreshResult = {
+          id: targetId,
+          name: server.name,
+          ok: probe.ok,
+          message: probe.message,
+          toolCount: probe.tools?.length ?? 0,
+          durationMs: outcome?.durationMs ?? Date.now() - startedAt,
+          remounted: outcome?.remounted ?? false,
+          status: outcome?.status ?? {
+            mountAttempted: false,
+            mounted: false,
+            registeredToolCount: 0,
+          },
+        }
+
+        const sanitizedServer = getSanitizedServers(mcpStore, mcpManager).find(
+          (s) => s.id === targetId,
+        )
+
+        sendJson(res, 200, { ok: true, result, server: sanitizedServer })
+      } catch (err: unknown) {
+        sendJson(res, 400, {
+          ok: false,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
+    },
+  })
+
   return () => {
     unregisterListRoute()
     unregisterAddRoute()
@@ -619,5 +740,6 @@ export function registerMcpRoutes(
     unregisterToolsRoute()
     unregisterTestRoute()
     unregisterImportRoute()
+    unregisterRefreshRoute()
   }
 }

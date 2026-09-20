@@ -173,6 +173,16 @@ export const en = {
       toolsAllActiveBadge: 'Tools: All Enabled',
       toolsCount: '{count} Tools',
       toolsEnabledCount: 'Enabled {enabled} / {total}',
+      clientStatus: {
+        failed: 'Client failed',
+        refreshing: 'Remounting...',
+        refreshHint:
+          'Click to remount the official MCP client and refresh its status now',
+      },
+      notices: {
+        refreshSuccess: 'Remounted the MCP client for "{name}"',
+        refreshFailed: 'Failed to remount the MCP client: {message}',
+      },
     },
     toolsModal: {
       title: 'Session Tool Configuration',

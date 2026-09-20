@@ -20,6 +20,7 @@ import { isSessionCustomized } from '../../utils/config.ts'
 export function useSessionData({
   api,
   remote,
+  t,
   sessionId,
   workspaceId: propWorkspaceId,
   workspaceTitle: propWorkspaceTitle,
@@ -110,6 +111,12 @@ export function useSessionData({
   >([])
   const [availableSkills, setAvailableSkills] = React.useState<SkillItem[]>([])
 
+  // Runtime MCP client recovery state
+  const [refreshingClientId, setRefreshingClientId] = React.useState<string>('')
+  const [clientRefreshResults, setClientRefreshResults] = React.useState<
+    Record<string, { ok: boolean; message: string }>
+  >({})
+
   const defaultMode = currentWorkspaceId ? 'workspace' : 'global'
 
   // Form state
@@ -196,6 +203,106 @@ export function useSessionData({
     return map
   }, [sessionsState])
 
+  /**
+   * Fetch the global MCP server list, including the response-only `runtime`
+   * status of each official mcp-client fork.
+   *
+   * Returned as `reloadMcpServers` so the view can re-read runtime status after
+   * saving settings (the server runs `syncAll()` then) or when the MCP tab is
+   * opened — runtime state does not change on its own otherwise.
+   */
+  const loadMcpServers = React.useCallback(async () => {
+    try {
+      const res = await fetch(API_ENDPOINTS.mcpServersList)
+      if (!res.ok) return
+      const data = (await res.json()) as {
+        ok?: boolean
+        servers?: GlobalMcpServerConfig[]
+      }
+      if (data && data.ok && Array.isArray(data.servers)) {
+        setAvailableMcpServers(data.servers)
+      }
+    } catch {}
+  }, [])
+
+  /**
+   * Re-mount the official mcp-client for one server and refresh its status.
+   *
+   * Remounting is the only recovery path once the official bridge has exhausted
+   * its reconnect budget: it unregisters every tool but keeps the fiber alive,
+   * so the lazy mount path never retries it. `force` also mounts servers whose
+   * toggle has been flipped in the UI but not saved yet.
+   */
+  const handleRefreshClient = React.useCallback(
+    async (server: GlobalMcpServerConfig): Promise<void> => {
+      if (!server?.id) return
+      setRefreshingClientId(server.id)
+      setError('')
+      setSaveSuccessMsg('')
+
+      try {
+        const res = await fetch(API_ENDPOINTS.mcpServersRefresh, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: server.id, force: true }),
+        })
+        const data = (await res.json().catch(() => null)) as {
+          ok?: boolean
+          error?: string
+          result?: { ok: boolean; message: string; toolCount: number }
+          server?: GlobalMcpServerConfig
+        } | null
+
+        if (!res.ok || !data || !data.ok) {
+          setError(
+            t('sessionSettings.mcp.notices.refreshFailed', {
+              message: data?.error || `HTTP ${res.status}`,
+            }),
+          )
+          return
+        }
+
+        if (data.server) {
+          const updated = data.server
+          setAvailableMcpServers((prev) =>
+            prev.map((s) => (s.id === updated.id ? updated : s)),
+          )
+        }
+
+        const result = data.result
+        if (!result) return
+
+        setClientRefreshResults((prev) => ({
+          ...prev,
+          [server.id]: { ok: result.ok, message: result.message },
+        }))
+
+        if (result.ok) {
+          setSaveSuccessMsg(
+            t('sessionSettings.mcp.notices.refreshSuccess', {
+              name: server.name,
+            }),
+          )
+        } else {
+          setError(
+            t('sessionSettings.mcp.notices.refreshFailed', {
+              message: result.message,
+            }),
+          )
+        }
+      } catch (err: unknown) {
+        setError(
+          t('sessionSettings.mcp.notices.refreshFailed', {
+            message: err instanceof Error ? err.message : String(err),
+          }),
+        )
+      } finally {
+        setRefreshingClientId('')
+      }
+    },
+    [t],
+  )
+
   // Fetch models, mcp servers, and server-side config on mount or sessionId/workspaceId change
   React.useEffect(() => {
     let mounted = true
@@ -220,21 +327,6 @@ export function useSessionData({
           setLoadingModels(false)
         }
       }
-    }
-
-    async function loadMcpServers() {
-      try {
-        const res = await fetch(API_ENDPOINTS.mcpServersList)
-        if (res.ok && mounted) {
-          const data = (await res.json()) as {
-            ok?: boolean
-            servers?: GlobalMcpServerConfig[]
-          }
-          if (data && data.ok && Array.isArray(data.servers)) {
-            setAvailableMcpServers(data.servers)
-          }
-        }
-      } catch {}
     }
 
     async function loadSkills() {
@@ -336,7 +428,7 @@ export function useSessionData({
     return () => {
       mounted = false
     }
-  }, [sessionId, currentWorkspaceId])
+  }, [sessionId, currentWorkspaceId, loadMcpServers])
 
   return {
     currentSession,
@@ -362,6 +454,10 @@ export function useSessionData({
     loadingModels,
     availableMcpServers,
     setAvailableMcpServers,
+    reloadMcpServers: loadMcpServers,
+    refreshingClientId,
+    clientRefreshResults,
+    handleRefreshClient,
     availableSkills,
     setAvailableSkills,
     modelConfig,
