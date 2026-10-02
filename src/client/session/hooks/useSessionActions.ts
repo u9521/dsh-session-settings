@@ -6,11 +6,10 @@ import {
   type SessionSkillsConfig,
   type SessionInfo,
   API_ENDPOINTS,
+  API_METHODS,
 } from '../../types/index.ts'
-import {
-  isSessionCustomized,
-  resolveEffectiveSessionConfig,
-} from '../../utils/config.ts'
+import type { SettingsScope } from '../sections/HeaderBar.ts'
+import { isSessionCustomized } from '../../utils/config.ts'
 
 export interface UseSessionActionsProps {
   sessionId?: string
@@ -19,28 +18,28 @@ export interface UseSessionActionsProps {
   modelConfig: SubagentModelConfig
   mcpConfig: SessionMcpConfig
   skillsConfig: SessionSkillsConfig
-  globalConfig: SessionSettingsConfig
+  workspaceModelConfig: SubagentModelConfig
+  workspaceMcpConfig: SessionMcpConfig
+  workspaceSkillsConfig: SessionSkillsConfig
+  globalModelConfig: SubagentModelConfig
+  globalMcpConfig: SessionMcpConfig
+  globalSkillsConfig: SessionSkillsConfig
   setModelConfig: (config: SubagentModelConfig) => void
   setMcpConfig: (config: SessionMcpConfig) => void
   setSkillsConfig: (config: SessionSkillsConfig) => void
+  setWorkspaceModelConfig: (config: SubagentModelConfig) => void
+  setWorkspaceMcpConfig: (config: SessionMcpConfig) => void
+  setWorkspaceSkillsConfig: (config: SessionSkillsConfig) => void
+  setGlobalModelConfig: (config: SubagentModelConfig) => void
+  setGlobalMcpConfig: (config: SessionMcpConfig) => void
+  setGlobalSkillsConfig: (config: SessionSkillsConfig) => void
   setGlobalConfig: (config: SessionSettingsConfig) => void
   setWorkspaceSettings: (config: SessionSettingsConfig | undefined) => void
   setHasSessionOverride: (override: boolean) => void
   setSaveSuccessMsg: (msg: string) => void
   setError: (err: string) => void
-  setSetDefaultModalOpen: (open: boolean) => void
-  setIsRestoringDefault: (restoring: boolean) => void
-  cloneSourceId: string
-  setCloneSourceId: (id: string) => void
-  setCloning: (cloning: boolean) => void
-  setCloneError: (err: string) => void
   setCopiedId: (copied: boolean) => void
   sessionsMap: Record<string, SessionInfo>
-  /**
-   * Re-read the global MCP server list after a successful save: the server runs
-   * `syncAll()` on save, which may mount/unmount official mcp-client forks and
-   * therefore changes the runtime status shown by the MCP section.
-   */
   reloadMcpServers?: () => void | Promise<void>
   onSave?: (config: SessionSettingsConfig) => void
   t: (key: string, vars?: Record<string, string | number>) => string
@@ -53,29 +52,32 @@ export function useSessionActions({
   modelConfig,
   mcpConfig,
   skillsConfig,
-  globalConfig,
+  workspaceModelConfig,
+  workspaceMcpConfig,
+  workspaceSkillsConfig,
+  globalModelConfig,
+  globalMcpConfig,
+  globalSkillsConfig,
   setModelConfig,
   setMcpConfig,
   setSkillsConfig,
+  setWorkspaceModelConfig,
+  setWorkspaceMcpConfig,
+  setWorkspaceSkillsConfig,
+  setGlobalModelConfig,
+  setGlobalMcpConfig,
+  setGlobalSkillsConfig,
   setGlobalConfig,
   setWorkspaceSettings,
   setHasSessionOverride,
   setSaveSuccessMsg,
   setError,
-  setSetDefaultModalOpen,
-  setIsRestoringDefault,
-  cloneSourceId,
-  setCloneSourceId,
-  setCloning,
-  setCloneError,
   setCopiedId,
-  sessionsMap,
   reloadMcpServers,
   onSave,
   t,
 }: UseSessionActionsProps) {
   const [saving, setSaving] = React.useState<boolean>(false)
-  const [savingDefault, setSavingDefault] = React.useState<boolean>(false)
 
   const handleCopySessionId = async () => {
     if (!sessionId) return
@@ -95,202 +97,25 @@ export function useSessionActions({
     } catch {}
   }
 
-  const handleClonePreset = async () => {
-    const targetSourceId = cloneSourceId.trim()
-    if (!targetSourceId) return
-
-    if (sessionId && targetSourceId === sessionId) {
-      setCloneError(t('sessionSettings.clone.cannotCloneSelf'))
-      return
-    }
-
-    setCloning(true)
-    setCloneError('')
-    setSaveSuccessMsg('')
-    try {
-      const res = await fetch(
-        `${API_ENDPOINTS.getSettings}?sessionId=${encodeURIComponent(targetSourceId)}`,
-      )
-      if (!res.ok) {
-        setCloneError(t('sessionSettings.clone.error'))
-        return
-      }
-      const data = (await res.json()) as {
-        ok?: boolean
-        sessionConfig?: SessionSettingsConfig
-        workspaceConfig?: SessionSettingsConfig
-        globalConfig?: SessionSettingsConfig
-      }
-      if (data && data.ok) {
-        const sourceConfig: SessionSettingsConfig =
-          resolveEffectiveSessionConfig(
-            data.sessionConfig,
-            data.workspaceConfig,
-            data.globalConfig,
-          )
-
-        if (sourceConfig.subagentModel) {
-          setModelConfig(sourceConfig.subagentModel)
-        }
-        if (sourceConfig.mcp) {
-          setMcpConfig(sourceConfig.mcp)
-        }
-        if (sourceConfig.skills) {
-          setSkillsConfig(sourceConfig.skills)
-        }
-
-        const sourceTitle =
-          sessionsMap[targetSourceId]?.title || targetSourceId.slice(0, 8)
-
-        setCloneSourceId('')
-        setSaveSuccessMsg(
-          t('sessionSettings.clone.success', { name: sourceTitle }),
-        )
-      } else {
-        setCloneError(t('sessionSettings.clone.error'))
-      }
-    } catch (err: unknown) {
-      setCloneError(
-        t('sessionSettings.clone.error') +
-          ': ' +
-          (err instanceof Error ? err.message : String(err)),
-      )
-    } finally {
-      setCloning(false)
-    }
-  }
-
-  const handleSave = async () => {
+  const handleSaveScope = async (activeScope: SettingsScope) => {
     setSaving(true)
     setSaveSuccessMsg('')
     setError('')
 
-    const payloadConfig: SessionSettingsConfig = {
-      subagentModel: modelConfig,
-      mcp: mcpConfig,
-      skills: skillsConfig,
-    }
-
     try {
-      const res = await fetch(API_ENDPOINTS.saveSettings, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sessionId,
-          config: payloadConfig,
-        }),
-      })
-
-      const data = (await res.json()) as { ok?: boolean; error?: string }
-      if (res.ok && data?.ok) {
-        if (sessionId) {
-          setHasSessionOverride(isSessionCustomized(payloadConfig))
-          setSaveSuccessMsg(t('sessionSettings.notice.saved'))
+      if (activeScope === 'global') {
+        const payloadGlobalConfig: SessionSettingsConfig = {
+          subagentModel: globalModelConfig,
+          mcp: globalMcpConfig,
+          skills: globalSkillsConfig,
         }
-
-        if (onSave) {
-          onSave(payloadConfig)
-        }
-
-        // The save endpoint runs syncAll() on the MCP manager, so the runtime
-        // status of the official clients may have just changed.
-        if (reloadMcpServers) {
-          void Promise.resolve()
-            .then(() => reloadMcpServers())
-            .catch(() => {})
-        }
-
-        setTimeout(() => setSaveSuccessMsg(''), 3000)
-      } else {
-        setError(
-          t('sessionSettings.notice.error') + (data?.error || 'Unknown error'),
-        )
-      }
-    } catch (err: unknown) {
-      setError(
-        t('sessionSettings.notice.error') +
-          (err instanceof Error ? err.message : String(err)),
-      )
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  const handleApplySetDefault = async (
-    setDefaultTargetScope: 'workspace' | 'global',
-    isRestoringDefault: boolean,
-  ) => {
-    setSavingDefault(true)
-    setSaveSuccessMsg('')
-    setError('')
-
-    try {
-      if (setDefaultTargetScope === 'global') {
-        const payloadGlobalConfig: SessionSettingsConfig = isRestoringDefault
-          ? {
-              subagentModel: {},
-              mcp: { enabledServerIds: [] },
-              skills: { disabledModelSkills: [], disabledUserSkills: [] },
-            }
-          : {
-              subagentModel:
-                modelConfig.mode === 'custom' &&
-                !modelConfig.inherit &&
-                modelConfig.model?.provider &&
-                modelConfig.model?.model
-                  ? {
-                      inherit: false,
-                      model: modelConfig.model,
-                      allowAgentSelectModel: modelConfig.allowAgentSelectModel,
-                      overrideForkModel: modelConfig.overrideForkModel,
-                    }
-                  : modelConfig.mode === 'custom'
-                    ? {
-                        inherit: true,
-                        allowAgentSelectModel:
-                          modelConfig.allowAgentSelectModel,
-                        overrideForkModel: modelConfig.overrideForkModel,
-                      }
-                    : {
-                        ...(globalConfig.subagentModel ?? { inherit: true }),
-                        ...(modelConfig.allowAgentSelectModel !== undefined
-                          ? {
-                              allowAgentSelectModel:
-                                modelConfig.allowAgentSelectModel,
-                            }
-                          : {}),
-                        ...(modelConfig.overrideForkModel !== undefined
-                          ? { overrideForkModel: modelConfig.overrideForkModel }
-                          : {}),
-                      },
-              mcp:
-                mcpConfig.mode === 'custom'
-                  ? {
-                      enabledServerIds: mcpConfig.enabledServerIds ?? [],
-                      toolsMode: mcpConfig.toolsMode,
-                      disabledTools: mcpConfig.disabledTools,
-                    }
-                  : (globalConfig.mcp ?? { enabledServerIds: [] }),
-              skills:
-                skillsConfig.mode === 'custom'
-                  ? {
-                      disabledModelSkills:
-                        skillsConfig.disabledModelSkills ?? [],
-                      disabledUserSkills: skillsConfig.disabledUserSkills ?? [],
-                    }
-                  : (globalConfig.skills ?? {
-                      disabledModelSkills: [],
-                      disabledUserSkills: [],
-                    }),
-            }
 
         const res = await fetch(API_ENDPOINTS.saveSettings, {
-          method: 'POST',
+          method: API_METHODS.saveSettings,
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            isDefault: true,
+            scope: 'global',
             globalConfig: payloadGlobalConfig,
-            isRestoringDefault,
           }),
         })
 
@@ -298,8 +123,53 @@ export function useSessionActions({
         if (res.ok && data?.ok) {
           setGlobalConfig(payloadGlobalConfig)
           setSaveSuccessMsg(t('sessionSettings.notice.savedDefault'))
-          setSetDefaultModalOpen(false)
-          setIsRestoringDefault(false)
+          if (reloadMcpServers) {
+            void Promise.resolve()
+              .then(() => reloadMcpServers())
+              .catch(() => {})
+          }
+          setTimeout(() => setSaveSuccessMsg(''), 3000)
+        } else {
+          setError(
+            t('sessionSettings.notice.error') +
+              (data?.error || 'Unknown error'),
+          )
+        }
+      } else if (activeScope === 'workspace') {
+        if (!currentWorkspaceId) {
+          setError(t('sessionSettings.scopeTabs.noWorkspace'))
+          return
+        }
+
+        const payloadWorkspaceConfig: SessionSettingsConfig = {
+          subagentModel: workspaceModelConfig,
+          mcp: workspaceMcpConfig,
+          skills: workspaceSkillsConfig,
+        }
+
+        const res = await fetch(API_ENDPOINTS.saveSettings, {
+          method: API_METHODS.saveSettings,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            scope: 'workspace',
+            config: payloadWorkspaceConfig,
+            workspaceId: currentWorkspaceId,
+          }),
+        })
+
+        const data = (await res.json()) as { ok?: boolean; error?: string }
+        if (res.ok && data?.ok) {
+          setWorkspaceSettings(payloadWorkspaceConfig)
+          setSaveSuccessMsg(
+            t('sessionSettings.notice.savedWorkspace', {
+              name: currentWorkspaceTitle || currentWorkspaceId || '',
+            }),
+          )
+          if (reloadMcpServers) {
+            void Promise.resolve()
+              .then(() => reloadMcpServers())
+              .catch(() => {})
+          }
           setTimeout(() => setSaveSuccessMsg(''), 3000)
         } else {
           setError(
@@ -308,45 +178,49 @@ export function useSessionActions({
           )
         }
       } else {
-        // Workspace default
-        const payloadConfig: SessionSettingsConfig = isRestoringDefault
-          ? {
-              subagentModel: { mode: 'global' },
-              mcp: { mode: 'global' },
-              skills: { mode: 'global' },
-            }
-          : {
-              subagentModel: modelConfig,
-              mcp: mcpConfig,
-              skills: skillsConfig,
-            }
+        // Session scope. There is no fallback target: a save without a live
+        // session would have to guess one, which is exactly the failure this
+        // scope discriminator exists to prevent. The tab is disabled without a
+        // session, so this is a guard, not a user-facing path.
+        if (!sessionId) {
+          setError(t('sessionSettings.scopeTabs.sessionDisabledHint'))
+          return
+        }
+
+        const payloadConfig: SessionSettingsConfig = {
+          subagentModel: modelConfig,
+          mcp: mcpConfig,
+          skills: skillsConfig,
+        }
 
         const res = await fetch(API_ENDPOINTS.saveSettings, {
-          method: 'POST',
+          method: API_METHODS.saveSettings,
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            sessionId,
+            scope: 'session',
             config: payloadConfig,
-            isWorkspaceDefault: true,
-            isRestoringDefault,
+            sessionId,
           }),
         })
 
-        const data = (await res.json()) as { ok?: boolean; error?: string }
+        const data = (await res.json()) as {
+          ok?: boolean
+          error?: string
+        }
         if (res.ok && data?.ok) {
-          if (isRestoringDefault) {
-            setWorkspaceSettings(undefined)
-          } else {
-            setWorkspaceSettings(payloadConfig)
+          setHasSessionOverride(isSessionCustomized(payloadConfig))
+          setSaveSuccessMsg(t('sessionSettings.notice.saved'))
+
+          if (onSave) {
+            onSave(payloadConfig)
           }
-          setSaveSuccessMsg(
-            t('sessionSettings.notice.savedWorkspace', {
-              name: currentWorkspaceTitle || currentWorkspaceId || '',
-            }),
-          )
-          setSetDefaultModalOpen(false)
-          setIsRestoringDefault(false)
-          if (onSave) onSave(payloadConfig)
+
+          if (reloadMcpServers) {
+            void Promise.resolve()
+              .then(() => reloadMcpServers())
+              .catch(() => {})
+          }
+
           setTimeout(() => setSaveSuccessMsg(''), 3000)
         } else {
           setError(
@@ -361,48 +235,116 @@ export function useSessionActions({
           (err instanceof Error ? err.message : String(err)),
       )
     } finally {
-      setSavingDefault(false)
+      setSaving(false)
     }
   }
 
-  const handleResetSession = async () => {
-    if (!sessionId) return
+  const handleResetScope = async (activeScope: SettingsScope) => {
     setSaving(true)
     setSaveSuccessMsg('')
     setError('')
 
     try {
-      const res = await fetch(
-        `${API_ENDPOINTS.deleteSettings}?sessionId=${encodeURIComponent(sessionId)}`,
-        { method: 'DELETE' },
-      )
-      const data = (await res.json()) as {
-        ok?: boolean
-        sessionConfig?: SessionSettingsConfig
-        workspaceConfig?: SessionSettingsConfig
-        globalConfig?: SessionSettingsConfig
-      }
-      if (res.ok && data?.ok) {
-        const defaultMode = currentWorkspaceId ? 'workspace' : 'global'
-        setModelConfig({ mode: defaultMode })
-        setMcpConfig({ mode: defaultMode })
-        setSkillsConfig({
-          mode: defaultMode,
+      if (activeScope === 'global') {
+        const res = await fetch(API_ENDPOINTS.saveSettings, {
+          method: API_METHODS.saveSettings,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            scope: 'global',
+            isRestoringDefault: true,
+          }),
         })
-        setHasSessionOverride(false)
-        setSaveSuccessMsg(t('sessionSettings.notice.saved'))
-        if (onSave) {
-          const effective = resolveEffectiveSessionConfig(
-            data.sessionConfig,
-            data.workspaceConfig,
-            data.globalConfig,
+
+        const data = (await res.json()) as { ok?: boolean; error?: string }
+        if (res.ok && data?.ok) {
+          const defaultGlobal: SessionSettingsConfig = {
+            subagentModel: {
+              inherit: true,
+              allowAgentSelectModel: true,
+              overrideForkModel: false,
+            },
+            mcp: { enabledServerIds: [] },
+            skills: { disabledModelSkills: [], disabledUserSkills: [] },
+          }
+          setGlobalConfig(defaultGlobal)
+          setGlobalModelConfig(defaultGlobal.subagentModel)
+          setGlobalMcpConfig(defaultGlobal.mcp)
+          setGlobalSkillsConfig(defaultGlobal.skills)
+          setSaveSuccessMsg(t('sessionSettings.notice.resetSuccess'))
+          setTimeout(() => setSaveSuccessMsg(''), 3000)
+        } else {
+          setError(
+            t('sessionSettings.notice.error') +
+              (data?.error || 'Unknown error'),
           )
-          onSave(effective)
         }
-        setTimeout(() => setSaveSuccessMsg(''), 3000)
+      } else if (activeScope === 'workspace') {
+        if (!currentWorkspaceId) return
+        const res = await fetch(API_ENDPOINTS.saveSettings, {
+          method: API_METHODS.saveSettings,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            scope: 'workspace',
+            workspaceId: currentWorkspaceId,
+            isRestoringDefault: true,
+          }),
+        })
+
+        const data = (await res.json()) as { ok?: boolean; error?: string }
+        if (res.ok && data?.ok) {
+          setWorkspaceSettings(undefined)
+          setWorkspaceModelConfig({ mode: 'global' })
+          setWorkspaceMcpConfig({ mode: 'global' })
+          setWorkspaceSkillsConfig({ mode: 'global' })
+          setSaveSuccessMsg(t('sessionSettings.notice.resetSuccess'))
+          setTimeout(() => setSaveSuccessMsg(''), 3000)
+        } else {
+          setError(
+            t('sessionSettings.notice.error') +
+              (data?.error || 'Unknown error'),
+          )
+        }
+      } else {
+        // Session scope: resetting writes the inherited default back onto the
+        // session. Without one there is nothing to reset.
+        if (!sessionId) {
+          setError(t('sessionSettings.scopeTabs.sessionDisabledHint'))
+          return
+        }
+
+        // Reset is a write, not a delete: one endpoint, discriminated by scope.
+        const res = await fetch(API_ENDPOINTS.saveSettings, {
+          method: API_METHODS.saveSettings,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            scope: 'session',
+            sessionId,
+            isRestoringDefault: true,
+          }),
+        })
+        const data = (await res.json()) as {
+          ok?: boolean
+          sessionConfig?: SessionSettingsConfig
+          workspaceConfig?: SessionSettingsConfig
+          globalConfig?: SessionSettingsConfig
+        }
+        if (res.ok && data?.ok) {
+          const defaultMode = currentWorkspaceId ? 'workspace' : 'global'
+          setModelConfig({ mode: defaultMode })
+          setMcpConfig({ mode: defaultMode })
+          setSkillsConfig({ mode: defaultMode })
+          setHasSessionOverride(false)
+          setSaveSuccessMsg(t('sessionSettings.notice.resetSuccess'))
+          setTimeout(() => setSaveSuccessMsg(''), 3000)
+        } else {
+          setError(t('sessionSettings.notice.error'))
+        }
       }
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : String(err))
+      setError(
+        t('sessionSettings.notice.error') +
+          (err instanceof Error ? err.message : String(err)),
+      )
     } finally {
       setSaving(false)
     }
@@ -410,11 +352,8 @@ export function useSessionActions({
 
   return {
     saving,
-    savingDefault,
     handleCopySessionId,
-    handleClonePreset,
-    handleSave,
-    handleApplySetDefault,
-    handleResetSession,
+    handleSaveScope,
+    handleResetScope,
   }
 }

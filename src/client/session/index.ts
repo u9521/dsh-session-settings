@@ -7,6 +7,9 @@ import {
   type SubagentModelMode,
   type SessionMcpMode,
   type SessionSkillsMode,
+  type SubagentModelConfig,
+  type SessionMcpConfig,
+  type SessionSkillsConfig,
   API_ENDPOINTS,
 } from '../types/index.ts'
 import { useSessionData } from './hooks/useSessionData.ts'
@@ -16,8 +19,13 @@ import { NavigationSidebar } from './sections/NavigationSidebar.ts'
 import { SubagentModelSection } from './sections/SubagentModelSection.ts'
 import { SessionMcpSection } from './sections/SessionMcpSection.ts'
 import { SessionSkillsSection } from './sections/SessionSkillsSection.ts'
-import { SetDefaultModal } from './modals/SetDefaultModal.ts'
 import { SessionMcpToolsModal } from './modals/SessionMcpToolsModal.ts'
+import { McpResourcePanel } from '../mcp/components/McpResourcePanel.ts'
+import { McpPromptPanel } from '../mcp/components/McpPromptPanel.ts'
+import type { McpPrimitiveTab } from '../mcp/components/McpPrimitivesTabs.ts'
+import { useMcpPrimitives } from '../mcp/hooks/useMcpPrimitives.ts'
+import type { McpDiscovery } from '../mcp/hooks/useMcpPrimitives.ts'
+import { useCopyFeedback } from '../mcp/hooks/useCopyFeedback.ts'
 import { SkillDetailModal } from '../skills/components/SkillDetailModal.ts'
 
 export * from './sections/HeaderBar.ts'
@@ -25,7 +33,6 @@ export * from './sections/NavigationSidebar.ts'
 export * from './sections/SubagentModelSection.ts'
 export * from './sections/SessionMcpSection.ts'
 export * from './sections/SessionSkillsSection.ts'
-export * from './modals/SetDefaultModal.ts'
 export * from './modals/SessionMcpToolsModal.ts'
 
 const e = React.createElement
@@ -34,6 +41,12 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
   const { t, sessionId, onClose, onSave } = props
 
   const data = useSessionData(props)
+
+  // A session-scope edit needs a live session to write to. Without one the tab
+  // disables itself and the page explains why, rather than retargeting the save
+  // to a scope the user did not choose.
+  const canEditSessionScope = Boolean(sessionId)
+  const canEditWorkspaceScope = Boolean(data.currentWorkspaceId)
   const actions = useSessionActions({
     sessionId,
     currentWorkspaceId: data.currentWorkspaceId,
@@ -41,27 +54,89 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
     modelConfig: data.modelConfig,
     mcpConfig: data.mcpConfig,
     skillsConfig: data.skillsConfig,
-    globalConfig: data.globalConfig,
+    workspaceModelConfig: data.workspaceModelConfig,
+    workspaceMcpConfig: data.workspaceMcpConfig,
+    workspaceSkillsConfig: data.workspaceSkillsConfig,
+    globalModelConfig: data.globalModelConfig,
+    globalMcpConfig: data.globalMcpConfig,
+    globalSkillsConfig: data.globalSkillsConfig,
     setModelConfig: data.setModelConfig,
     setMcpConfig: data.setMcpConfig,
     setSkillsConfig: data.setSkillsConfig,
+    setWorkspaceModelConfig: data.setWorkspaceModelConfig,
+    setWorkspaceMcpConfig: data.setWorkspaceMcpConfig,
+    setWorkspaceSkillsConfig: data.setWorkspaceSkillsConfig,
+    setGlobalModelConfig: data.setGlobalModelConfig,
+    setGlobalMcpConfig: data.setGlobalMcpConfig,
+    setGlobalSkillsConfig: data.setGlobalSkillsConfig,
     setGlobalConfig: data.setGlobalConfig,
     setWorkspaceSettings: data.setWorkspaceSettings,
     setHasSessionOverride: data.setHasSessionOverride,
     setSaveSuccessMsg: data.setSaveSuccessMsg,
     setError: data.setError,
-    setSetDefaultModalOpen: data.setSetDefaultModalOpen,
-    setIsRestoringDefault: data.setIsRestoringDefault,
-    cloneSourceId: data.cloneSourceId,
-    setCloneSourceId: data.setCloneSourceId,
-    setCloning: data.setCloning,
-    setCloneError: data.setCloneError,
     setCopiedId: data.setCopiedId,
     sessionsMap: data.sessionsMap,
     reloadMcpServers: data.reloadMcpServers,
     onSave,
     t,
   })
+
+  const [sessionToolsReadonly, setSessionToolsReadonly] =
+    React.useState<boolean>(false)
+  const [sessionSkillReadonly, setSessionSkillReadonly] =
+    React.useState<boolean>(false)
+
+  // Dynamic getters & setters according to current active scope
+  const currentModelConfig: SubagentModelConfig =
+    data.activeScope === 'global'
+      ? data.globalModelConfig
+      : data.activeScope === 'workspace'
+        ? data.workspaceModelConfig
+        : data.modelConfig
+
+  const setCurrentModelConfig = (cfg: SubagentModelConfig) => {
+    if (data.activeScope === 'global') {
+      data.setGlobalModelConfig(cfg)
+    } else if (data.activeScope === 'workspace') {
+      data.setWorkspaceModelConfig(cfg)
+    } else {
+      data.setModelConfig(cfg)
+    }
+  }
+
+  const currentMcpConfig: SessionMcpConfig =
+    data.activeScope === 'global'
+      ? data.globalMcpConfig
+      : data.activeScope === 'workspace'
+        ? data.workspaceMcpConfig
+        : data.mcpConfig
+
+  const setCurrentMcpConfig = (cfg: SessionMcpConfig) => {
+    if (data.activeScope === 'global') {
+      data.setGlobalMcpConfig(cfg)
+    } else if (data.activeScope === 'workspace') {
+      data.setWorkspaceMcpConfig(cfg)
+    } else {
+      data.setMcpConfig(cfg)
+    }
+  }
+
+  const currentSkillsConfig: SessionSkillsConfig =
+    data.activeScope === 'global'
+      ? data.globalSkillsConfig
+      : data.activeScope === 'workspace'
+        ? data.workspaceSkillsConfig
+        : data.skillsConfig
+
+  const setCurrentSkillsConfig = (cfg: SessionSkillsConfig) => {
+    if (data.activeScope === 'global') {
+      data.setGlobalSkillsConfig(cfg)
+    } else if (data.activeScope === 'workspace') {
+      data.setWorkspaceSkillsConfig(cfg)
+    } else {
+      data.setSkillsConfig(cfg)
+    }
+  }
 
   // Runtime status of the official MCP clients does not change on its own —
   // re-read it whenever the MCP section becomes active.
@@ -76,25 +151,28 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
     data.setSaveSuccessMsg('')
     data.setError('')
     const extraFlags = {
-      allowAgentSelectModel: data.modelConfig.allowAgentSelectModel,
-      overrideForkModel: data.modelConfig.overrideForkModel,
+      allowAgentSelectModel: currentModelConfig.allowAgentSelectModel,
+      overrideForkModel: currentModelConfig.overrideForkModel,
     }
     if (mode === 'workspace') {
-      data.setModelConfig({ mode: 'workspace', ...extraFlags })
+      setCurrentModelConfig({ mode: 'workspace', ...extraFlags })
     } else if (mode === 'global') {
-      data.setModelConfig({ mode: 'global', ...extraFlags })
+      setCurrentModelConfig({ mode: 'global', ...extraFlags })
     } else if (mode === 'inherit') {
-      data.setModelConfig({ mode: 'custom', inherit: true, ...extraFlags })
+      setCurrentModelConfig({ mode: 'custom', inherit: true, ...extraFlags })
     } else if (mode === 'custom') {
-      if (data.modelConfig.model?.provider && data.modelConfig.model?.model) {
-        data.setModelConfig({
+      if (
+        currentModelConfig.model?.provider &&
+        currentModelConfig.model?.model
+      ) {
+        setCurrentModelConfig({
           mode: 'custom',
           inherit: false,
-          model: data.modelConfig.model,
+          model: currentModelConfig.model,
           ...extraFlags,
         })
       } else {
-        data.setModelConfig({
+        setCurrentModelConfig({
           mode: 'custom',
           inherit: false,
           model: {
@@ -111,7 +189,7 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
   const handleProviderChange = (providerId: string) => {
     const group = data.providers.find((g) => g.id === providerId)
     const firstModel = group?.models?.[0]?.id || ''
-    data.setModelConfig({
+    setCurrentModelConfig({
       mode: 'custom',
       inherit: false,
       model: {
@@ -119,56 +197,56 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
         model: firstModel,
         reasoningEffort: undefined,
       },
-      allowAgentSelectModel: data.modelConfig.allowAgentSelectModel,
-      overrideForkModel: data.modelConfig.overrideForkModel,
+      allowAgentSelectModel: currentModelConfig.allowAgentSelectModel,
+      overrideForkModel: currentModelConfig.overrideForkModel,
     })
   }
 
   const handleModelSelectChange = (modelId: string) => {
-    const currentProvider = data.modelConfig.model?.provider || ''
+    const currentProvider = currentModelConfig.model?.provider || ''
     const currentGroup = data.providers.find((g) => g.id === currentProvider)
     const selectedModel = currentGroup?.models?.find((m) => m.id === modelId)
     const supportedEfforts = selectedModel?.reasoning?.efforts || []
     const isEffortValid =
-      !data.modelConfig.model?.reasoningEffort ||
+      !currentModelConfig.model?.reasoningEffort ||
       supportedEfforts.some(
-        (eff) => eff.id === data.modelConfig.model?.reasoningEffort,
+        (eff) => eff.id === currentModelConfig.model?.reasoningEffort,
       )
 
-    data.setModelConfig({
+    setCurrentModelConfig({
       mode: 'custom',
       inherit: false,
       model: {
         provider: currentProvider,
         model: modelId,
         reasoningEffort: isEffortValid
-          ? data.modelConfig.model?.reasoningEffort
+          ? currentModelConfig.model?.reasoningEffort
           : undefined,
       },
-      allowAgentSelectModel: data.modelConfig.allowAgentSelectModel,
-      overrideForkModel: data.modelConfig.overrideForkModel,
+      allowAgentSelectModel: currentModelConfig.allowAgentSelectModel,
+      overrideForkModel: currentModelConfig.overrideForkModel,
     })
   }
 
   const handleReasoningEffortChange = (effortId: string) => {
-    if (!data.modelConfig.model) return
-    data.setModelConfig({
+    if (!currentModelConfig.model) return
+    setCurrentModelConfig({
       mode: 'custom',
       inherit: false,
       model: {
-        ...data.modelConfig.model,
+        ...currentModelConfig.model,
         reasoningEffort: effortId || undefined,
       },
-      allowAgentSelectModel: data.modelConfig.allowAgentSelectModel,
-      overrideForkModel: data.modelConfig.overrideForkModel,
+      allowAgentSelectModel: currentModelConfig.allowAgentSelectModel,
+      overrideForkModel: currentModelConfig.overrideForkModel,
     })
   }
 
   const handleAllowAgentSelectModelChange = (allow: boolean) => {
     data.setSaveSuccessMsg('')
     data.setError('')
-    data.setModelConfig({
-      ...data.modelConfig,
+    setCurrentModelConfig({
+      ...currentModelConfig,
       allowAgentSelectModel: allow,
     })
   }
@@ -176,35 +254,49 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
   const handleOverrideForkModelChange = (override: boolean) => {
     data.setSaveSuccessMsg('')
     data.setError('')
-    data.setModelConfig({
-      ...data.modelConfig,
+    setCurrentModelConfig({
+      ...currentModelConfig,
       overrideForkModel: override,
     })
   }
 
   // MCP change handlers
+  const effectiveEnabledServerIds = (): string[] => {
+    if (data.activeScope === 'global') {
+      return currentMcpConfig.enabledServerIds ?? []
+    }
+    if (currentMcpConfig.mode === 'custom') {
+      return currentMcpConfig.enabledServerIds ?? []
+    }
+    if (
+      currentMcpConfig.mode === 'workspace' &&
+      data.workspaceSettings?.mcp?.mode === 'custom'
+    ) {
+      return data.workspaceSettings.mcp.enabledServerIds ?? []
+    }
+    return data.globalConfig?.mcp?.enabledServerIds ?? []
+  }
+
   const handleMcpModeChange = (mode: SessionMcpMode) => {
     data.setSaveSuccessMsg('')
     data.setError('')
     if (
       mode === 'custom' &&
-      (!data.mcpConfig.enabledServerIds ||
-        data.mcpConfig.enabledServerIds.length === 0)
+      (!currentMcpConfig.enabledServerIds ||
+        currentMcpConfig.enabledServerIds.length === 0)
     ) {
-      const initialIds = data.availableMcpServers
-        .filter((s) => s.enabledByDefault)
-        .map((s) => s.id)
-      data.setMcpConfig({
-        ...data.mcpConfig,
+      const inherited = effectiveEnabledServerIds()
+      setCurrentMcpConfig({
+        ...currentMcpConfig,
         mode: 'custom',
         enabledServerIds:
-          initialIds.length > 0
-            ? initialIds
+          inherited.length > 0
+            ? inherited
             : data.availableMcpServers.map((s) => s.id),
       })
     } else {
-      data.setMcpConfig({
-        ...data.mcpConfig,
+      setCurrentMcpConfig({
+        ...currentMcpConfig,
         mode,
       })
     }
@@ -213,178 +305,102 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
   const handleToggleMcpServer = (serverId: string) => {
     data.setSaveSuccessMsg('')
     data.setError('')
-    const currentIds = data.mcpConfig.enabledServerIds || []
+    const currentIds = effectiveEnabledServerIds()
     const nextIds = currentIds.includes(serverId)
       ? currentIds.filter((id) => id !== serverId)
       : [...currentIds, serverId]
-    data.setMcpConfig({
-      ...data.mcpConfig,
+
+    setCurrentMcpConfig({
+      ...currentMcpConfig,
+      mode: data.activeScope === 'global' ? undefined : 'custom',
       enabledServerIds: nextIds,
     })
   }
 
   const handleToggleSelectAllMcp = () => {
+    const currentIds = effectiveEnabledServerIds()
     const isAll =
       data.availableMcpServers.length > 0 &&
-      data.availableMcpServers.every((s) =>
-        (data.mcpConfig.enabledServerIds || []).includes(s.id),
-      )
-    data.setMcpConfig({
-      ...data.mcpConfig,
+      data.availableMcpServers.every((s) => currentIds.includes(s.id))
+    setCurrentMcpConfig({
+      ...currentMcpConfig,
+      mode: data.activeScope === 'global' ? undefined : 'custom',
       enabledServerIds: isAll ? [] : data.availableMcpServers.map((s) => s.id),
     })
   }
 
+  // Publish a completed discovery to the server list and the modal's target.
+  //
+  // One probe (or cache read) yields tools, resources, templates, prompts,
+  // serverInfo, and transport together, so a single write-back keeps every tab
+  // and the card in step. Patching the modal's own object is what lets the
+  // discovery hook seed from it on the next render.
+  const applySessionDiscovery = React.useCallback(
+    (discovery: McpDiscovery, serverId?: string) => {
+      const id = serverId ?? data.sessionToolsModalServer?.id
+      if (!id) return
+      const { lists } = discovery
+      const patch: Partial<GlobalMcpServerConfig> = {
+        toolDetails: discovery.tools,
+        tools: discovery.tools.length,
+        resourceDetails: lists.resources,
+        resourceTemplateDetails: lists.resourceTemplates,
+        promptDetails: lists.prompts,
+        capabilities: lists.capabilities,
+        resourceCount: lists.resources.length,
+        resourceTemplateCount: lists.resourceTemplates.length,
+        promptCount: lists.prompts.length,
+        ...(discovery.serverInfo ? { serverInfo: discovery.serverInfo } : {}),
+        ...(discovery.detectedTransport
+          ? { detectedTransport: discovery.detectedTransport }
+          : {}),
+        lastTestedAt: Date.now(),
+      }
+      data.setAvailableMcpServers((prev) =>
+        prev.map((s) => (s.id === id ? { ...s, ...patch } : s)),
+      )
+      data.setSessionToolsModalServer((prev) =>
+        prev && prev.id === id ? { ...prev, ...patch } : prev,
+      )
+    },
+    [
+      data.setAvailableMcpServers,
+      data.setSessionToolsModalServer,
+      data.sessionToolsModalServer?.id,
+    ],
+  )
+
   // Session tools modal handlers
-  const handleOpenSessionToolsModal = async (server: GlobalMcpServerConfig) => {
-    data.setSessionToolsModalServer(server)
-    const currentToolsMode = data.mcpConfig.toolsMode?.[server.id] || 'global'
+  const handleOpenSessionToolsModal = async (
+    server: GlobalMcpServerConfig,
+    isReadonly?: boolean,
+  ) => {
+    setSessionToolsReadonly(Boolean(isReadonly))
+    setPrimitiveTab('tools')
+    const currentToolsMode = currentMcpConfig.toolsMode?.[server.id] || 'global'
     data.setSessionToolsMode(currentToolsMode)
     data.setSessionDisabledToolsSet(
       new Set(
-        data.mcpConfig.disabledTools?.[server.id] ||
+        currentMcpConfig.disabledTools?.[server.id] ||
           (Array.isArray(server.disabledTools) ? server.disabledTools : []),
       ),
     )
-
-    // Reset previous server's tools and error immediately
-    data.setSessionToolsList([])
-    data.setSessionToolsError('')
-    data.setSessionToolsFetching(true)
-
-    // 1. Try to read cached toolview first
-    try {
-      const res = await fetch(
-        `${API_ENDPOINTS.mcpServersToolview}?id=${encodeURIComponent(server.id)}`,
-      )
-      const resData = await res.json()
-      if (resData.ok) {
-        const cachedTools: McpDiscoveredTool[] = Array.isArray(
-          resData.toolDetails,
-        )
-          ? (resData.toolDetails as McpDiscoveredTool[])
-          : Array.isArray(resData.tools)
-            ? (resData.tools as unknown[]).map((t) =>
-                typeof t === 'string' ? { name: t } : (t as McpDiscoveredTool),
-              )
-            : []
-        if (cachedTools.length > 0) {
-          data.setSessionToolsList(cachedTools)
-          data.setSessionToolsFetching(false)
-          return
-        }
-      }
-    } catch {
-      // If toolview failed, continue to live tools discovery
-    }
-
-    // 2. If no cached tools were found, live discover tools
-    try {
-      const res = await fetch(API_ENDPOINTS.mcpServersTools, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ server }),
-      })
-      const resData = await res.json()
-      if (resData.ok) {
-        const fetchedTools: McpDiscoveredTool[] = Array.isArray(
-          resData.toolDetails,
-        )
-          ? (resData.toolDetails as McpDiscoveredTool[])
-          : Array.isArray(resData.tools)
-            ? (resData.tools as unknown[]).map((t) =>
-                typeof t === 'string' ? { name: t } : (t as McpDiscoveredTool),
-              )
-            : []
-        data.setSessionToolsList(fetchedTools)
-        data.setSessionToolsError('')
-        data.setAvailableMcpServers((prev) =>
-          prev.map((s) =>
-            s.id === server.id
-              ? {
-                  ...s,
-                  toolDetails: fetchedTools,
-                  tools: fetchedTools.length,
-                  detectedTransport:
-                    resData.detectedTransport || s.detectedTransport,
-                  serverInfo: resData.serverInfo || s.serverInfo,
-                }
-              : s,
-          ),
-        )
-      } else {
-        data.setSessionToolsList([])
-        data.setSessionToolsError(
-          resData.message ||
-            resData.error ||
-            t('sessionSettings.toolsModal.fetchFailed'),
-        )
-      }
-    } catch (err: unknown) {
-      data.setSessionToolsList([])
-      data.setSessionToolsError(
-        err instanceof Error ? err.message : String(err),
-      )
-    } finally {
-      data.setSessionToolsFetching(false)
-    }
+    // Opening is now purely local. The discovery hook reads the cache and, only
+    // if it is empty and the user asks, probes — so no request is issued here.
+    data.setSessionToolsModalServer(server)
   }
 
-  const handleFetchSessionTools = async () => {
-    if (!data.sessionToolsModalServer) return
-    const server = data.sessionToolsModalServer
-    data.setSessionToolsFetching(true)
-    data.setSessionToolsError('')
-    try {
-      const res = await fetch(API_ENDPOINTS.mcpServersTools, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ server }),
-      })
-      const resData = await res.json()
-      if (resData.ok) {
-        const fetchedTools: McpDiscoveredTool[] = Array.isArray(
-          resData.toolDetails,
-        )
-          ? (resData.toolDetails as McpDiscoveredTool[])
-          : Array.isArray(resData.tools)
-            ? (resData.tools as unknown[]).map((t) =>
-                typeof t === 'string' ? { name: t } : (t as McpDiscoveredTool),
-              )
-            : []
-        data.setSessionToolsList(fetchedTools)
-        data.setSessionToolsError('')
-        data.setAvailableMcpServers((prev) =>
-          prev.map((s) =>
-            s.id === server.id
-              ? {
-                  ...s,
-                  toolDetails: fetchedTools,
-                  tools: fetchedTools.length,
-                  detectedTransport:
-                    resData.detectedTransport || s.detectedTransport,
-                  serverInfo: resData.serverInfo || s.serverInfo,
-                }
-              : s,
-          ),
-        )
-      } else {
-        data.setSessionToolsList([])
-        data.setSessionToolsError(
-          resData.message ||
-            resData.error ||
-            t('sessionSettings.toolsModal.fetchFailed'),
-        )
-      }
-    } catch (err: unknown) {
-      data.setSessionToolsList([])
-      data.setSessionToolsError(
-        err instanceof Error ? err.message : String(err),
-      )
-    } finally {
-      data.setSessionToolsFetching(false)
-    }
-  }
+  // The session tab shows the same read-only viewers as the global tab. Lists
+  // are cache-first and content is never persisted; the reads are GUI actions
+  // that never enter this session's context.
+  const [primitiveTab, setPrimitiveTab] =
+    React.useState<McpPrimitiveTab>('tools')
+  const discovery = useMcpPrimitives({
+    server: data.sessionToolsModalServer,
+    onDiscovery: applySessionDiscovery,
+    t,
+  })
+  const { copiedKey, copy } = useCopyFeedback()
 
   const handleToggleSessionTool = (toolName: string) => {
     data.setSessionDisabledToolsSet((prev) => {
@@ -401,7 +417,7 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
     } else {
       data.setSessionDisabledToolsSet(
         new Set(
-          data.sessionToolsList
+          discovery.tools
             .map((t) => t.name)
             .filter((n): n is string => typeof n === 'string' && Boolean(n)),
         ),
@@ -420,17 +436,16 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
   }
 
   const handleCloseSessionToolsModal = () => {
+    // The discovery hook resets itself when its server becomes null.
     data.setSessionToolsModalServer(null)
-    data.setSessionToolsList([])
-    data.setSessionToolsError('')
-    data.setSessionToolsFetching(false)
+    setPrimitiveTab('tools')
   }
 
   const handleApplySessionTools = () => {
     if (!data.sessionToolsModalServer) return
     const serverId = data.sessionToolsModalServer.id
-    const nextToolsMode = { ...(data.mcpConfig.toolsMode || {}) }
-    const nextDisabledTools = { ...(data.mcpConfig.disabledTools || {}) }
+    const nextToolsMode = { ...(currentMcpConfig.toolsMode || {}) }
+    const nextDisabledTools = { ...(currentMcpConfig.disabledTools || {}) }
 
     nextToolsMode[serverId] = data.sessionToolsMode
     if (data.sessionToolsMode === 'custom') {
@@ -439,13 +454,13 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
       delete nextDisabledTools[serverId]
     }
 
-    const currentEnabled = data.mcpConfig.enabledServerIds || []
+    const currentEnabled = currentMcpConfig.enabledServerIds || []
     const nextEnabled = currentEnabled.includes(serverId)
       ? currentEnabled
       : [...currentEnabled, serverId]
 
-    data.setMcpConfig({
-      ...data.mcpConfig,
+    setCurrentMcpConfig({
+      ...currentMcpConfig,
       enabledServerIds: nextEnabled,
       toolsMode: nextToolsMode,
       disabledTools: nextDisabledTools,
@@ -469,18 +484,22 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
       : defaultDisabledUserSkills
 
   const effectiveDisabledModelList =
-    data.skillsConfig.mode === 'custom'
-      ? data.skillsConfig.disabledModelSkills || []
-      : data.skillsConfig.mode === 'workspace'
-        ? workspaceDisabledModelSkills
-        : defaultDisabledModelSkills
+    data.activeScope === 'global'
+      ? currentSkillsConfig.disabledModelSkills || []
+      : currentSkillsConfig.mode === 'custom'
+        ? currentSkillsConfig.disabledModelSkills || []
+        : currentSkillsConfig.mode === 'workspace'
+          ? workspaceDisabledModelSkills
+          : defaultDisabledModelSkills
 
   const effectiveDisabledUserList =
-    data.skillsConfig.mode === 'custom'
-      ? data.skillsConfig.disabledUserSkills || []
-      : data.skillsConfig.mode === 'workspace'
-        ? workspaceDisabledUserSkills
-        : defaultDisabledUserSkills
+    data.activeScope === 'global'
+      ? currentSkillsConfig.disabledUserSkills || []
+      : currentSkillsConfig.mode === 'custom'
+        ? currentSkillsConfig.disabledUserSkills || []
+        : currentSkillsConfig.mode === 'workspace'
+          ? workspaceDisabledUserSkills
+          : defaultDisabledUserSkills
 
   const effectiveDisabledModelSet = new Set(effectiveDisabledModelList)
   const effectiveDisabledUserSet = new Set(effectiveDisabledUserList)
@@ -492,12 +511,12 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
   const handleSkillsModeChange = (mode: SessionSkillsMode) => {
     data.setSaveSuccessMsg('')
     data.setError('')
-    data.setSkillsConfig({
-      ...data.skillsConfig,
+    setCurrentSkillsConfig({
+      ...currentSkillsConfig,
       mode,
       disabledModelSkills:
         mode === 'custom'
-          ? data.skillsConfig.disabledModelSkills || []
+          ? currentSkillsConfig.disabledModelSkills || []
           : mode === 'workspace'
             ? data.workspaceSettings?.skills?.mode === 'custom'
               ? data.workspaceSettings.skills.disabledModelSkills || []
@@ -505,7 +524,7 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
             : [],
       disabledUserSkills:
         mode === 'custom'
-          ? data.skillsConfig.disabledUserSkills || []
+          ? currentSkillsConfig.disabledUserSkills || []
           : mode === 'workspace'
             ? data.workspaceSettings?.skills?.mode === 'custom'
               ? data.workspaceSettings.skills.disabledUserSkills || []
@@ -522,12 +541,12 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
     data.setSaveSuccessMsg('')
     data.setError('')
     const curModel =
-      data.skillsConfig.mode === 'custom'
-        ? data.skillsConfig.disabledModelSkills || []
+      data.activeScope === 'global' || currentSkillsConfig.mode === 'custom'
+        ? currentSkillsConfig.disabledModelSkills || []
         : effectiveDisabledModelList
     const curUser =
-      data.skillsConfig.mode === 'custom'
-        ? data.skillsConfig.disabledUserSkills || []
+      data.activeScope === 'global' || currentSkillsConfig.mode === 'custom'
+        ? currentSkillsConfig.disabledUserSkills || []
         : effectiveDisabledUserList
 
     const nextModel = modelDisabled
@@ -537,16 +556,20 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
       ? Array.from(new Set([...curUser, skillName]))
       : curUser.filter((n) => n !== skillName)
 
-    data.setSkillsConfig({
-      ...data.skillsConfig,
-      mode: 'custom',
+    setCurrentSkillsConfig({
+      ...currentSkillsConfig,
+      mode: data.activeScope === 'global' ? undefined : 'custom',
       disabledModelSkills: nextModel,
       disabledUserSkills: nextUser,
     })
     data.setSessionSkillModalTarget(null)
   }
 
-  const handleOpenSessionSkillModal = async (skill: SkillItem) => {
+  const handleOpenSessionSkillModal = async (
+    skill: SkillItem,
+    isReadonly?: boolean,
+  ) => {
+    setSessionSkillReadonly(Boolean(isReadonly))
     data.setSessionSkillModalTarget(skill)
     const skillName = skill.name
     if (!data.skillsContentMap[skillName] && !skill.content) {
@@ -611,23 +634,46 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
         }
       }
     } catch {
-      // ignore
     } finally {
       data.setRefreshingSkills(false)
     }
   }
 
   const defaultActiveMcpCount =
-    data.globalConfig?.mcp?.enabledServerIds?.length ??
-    data.availableMcpServers.filter((s) => s.enabledByDefault).length
+    data.globalConfig?.mcp?.enabledServerIds?.length ?? 0
 
   const effectiveActiveMcpCount =
-    data.mcpConfig.mode === 'custom' || !sessionId
-      ? (data.mcpConfig.enabledServerIds || []).length
-      : data.mcpConfig.mode === 'workspace' &&
-          data.workspaceSettings?.mcp?.mode === 'custom'
-        ? (data.workspaceSettings.mcp.enabledServerIds || []).length
-        : defaultActiveMcpCount
+    data.activeScope === 'global'
+      ? (currentMcpConfig.enabledServerIds || []).length
+      : currentMcpConfig.mode === 'custom' || !sessionId
+        ? (currentMcpConfig.enabledServerIds || []).length
+        : currentMcpConfig.mode === 'workspace' &&
+            data.workspaceSettings?.mcp?.mode === 'custom'
+          ? (data.workspaceSettings.mcp.enabledServerIds || []).length
+          : defaultActiveMcpCount
+
+  // Determine if reset button should be shown
+  const showResetButton =
+    data.activeScope === 'global'
+      ? true
+      : data.activeScope === 'workspace'
+        ? Boolean(data.workspaceSettings)
+        : Boolean(sessionId && data.hasSessionOverride)
+
+  const resetLabel =
+    data.activeScope === 'global'
+      ? t('sessionSettings.action.resetGlobal')
+      : data.activeScope === 'workspace'
+        ? t('sessionSettings.action.resetWorkspace')
+        : t('sessionSettings.action.resetSession')
+
+  const saveLabel = actions.saving
+    ? t('sessionSettings.action.saving')
+    : data.activeScope === 'global'
+      ? t('sessionSettings.action.saveGlobal')
+      : data.activeScope === 'workspace'
+        ? t('sessionSettings.action.saveWorkspace')
+        : t('sessionSettings.action.saveSession')
 
   return e(
     'div',
@@ -638,17 +684,12 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
     },
     // Top Header
     e(HeaderBar, {
+      activeScope: data.activeScope,
       sessionId,
       copiedId: data.copiedId,
-      currentWorkspaceId: data.currentWorkspaceId,
       currentWorkspaceTitle: data.currentWorkspaceTitle,
       currentWorkspace: data.currentWorkspace || undefined,
-      hasSessionOverride: data.hasSessionOverride,
-      cloneSourceId: data.cloneSourceId,
-      cloning: data.cloning,
-      onCloneSourceIdChange: data.setCloneSourceId,
       onCopySessionId: actions.handleCopySessionId,
-      onClonePreset: actions.handleClonePreset,
       onClose,
       t,
     }),
@@ -661,11 +702,11 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
           data.saveSuccessMsg,
         )
       : null,
-    data.error || data.cloneError
+    data.error
       ? e(
           'div',
           { className: 'dsh-sam-notice error dsh-view-notice' },
-          data.error || data.cloneError,
+          data.error,
         )
       : null,
 
@@ -677,7 +718,7 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
       e(NavigationSidebar, {
         activeNav: data.activeNav,
         onNavChange: data.setActiveNav,
-        modelConfig: data.modelConfig,
+        modelConfig: currentModelConfig,
         effectiveActiveMcpCount,
         effectiveActiveSkillsCount,
         availableSkills: data.availableSkills,
@@ -690,7 +731,8 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
         { className: 'dsh-session-view-content' },
         data.activeNav === 'model'
           ? e(SubagentModelSection, {
-              modelConfig: data.modelConfig,
+              scope: data.activeScope,
+              modelConfig: currentModelConfig,
               providers: data.providers,
               loadingModels: data.loadingModels,
               currentWorkspaceId: data.currentWorkspaceId,
@@ -708,8 +750,9 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
 
         data.activeNav === 'mcp'
           ? e(SessionMcpSection, {
+              scope: data.activeScope,
               sessionId,
-              mcpConfig: data.mcpConfig,
+              mcpConfig: currentMcpConfig,
               availableMcpServers: data.availableMcpServers,
               currentWorkspaceId: data.currentWorkspaceId,
               workspaceSettings: data.workspaceSettings,
@@ -727,7 +770,8 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
 
         data.activeNav === 'skills'
           ? e(SessionSkillsSection, {
-              skillsConfig: data.skillsConfig,
+              scope: data.activeScope,
+              skillsConfig: currentSkillsConfig,
               availableSkills: data.availableSkills,
               currentWorkspaceId: data.currentWorkspaceId,
               workspaceSettings: data.workspaceSettings,
@@ -753,89 +797,145 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
       e(
         'div',
         { className: 'dsh-view-footer-left' },
-        sessionId && data.hasSessionOverride
-          ? e(
-              'button',
-              {
-                type: 'button',
-                className: 'dsh-sam-btn tertiary',
-                disabled: actions.saving || actions.savingDefault,
-                onClick: actions.handleResetSession,
+        // Scope Tabs Navigator ([ 会话 ] [ 工作区 ] [ 全局 ])
+        e(
+          'div',
+          { className: 'dsh-scope-tabs-nav', role: 'tablist' },
+          e(
+            'button',
+            {
+              type: 'button',
+              role: 'tab',
+              'aria-selected': data.activeScope === 'session',
+              className: `dsh-scope-tab-btn ${data.activeScope === 'session' ? 'active' : ''} ${!canEditSessionScope ? 'disabled' : ''}`,
+              disabled: !canEditSessionScope,
+              title: !canEditSessionScope
+                ? t('sessionSettings.scopeTabs.sessionDisabledHint')
+                : undefined,
+              onClick: () => {
+                if (canEditSessionScope) data.setActiveScope('session')
               },
-              t('sessionSettings.action.reset'),
+            },
+            t('sessionSettings.scopeTabs.session'),
+          ),
+          e(
+            'button',
+            {
+              type: 'button',
+              role: 'tab',
+              'aria-selected': data.activeScope === 'workspace',
+              className: `dsh-scope-tab-btn ${data.activeScope === 'workspace' ? 'active' : ''} ${!canEditWorkspaceScope ? 'disabled' : ''}`,
+              disabled: !canEditWorkspaceScope,
+              title: !canEditWorkspaceScope
+                ? t('sessionSettings.scopeTabs.workspaceDisabledHint')
+                : undefined,
+              onClick: () => {
+                if (canEditWorkspaceScope) data.setActiveScope('workspace')
+              },
+            },
+            t('sessionSettings.scopeTabs.workspace'),
+          ),
+          e(
+            'button',
+            {
+              type: 'button',
+              role: 'tab',
+              'aria-selected': data.activeScope === 'global',
+              className: `dsh-scope-tab-btn ${data.activeScope === 'global' ? 'active' : ''}`,
+              onClick: () => data.setActiveScope('global'),
+            },
+            t('sessionSettings.scopeTabs.global'),
+          ),
+        ),
+        // A disabled button cannot explain itself: its `title` is unreachable
+        // (no pointer events reach a disabled control in most browsers), so the
+        // reason is rendered as text next to the tabs.
+        !canEditSessionScope || !canEditWorkspaceScope
+          ? e(
+              'span',
+              {
+                className: 'dsh-scope-hint',
+                role: 'note',
+              },
+              !canEditSessionScope
+                ? t('sessionSettings.scopeTabs.sessionDisabledHint')
+                : t('sessionSettings.scopeTabs.workspaceDisabledHint'),
             )
           : null,
       ),
       e(
         'div',
         { className: 'dsh-view-footer-right' },
-        e(
-          'button',
-          {
-            type: 'button',
-            className: 'dsh-sam-btn default-btn',
-            disabled: actions.saving || actions.savingDefault,
-            onClick: () => {
-              data.setSetDefaultTargetScope(
-                data.currentWorkspaceId ? 'workspace' : 'global',
-              )
-              data.setIsRestoringDefault(false)
-              data.setSetDefaultModalOpen(true)
-            },
-          },
-          t('sessionSettings.action.setDefault'),
-        ),
+        showResetButton
+          ? e(
+              'button',
+              {
+                type: 'button',
+                className: 'dsh-sam-btn tertiary',
+                disabled: actions.saving,
+                onClick: () => actions.handleResetScope(data.activeScope),
+              },
+              resetLabel,
+            )
+          : null,
         e(
           'button',
           {
             type: 'button',
             className: 'dsh-sam-btn primary',
-            disabled: actions.saving || actions.savingDefault,
-            onClick: () => actions.handleSave(),
+            disabled: actions.saving,
+            onClick: () => actions.handleSaveScope(data.activeScope),
           },
-          actions.saving
-            ? t('sessionSettings.action.saving')
-            : sessionId
-              ? t('sessionSettings.action.saveSession')
-              : t('sessionSettings.action.save'),
+          saveLabel,
         ),
       ),
     ),
-
-    // Set as Default Modal
-    e(SetDefaultModal, {
-      open: data.setDefaultModalOpen,
-      setDefaultTargetScope: data.setDefaultTargetScope,
-      setSetDefaultTargetScope: data.setSetDefaultTargetScope,
-      isRestoringDefault: data.isRestoringDefault,
-      setIsRestoringDefault: data.setIsRestoringDefault,
-      currentWorkspaceId: data.currentWorkspaceId,
-      currentWorkspaceTitle: data.currentWorkspaceTitle,
-      currentWorkspace: data.currentWorkspace || undefined,
-      workspaceSettings: data.workspaceSettings,
-      globalConfig: data.globalConfig,
-      modelConfig: data.modelConfig,
-      mcpConfig: data.mcpConfig,
-      skillsConfig: data.skillsConfig,
-      availableSkills: data.availableSkills,
-      savingDefault: actions.savingDefault,
-      onClose: () => data.setSetDefaultModalOpen(false),
-      onApply: () =>
-        actions.handleApplySetDefault(
-          data.setDefaultTargetScope,
-          data.isRestoringDefault,
-        ),
-      t,
-    }),
 
     // Session Tools Modal
     e(SessionMcpToolsModal, {
       server: data.sessionToolsModalServer,
       toolsMode: data.sessionToolsMode,
       disabledToolsSet: data.sessionDisabledToolsSet,
-      fetching: data.sessionToolsFetching,
-      error: data.sessionToolsError,
-      toolsList: data.sessionToolsList as McpDiscoveredTool[],
+      fetching: discovery.loading,
+      error: discovery.error,
+      toolsList: discovery.tools as McpDiscoveredTool[],
+      isReadonly: sessionToolsReadonly,
+      activeTab: primitiveTab,
+      onTabChange: setPrimitiveTab,
+      tabCounts: {
+        tools: (discovery.tools as McpDiscoveredTool[]).length,
+        resources:
+          discovery.lists.resources.length +
+          discovery.lists.resourceTemplates.length,
+        prompts: discovery.lists.prompts.length,
+      },
+      resourcePanel: e(McpResourcePanel, {
+        resources: discovery.lists.resources,
+        resourceTemplates: discovery.lists.resourceTemplates,
+        capabilities: discovery.lists.capabilities,
+        loading: discovery.loading,
+        error: discovery.error,
+        loaded: discovery.loaded,
+        read: discovery.resourceRead,
+        onRefresh: discovery.refresh,
+        onRead: discovery.readResource,
+        onCopy: copy,
+        copiedKey,
+        t,
+      }),
+      promptPanel: e(McpPromptPanel, {
+        prompts: discovery.lists.prompts,
+        capabilities: discovery.lists.capabilities,
+        loading: discovery.loading,
+        error: discovery.error,
+        loaded: discovery.loaded,
+        result: discovery.promptGet,
+        onRefresh: discovery.refresh,
+        onGet: discovery.getPrompt,
+        onCopy: copy,
+        copiedKey,
+        t,
+      }),
       onToolsModeChange: (val) => {
         data.setSessionToolsMode(val)
         if (val === 'global') {
@@ -851,7 +951,7 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
       onToggleTool: handleToggleSessionTool,
       onToggleAllTools: handleToggleAllSessionTools,
       onResetToDefault: handleResetSessionToolsToDefault,
-      onFetchTools: handleFetchSessionTools,
+      onFetchTools: discovery.refresh,
       onClose: handleCloseSessionToolsModal,
       onApply: handleApplySessionTools,
       t,
@@ -873,8 +973,9 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
       loadingContent: data.sessionSkillModalTarget
         ? Boolean(data.skillsLoadingMap[data.sessionSkillModalTarget.name])
         : false,
-      isSessionContext: true,
-      onSave: handleSaveSessionSkillModal,
+      isSessionContext: data.activeScope === 'session',
+      isReadonly: sessionSkillReadonly,
+      onSave: sessionSkillReadonly ? undefined : handleSaveSessionSkillModal,
       onClose: () => data.setSessionSkillModalTarget(null),
       t,
     }),

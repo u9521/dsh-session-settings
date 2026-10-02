@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { IconWarningOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconWarningOutlineMedium } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { GlobalMcpServerConfig } from '../../types/index.ts'
 import { ModalDialog } from '../../components/index.ts'
 
@@ -30,7 +30,7 @@ export function McpSaveConfirmModal({
       open: Boolean(confirmState?.open),
       onClose: onCancel,
       title: t('mcpServers.saveConfirmModal.title'),
-      icon: e(IconWarningOutline16, { size: 18 }),
+      icon: e(IconWarningOutlineMedium, { size: 18 }),
       overlayClassName: 'dsh-sam-modal-overlay dsh-mcp-confirm-overlay',
       panelClassName: 'dsh-mcp-confirm-modal',
       footer: [

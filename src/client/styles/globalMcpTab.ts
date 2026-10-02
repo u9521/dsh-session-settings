@@ -149,14 +149,6 @@ export const GLOBAL_MCP_TAB_CSS = `
   font-weight: 600;
   padding: 2px 6px;
 }
-.dsh-mcp-default-badge {
-  background: rgba(147, 51, 234, 0.12);
-  border-radius: 4px;
-  color: #a855f7;
-  font-size: 11px;
-  font-weight: 500;
-  padding: 2px 6px;
-}
 .dsh-mcp-proto-badge.website {
   background: rgba(88, 166, 255, 0.12);
   color: #58a6ff;
@@ -1069,7 +1061,7 @@ export const GLOBAL_MCP_TAB_CSS = `
   width: 90vw;
 }
 .dsh-mcp-confirm-modal .dsh-sam-header svg {
-  color: var(--dsw-alias-state-warning-primary, #d29922);
+  color: var(--dsw-alias-state-warn-primary, #d29922);
 }
 .dsh-mcp-confirm-msg {
   color: var(--dsw-alias-label-primary);
@@ -1101,5 +1093,146 @@ export const GLOBAL_MCP_TAB_CSS = `
 }
 .dsh-mcp-confirm-modal .dsh-sam-actions {
   margin-top: 0;
+}
+
+/* ── Resource / prompt viewers (shared by the global and session modals) ── */
+.dsh-mcp-primitive-tabs {
+  margin-bottom: 10px;
+}
+.dsh-mcp-primitive-tab-count {
+  background: var(--dsw-alias-bg-layer-3, rgba(127, 127, 127, 0.2));
+  border-radius: 8px;
+  font-size: 11px;
+  line-height: 16px;
+  margin-left: 6px;
+  min-width: 16px;
+  padding: 0 5px;
+  text-align: center;
+}
+.dsh-mcp-primitive-group + .dsh-mcp-primitive-group {
+  margin-top: 14px;
+}
+.dsh-mcp-primitive-group-title {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+  margin-bottom: 6px;
+}
+.dsh-mcp-primitive-card .dsh-mcp-tool-info {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+/* URIs and templates are read verbatim; wrap rather than truncate. */
+.dsh-mcp-primitive-uri {
+  background: var(--dsw-alias-bg-layer-1);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
+  color: var(--dsw-alias-label-secondary);
+  display: block;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 16px;
+  margin-top: 6px;
+  padding: 4px 8px;
+  word-break: break-all;
+}
+.dsh-mcp-primitive-vars {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+.dsh-mcp-primitive-var {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 160px;
+  gap: 4px;
+  min-width: 120px;
+}
+.dsh-mcp-primitive-var-name {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 15px;
+  /* Monospace matches the URI above, marking this as a literal template token
+     rather than prose. */
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+/* Compact variant of the shared input: these sit in a dense per-row form, so
+   they are shorter and smaller than the form's 36px/13px default. Everything
+   else (surface, border, focus ring, disabled) is inherited. */
+.dsh-mcp-primitive-var .dsh-sam-select {
+  font-size: 12px;
+  height: 32px;
+}
+.dsh-mcp-primitive-var .dsh-sam-select.invalid {
+  border-color: var(--dsw-alias-state-error, #f87171);
+}
+.dsh-mcp-primitive-var .dsh-sam-select.invalid:focus-visible {
+  outline-color: var(--dsw-alias-state-error, #f87171);
+}
+.dsh-mcp-primitive-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+.dsh-mcp-primitive-read-box {
+  border-top: 1px dashed var(--dsw-alias-border-l2);
+  margin-top: 10px;
+  padding-top: 10px;
+}
+/* Bounded height keeps one huge resource from pushing the modal out of view. */
+.dsh-mcp-primitive-content {
+  background: var(--dsw-alias-bg-layer-1);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 17px;
+  margin: 0;
+  max-height: 240px;
+  overflow: auto;
+  padding: 8px 10px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.dsh-mcp-primitive-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.dsh-mcp-primitive-message {
+  border-left: 3px solid var(--dsw-alias-border-l2);
+  padding-left: 10px;
+}
+.dsh-mcp-primitive-message.user {
+  border-left-color: var(--dsw-alias-brand-primary, #4d6bfe);
+}
+.dsh-mcp-primitive-message.assistant {
+  border-left-color: var(--dsw-alias-label-secondary);
+}
+.dsh-mcp-primitive-role {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  line-height: 16px;
+  text-transform: uppercase;
+}
+.dsh-mcp-primitive-block + .dsh-mcp-primitive-block {
+  margin-top: 6px;
+}
+.dsh-mcp-primitive-block-text {
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 19px;
+  margin: 2px 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 `

@@ -2,6 +2,11 @@ export const zh = {
   // Session Settings view page (tab in conversation.view after 轨迹)
   sessionSettings: {
     title: '会话设置',
+    titles: {
+      session: '会话设置',
+      workspace: '工作区设置',
+      global: '全局设置',
+    },
     heroChipHint: '配置此会话的子代理模型、MCP服务器与技能',
     idCopied: '已复制',
     nav: {
@@ -34,6 +39,10 @@ export const zh = {
         desc: '默认关闭。DSH 原生禁止基于分叉的子代理（subagent_fork）更换模型，以保证历史会话能够完整复用 KV 缓存。开启此选项后将允许强制替换 fork 子代理的模型，但会导致父会话历史的 KV 缓存失效，引起全量 Prompt 重新计算。',
         summaryEnabled: '替换Fork模型',
       },
+      specifySubagentModel: {
+        title: '指定子代理模型',
+        desc: '开启后可单独指定子代理的执行模型与思考等级；关闭时默认跟随当前父会话的模型。',
+      },
     },
     scope: {
       sessionCustom: '已为此会话单独配置',
@@ -57,14 +66,23 @@ export const zh = {
       workspace: '工作区',
       none: '未启用',
     },
-    clone: {
-      toolbarTitle: '克隆预设：',
-      inputPlaceholder: '粘贴源会话 ID (如 session-xxxx)',
-      applyBtn: '克隆',
-      loading: '载入中...',
-      success: '已成功克隆会话「{name}」的预设！请确认后点击下方「保存」生效。',
-      error: '克隆失败：未找到该会话 ID 或无法读取其配置',
-      cannotCloneSelf: '不能复制自己的预设',
+    scopeTabs: {
+      session: '会话',
+      workspace: '工作区',
+      global: '全局',
+      noWorkspace: '未关联工作区',
+      sessionDisabledHint:
+        '尚未创建会话：打开或新建一个会话后，即可按会话单独配置',
+      workspaceDisabledHint:
+        '未关联工作区：当前页面无法确定工作区，暂不能编辑工作区默认',
+    },
+    sourceTabs: {
+      label: '配置来源：',
+      workspace: '工作区默认',
+      global: '全局默认',
+      custom: '会话自定义',
+      workspaceCustom: '工作区自定义',
+      readonlyViewOnly: '只读查看',
     },
     mode: {
       workspace: {
@@ -83,6 +101,14 @@ export const zh = {
         title: '指定此会话的子代理模型',
         desc: '为此会话单独指定专属的模型。',
       },
+      workspaceCustom: {
+        title: '为此工作区单独配置',
+        desc: '为此工作区设定专属的默认子代理模型。',
+      },
+      globalCustom: {
+        title: '指定全局默认模型',
+        desc: '统一指定所有会话默认使用的子代理模型。',
+      },
     },
     mcpMode: {
       workspace: {
@@ -94,7 +120,7 @@ export const zh = {
       default: {
         title: '使用全局默认规则',
         badge: '{count} 个服务器',
-        desc: '使用全局设置中标记为“默认开启”的所有 MCP 服务器。',
+        desc: '使用全局设置中已勾选的 MCP 服务器。',
       },
       custom: {
         title: '为此会话自定义',
@@ -163,7 +189,7 @@ export const zh = {
         '暂无已配置的 MCP 服务器。可在「设置 -> 插件配置 -> MCP 服务器」中集中添加。',
       selectAll: '全选',
       deselectAll: '全不选',
-      toolsBtn: '配置工具',
+      toolsBtn: '服务器信息',
       toolsModeDefaultBadge: '工具: 跟随默认',
       toolsModeCustomBadge: '工具: 单独配置 ({count} 禁用)',
       toolsAllActiveBadge: '工具: 全部启用',
@@ -176,7 +202,8 @@ export const zh = {
       },
       notices: {
         refreshSuccess: '已重新挂载「{name}」的 MCP 客户端',
-        refreshFailed: 'MCP 客户端重新挂载失败：{message}',
+        refreshProbeOnly: '「{name}」连接正常，无需重挂载，状态已刷新',
+        refreshFailed: 'MCP 客户端连接失败：{message}',
       },
     },
     toolsModal: {
@@ -191,7 +218,6 @@ export const zh = {
       disableAll: '全部禁用',
       resetToDefault: '重置为全局默认',
       noToolsAvailable: '该服务器暂未发现工具，或尚未成功连接获取。',
-      loading: '正在获取工具列表...',
       toolEnabled: '已启用',
       toolGlobalDisabledBadge: '全局默认禁用',
       toolCustomDisabledBadge: '当前会话禁用',
@@ -212,8 +238,6 @@ export const zh = {
       defaultVal: '默认值: ',
       enumVal: '枚举: ',
       fetchToolsBtn: '获取工具列表',
-      fetchingTools: '正在获取工具列表...',
-      refreshBtn: '刷新工具列表',
       fetchFailed: '获取工具列表失败：',
       retry: '重试',
     },
@@ -237,13 +261,17 @@ export const zh = {
     },
     action: {
       save: '保存',
-      saveSession: '保存',
-      setDefault: '设为默认',
+      saveSession: '保存会话',
+      saveWorkspace: '保存工作区默认',
+      saveGlobal: '保存全局默认',
       applyWorkspaceDefault: '应用',
       restoreWorkspaceToGlobal: '恢复默认',
       saving: '保存中...',
       savingDefault: '保存中...',
       reset: '恢复默认',
+      resetSession: '恢复默认',
+      resetWorkspace: '恢复全局默认',
+      resetGlobal: '恢复初始默认',
       copyId: '复制会话 ID',
       close: '关闭',
       restoreDefault: '恢复默认',
@@ -251,37 +279,53 @@ export const zh = {
       confirmApply: '应用',
       cancel: '取消',
     },
-    setDefaultModal: {
-      title: '设为默认',
-      desc: '将当前编辑的配置设置为工作区或全局的默认模板。新会话将自动继承生效。',
-      targetScope: '应用目标：',
-      scopeWorkspace: '工作区默认',
-      scopeGlobal: '全局默认',
-      diffBeforeWorkspace: '变更前',
-      diffAfterWorkspace: '变更后',
-      diffBeforeGlobal: '变更前',
-      diffAfterGlobal: '变更后',
-      unchanged: '（无变动）',
-      changed: '已变动',
-      modelSection: '子代理模型',
-      mcpSection: 'MCP 服务器',
-      skillsSection: '技能',
-      mcpCustom: '已启用 {count} 个服务器',
-      skillsCustom: '已禁用 {count} 项技能',
-      skillsAll: '全部启用 (无禁用)',
-      restoreDefaultNotice:
-        '已切换为标准默认模板对比，点击右下方「应用」生效。',
-    },
     notice: {
       saved: '会话设置已保存！',
       savedDefault: '全局默认设置已保存！',
       savedWorkspace: '工作区「{name}」默认设置已保存！',
+      resetSuccess: '配置已重置为默认！',
       error: '保存失败：',
     },
   },
 
   // MCP Servers management tab in Settings -> Plugins
   mcpServers: {
+    primitives: {
+      tabTools: '工具',
+      tabResources: '资源',
+      tabPrompts: '提示词',
+      titleResources: '资源列表',
+      titlePrompts: '提示词列表',
+      close: '关闭',
+      searchPlaceholder: '搜索资源名称、URI 或描述...',
+      searchPromptPlaceholder: '搜索提示词名称或描述...',
+      fetchBtn: '获取列表',
+      notFetched: '尚未获取，点击「获取列表」从服务器读取。',
+      resourcesUnsupported: '该服务器未声明 MCP 资源能力 (resources)。',
+      promptsUnsupported: '该服务器未声明 MCP 提示词能力 (prompts)。',
+      resourcesEmpty: '该服务器声明了资源能力，但未提供任何资源。',
+      promptsEmpty: '该服务器声明了提示词能力，但未提供任何提示词。',
+      resourcesTitle: '资源 ({count})',
+      templatesTitle: '资源模板 ({count})',
+      templateBadge: '模板',
+      readBtn: '读取',
+      refreshRead: '重新读取',
+      refreshPrompt: '重新获取',
+      reading: '正在读取...',
+      readFailed: '读取资源失败：',
+      missingVars: '缺少变量：{names}',
+      copy: '复制',
+      copied: '已复制',
+      copyUri: '复制 URI',
+      copyTemplate: '复制模板',
+      copyFullText: '复制全文',
+      getPromptBtn: '获取提示词',
+      gettingPrompt: '正在获取提示词...',
+      getFailed: '获取提示词失败：',
+      fetchFailed: '获取列表失败：',
+      viewBlocks: '分块视图',
+      argCount: '{count} 个参数',
+    },
     tabLabel: 'MCP 服务器',
     title: 'MCP 服务器',
     desc: '集中配置并管理 Model Context Protocol (MCP) 服务器，供各个会话按需选用与隔离。',
@@ -291,7 +335,7 @@ export const zh = {
       export: '导出配置',
       test: '测试连接',
       testing: '测试中...',
-      toolsList: '工具列表',
+      toolsList: '服务器信息',
       toolsFetching: '获取中...',
       edit: '编辑',
       delete: '删除',
@@ -301,7 +345,6 @@ export const zh = {
       refresh: '刷新',
     },
     table: {
-      enabledDefault: '默认开启',
       website: '官网',
       empty:
         '暂未添加任何 MCP 服务器。点击上方「添加服务器」或「导入配置」开始。',
@@ -326,7 +369,7 @@ export const zh = {
       commandPlaceholder: '如 npx, python, uvx, node',
       args: '命令行参数 (Arguments)',
       argsPlaceholder:
-        '每行一个参数，或空格隔开。例如：\n-y\n@modelcontextprotocol/server-github',
+        '每行一个参数，参数内的空格会保留。例如：\n-y\n@modelcontextprotocol/server-github',
       cwd: '工作目录 (CWD，可选)',
       cwdPlaceholder: '子进程的工作目录，留空使用当前项目目录',
       env: '环境变量 (ENV，可选)',
@@ -339,8 +382,6 @@ export const zh = {
       headerKey: '请求头名',
       headerValue: '请求头值',
       addHeader: '添加请求头',
-      enabledByDefault: '默认开启',
-      enabledByDefaultDesc: '启用后，会话在默认模式下将自动加载此 MCP 服务器',
       advancedTitle: '高级配置',
       toolCallTimeoutMs: '调用/连接超时 (毫秒)',
       toolCallTimeoutMsPlaceholder: '默认 60000 毫秒 (60秒)',
@@ -385,9 +426,7 @@ export const zh = {
       noParameters: '该工具无参数定义',
       empty: '未找到匹配的工具',
       serverNoTools: '该 MCP 服务器当前未声明任何可用工具',
-      loading: '正在获取工具列表...',
       fetchFailed: '获取工具列表失败：',
-      retry: '重试',
       statusEnabled: '已启用',
       statusDisabled: '已禁用',
       disabledBadge: '已禁用 {count} 个工具',
@@ -408,27 +447,6 @@ export const zh = {
       saved: 'MCP 服务器已保存！',
       deleted: 'MCP 服务器已删除！',
       error: '操作失败：',
-    },
-  },
-
-  // Skills management tab in Settings
-  skillsSettings: {
-    tabLabel: '技能',
-    title: '技能',
-    desc: '集中管理与配置全局 Skill（技能）的默认启用状态与说明规则，供各个会话默认继承与按需调整。',
-    skillsStats: '（共 {total} 个技能，已启用 {enabled} 个）',
-    actions: {
-      saveSettings: '保存',
-      saving: '保存中...',
-      refresh: '刷新',
-    },
-    searchPlaceholder: '搜索技能名称或描述...',
-    empty:
-      '当前工作区未发现任何可用技能。可在项目根目录或 ~/.dsh/skills 中添加。',
-    noMatch: '未找到匹配的技能。',
-    notices: {
-      saved: '技能默认配置已保存！',
-      saveError: '保存失败：',
     },
   },
 }

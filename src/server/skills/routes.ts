@@ -1,92 +1,84 @@
-import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
 import { getAvailableSkills, getSkillDetail } from './discovery.ts'
-import { API_ENDPOINTS, type WebServer } from '../../types.ts'
+import {
+  type ConnectionService,
+  type SessionSettingsStore,
+  type SettingsSnapshotResponse,
+} from '../../types.ts'
+import { badRequest, jsonResponse, toFetchRoute } from '../common/http.ts'
 
 export function registerSkillsRoutes(
   ctx: Context,
-  webServer: WebServer,
-): () => void {
-  const unregisterSkillsListRoute = webServer.register({
-    kind: 'exact',
-    path: API_ENDPOINTS.skills,
-    handler: async (req: IncomingMessage, res: ServerResponse) => {
-      res.setHeader('Content-Type', 'application/json; charset=utf-8')
-      if (req.method !== 'GET') {
-        res.writeHead(405)
-        res.end(JSON.stringify({ ok: false, error: 'Method Not Allowed' }))
-        return
-      }
-      const url = new URL(req.url ?? '/', 'http://localhost')
-      const reqSessionId =
-        (url.searchParams.get('sessionId') || '').trim() || undefined
+  connection: ConnectionService,
+  getSessionSettingsStore?: () => SessionSettingsStore,
+): () => Promise<void> {
+  const unregisterSkills = connection.fetch.register(
+    toFetchRoute({
+      endpoint: 'skills',
+      handler: async (request) => {
+        const query = new URL(request.url).searchParams
+        const reqSessionId = (query.get('sessionId') || '').trim() || undefined
 
-      try {
-        const skills = await getAvailableSkills(ctx, reqSessionId)
-        res.writeHead(200)
-        res.end(JSON.stringify({ ok: true, skills }))
-      } catch (err: unknown) {
-        res.writeHead(500)
-        res.end(
-          JSON.stringify({
-            ok: false,
-            error: err instanceof Error ? err.message : String(err),
-          }),
-        )
-      }
-    },
-  })
+        try {
+          const skills = await getAvailableSkills(
+            ctx,
+            reqSessionId,
+            getSessionSettingsStore?.(),
+          )
+          return jsonResponse({ ok: true, skills })
+        } catch (err: unknown) {
+          return jsonResponse(
+            {
+              ok: false,
+              error: err instanceof Error ? err.message : String(err),
+            },
+            500,
+          )
+        }
+      },
+    }),
+  )
 
-  const unregisterSkillContentRoute = webServer.register({
-    kind: 'exact',
-    path: API_ENDPOINTS.skillsContent,
-    handler: async (req: IncomingMessage, res: ServerResponse) => {
-      res.setHeader('Content-Type', 'application/json; charset=utf-8')
-      if (req.method !== 'GET') {
-        res.writeHead(405)
-        res.end(JSON.stringify({ ok: false, error: 'Method Not Allowed' }))
-        return
-      }
-      const url = new URL(req.url ?? '/', 'http://localhost')
-      const skillName = (url.searchParams.get('name') || '').trim()
-      const reqSessionId =
-        (url.searchParams.get('sessionId') || '').trim() || undefined
+  const unregisterSkillContent = connection.fetch.register(
+    toFetchRoute({
+      endpoint: 'skillsContent',
+      handler: async (request) => {
+        const query = new URL(request.url).searchParams
+        const skillName = (query.get('name') || '').trim()
+        const reqSessionId = (query.get('sessionId') || '').trim() || undefined
 
-      if (!skillName) {
-        res.writeHead(400)
-        res.end(JSON.stringify({ ok: false, error: 'Skill name is required' }))
-        return
-      }
+        if (!skillName) return badRequest('Skill name is required')
 
-      try {
-        const skill = await getSkillDetail(ctx, skillName, reqSessionId)
-        if (!skill) {
-          res.writeHead(404)
-          res.end(
-            JSON.stringify({
+        try {
+          const skill = await getSkillDetail(
+            ctx,
+            skillName,
+            reqSessionId,
+            getSessionSettingsStore?.(),
+          )
+          if (!skill) {
+            const notFound: SettingsSnapshotResponse = {
               ok: false,
               error: `Skill "${skillName}" not found`,
-            }),
+            }
+            return jsonResponse(notFound, 404)
+          }
+          return jsonResponse({ ok: true, skill })
+        } catch (err: unknown) {
+          return jsonResponse(
+            {
+              ok: false,
+              error: err instanceof Error ? err.message : String(err),
+            },
+            500,
           )
-          return
         }
+      },
+    }),
+  )
 
-        res.writeHead(200)
-        res.end(JSON.stringify({ ok: true, skill }))
-      } catch (err: unknown) {
-        res.writeHead(500)
-        res.end(
-          JSON.stringify({
-            ok: false,
-            error: err instanceof Error ? err.message : String(err),
-          }),
-        )
-      }
-    },
-  })
-
-  return () => {
-    unregisterSkillsListRoute()
-    unregisterSkillContentRoute()
+  return async () => {
+    await unregisterSkills()
+    await unregisterSkillContent()
   }
 }

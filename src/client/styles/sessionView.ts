@@ -1,40 +1,80 @@
 export const SESSION_VIEW_CSS = `
-/* Header & Clone Toolbar */
+/* Header & Scope Tabs */
 .dsh-session-view-header {
+  align-items: center;
   background: var(--dsw-alias-bg-layer-2);
   border-bottom: 1px solid var(--dsw-alias-border-l2);
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   flex-shrink: 0;
-  gap: 10px;
-  padding: 14px 24px;
+  justify-content: space-between;
+  min-height: 46px;
+  padding: 8px 24px;
   position: relative;
 }
-.dsh-session-view-header-top {
-  align-items: center;
-  display: flex;
-  justify-content: space-between;
-  min-height: 24px;
-  width: 100%;
-}
-.dsh-session-view-header .dsh-sam-close-btn {
-  position: absolute;
-  right: 24px;
-  top: 24px;
-}
-.dsh-session-view-title {
-  color: var(--dsw-alias-label-primary);
-  font-size: 16px;
-  font-weight: 600;
-  line-height: 22px;
-  margin: 0;
-}
-.dsh-clone-toolbar {
+.dsh-session-view-header-left {
   align-items: center;
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 14px;
+  min-width: 0;
 }
+.dsh-session-view-title {
+  color: var(--dsw-alias-label-primary);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 20px;
+  margin: 0;
+  white-space: nowrap;
+}
+.dsh-session-view-header .dsh-sam-close-btn {
+  margin-left: auto;
+  position: static;
+}
+
+/* Scope Tabs Navigation */
+.dsh-scope-tabs-nav {
+  align-items: center;
+  background: var(--dsw-alias-bg-layer-1);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  width: fit-content;
+}
+.dsh-scope-tab-btn {
+  align-items: center;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 13px;
+  font-weight: 500;
+  gap: 6px;
+  height: 28px;
+  line-height: 1;
+  padding: 0 16px;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+.dsh-scope-tab-btn:hover:not(.disabled) {
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-primary);
+}
+.dsh-scope-tab-btn.active {
+  background: var(--dsw-alias-bg-layer-3, rgba(255, 255, 255, 0.08));
+  color: var(--dsw-alias-label-primary);
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+.dsh-scope-tab-btn.disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 .dsh-session-view-header-meta {
   align-items: center;
   display: flex;
@@ -77,41 +117,13 @@ export const SESSION_VIEW_CSS = `
   white-space: nowrap;
 }
 
-/* Clone Toolbar */
-.dsh-clone-toolbar {
-  align-items: center;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-.dsh-clone-label {
-  color: var(--dsw-alias-label-secondary);
+/* Disabled-scope explanation. A disabled button swallows pointer events, so its
+   title attribute is unreachable: the reason has to be visible text. */
+.dsh-scope-hint {
+  color: var(--dsw-alias-label-caption);
   font-size: 12px;
-  font-weight: 500;
-}
-.dsh-clone-input {
-  background: var(--dsw-alias-bg-layer-1);
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 6px;
-  color: var(--dsw-alias-label-primary);
-  font-family: monospace;
-  font-size: 12px;
-  height: 30px;
-  outline: none;
-  padding: 0 10px;
-  transition: border-color 0.15s;
-  width: 250px;
-}
-.dsh-clone-input:focus {
-  border-color: var(--dsw-alias-brand-primary);
-}
-.dsh-clone-btn {
-  font-size: 12px;
-  height: 30px;
-  padding: 0 12px;
-}
-.dsh-btn-icon-left {
-  margin-right: 6px;
+  line-height: 16px;
+  max-width: 320px;
 }
 
 .dsh-view-notice {
@@ -238,6 +250,72 @@ export const SESSION_VIEW_CSS = `
   font-size: 13px;
   line-height: 18px;
   margin: 0;
+}
+
+/* Source Tabs in Content Sections */
+.dsh-source-tabs-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.dsh-source-tabs-label {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  font-weight: 500;
+}
+.dsh-source-tabs-nav {
+  align-items: center;
+  background: var(--dsw-alias-bg-layer-1);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  width: fit-content;
+}
+.dsh-source-tab-btn {
+  align-items: center;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 13px;
+  font-weight: 500;
+  gap: 6px;
+  height: 30px;
+  line-height: 1;
+  padding: 0 16px;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+.dsh-source-tab-btn:hover:not(.disabled) {
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-primary);
+}
+.dsh-source-tab-btn.active {
+  background: var(--dsw-alias-bg-layer-3, rgba(255, 255, 255, 0.08));
+  color: var(--dsw-alias-label-primary);
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+.dsh-source-tab-btn.disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.dsh-mcp-switch-card.readonly {
+  opacity: 0.65;
+  cursor: default;
+}
+.dsh-mcp-switch-card.readonly:hover {
+  background: var(--dsw-alias-bg-layer-1);
+  border-color: var(--dsw-alias-border-l2);
+}
+.dsh-mcp-switch-card.active.readonly:hover {
+  border-color: var(--dsw-alias-state-success-primary);
 }
 
 /* Footer Actions */

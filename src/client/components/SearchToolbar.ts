@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { IconSearchOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconSearchOutlineMedium } from '@deepseek-ai/dsh-client-ui-primitives'
 
 const e = React.createElement
 
@@ -20,7 +20,7 @@ export function SearchToolbar({
   statsText,
   actions,
   className = 'dsh-mcp-tools-toolbar',
-  inputClassName = 'dsh-sam-input dsh-mcp-search-input',
+  inputClassName = 'dsh-mcp-search-input',
 }: SearchToolbarProps) {
   return e(
     'div',
@@ -28,7 +28,7 @@ export function SearchToolbar({
     e(
       'div',
       { className: 'dsh-mcp-search-wrap dsh-mcp-tools-search-box' },
-      e(IconSearchOutline16, {
+      e(IconSearchOutlineMedium, {
         size: 14,
         className: 'dsh-mcp-search-icon',
       }),

@@ -317,6 +317,9 @@ export function loadSessionSettingsStore(): SessionSettingsStore {
               }
             }
           }
+          // A legacy `pendingSessions` key from an older file is dropped here:
+          // the store no longer carries it, and the next save rewrites the file
+          // without it.
           return { globalConfig, workspaces, sessions }
         }
       }
@@ -541,13 +544,12 @@ export function resolveEffectiveMcp(
   disabledTools: Record<string, string[]>
   effectiveDisabledTools: Record<string, string[]>
 } {
-  const defaultMcpIds = Object.values(mcpStore.servers)
-    .filter((s) => s.enabledByDefault)
-    .map((s) => s.id)
+  // The global scope is exactly its explicit list. A malformed store that omits
+  // the field falls back to "nothing enabled" rather than to a per-server flag.
   const globalMcp = store.globalConfig?.mcp
   const globalEnabledIds = Array.isArray(globalMcp?.enabledServerIds)
     ? globalMcp.enabledServerIds
-    : defaultMcpIds
+    : []
   const globalToolsMode = globalMcp?.toolsMode || {}
   const globalDisabledTools = globalMcp?.disabledTools || {}
 

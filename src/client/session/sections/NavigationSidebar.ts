@@ -1,8 +1,8 @@
 import * as React from 'react'
 import {
-  IconAgentPresetOutline16,
-  IconCodeOutline16,
-  IconSkillOutline16,
+  IconAgentPresetOutlineMedium,
+  IconCodeOutlineMedium,
+  IconSkillOutlineMedium,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {
   NavSection,
@@ -45,7 +45,7 @@ export function NavigationSidebar({
       e(
         'div',
         { className: 'dsh-view-item-icon' },
-        e(IconAgentPresetOutline16, { size: 16 }),
+        e(IconAgentPresetOutlineMedium, { size: 16 }),
       ),
       e(
         'span',
@@ -55,11 +55,11 @@ export function NavigationSidebar({
       e(
         'span',
         { className: 'dsh-view-item-badge' },
-        modelConfig.mode === 'custom'
+        modelConfig?.mode === 'custom'
           ? modelConfig.inherit
             ? t('sessionSettings.status.inherit')
             : modelConfig.model?.model || t('sessionSettings.status.custom')
-          : modelConfig.mode === 'workspace'
+          : modelConfig?.mode === 'workspace'
             ? t('sessionSettings.status.workspace')
             : t('sessionSettings.status.default'),
       ),
@@ -75,7 +75,7 @@ export function NavigationSidebar({
       e(
         'div',
         { className: 'dsh-view-item-icon' },
-        e(IconCodeOutline16, { size: 16 }),
+        e(IconCodeOutlineMedium, { size: 16 }),
       ),
       e(
         'span',
@@ -103,7 +103,7 @@ export function NavigationSidebar({
       e(
         'div',
         { className: 'dsh-view-item-icon' },
-        e(IconSkillOutline16, { size: 16 }),
+        e(IconSkillOutlineMedium, { size: 16 }),
       ),
       e(
         'span',
@@ -115,7 +115,7 @@ export function NavigationSidebar({
         {
           className: `dsh-view-item-badge ${effectiveActiveSkillsCount > 0 ? 'highlight' : ''}`,
         },
-        availableSkills.length > 0
+        (availableSkills || []).length > 0
           ? `${effectiveActiveSkillsCount}/${availableSkills.length}`
           : t('sessionSettings.status.none'),
       ),

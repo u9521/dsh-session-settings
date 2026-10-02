@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { IconCloseOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCloseOutlineMedium } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { EnvEntry } from '../types/index.ts'
 
 const e = React.createElement
@@ -71,7 +71,7 @@ export function KeyValueEditor({
             onClick: () => handleDelete(idx),
             title: 'Delete',
           },
-          e(IconCloseOutline16),
+          e(IconCloseOutlineMedium),
         ),
       ),
     ),

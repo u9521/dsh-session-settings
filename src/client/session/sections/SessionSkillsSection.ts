@@ -1,25 +1,21 @@
 import * as React from 'react'
 import {
-  IconRefreshOutline16,
-  IconLoadingOutline16,
+  IconRefreshOutlineMedium,
+  IconLoadingOutlineMedium,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {
   SessionSkillsConfig,
   SessionSkillsMode,
-  SettingsMode,
   SkillItem,
   SessionSettingsConfig,
 } from '../../types/index.ts'
-import {
-  ModeSelector,
-  EmptyState,
-  SearchToolbar,
-} from '../../components/index.ts'
+import { EmptyState, SearchToolbar } from '../../components/index.ts'
 import { SkillCard } from '../../skills/components/SkillCard.ts'
 
 const e = React.createElement
 
 export interface SessionSkillsSectionProps {
+  scope?: 'session' | 'workspace' | 'global'
   skillsConfig: SessionSkillsConfig
   availableSkills: SkillItem[]
   currentWorkspaceId?: string
@@ -32,16 +28,15 @@ export interface SessionSkillsSectionProps {
   onSkillsModeChange: (mode: SessionSkillsMode) => void
   onSkillsSearchChange: (search: string) => void
   onRefreshSkills: () => void
-  onOpenSessionSkillModal: (skill: SkillItem) => void
+  onOpenSessionSkillModal: (skill: SkillItem, isReadonly?: boolean) => void
   t: (key: string, vars?: Record<string, string | number>) => string
 }
 
 export function SessionSkillsSection({
+  scope = 'session',
   skillsConfig,
   availableSkills,
   currentWorkspaceId,
-  workspaceSettings,
-  globalConfig,
   skillsSearch,
   refreshingSkills,
   effectiveDisabledModelSet,
@@ -53,6 +48,8 @@ export function SessionSkillsSection({
   t,
 }: SessionSkillsSectionProps) {
   const filteredSkills = availableSkills.filter((s) => {
+    // Runtime skills cannot be configured as workspace or global defaults
+    if (scope !== 'session' && s.isRuntime) return false
     if (!skillsSearch.trim()) return true
     const q = skillsSearch.trim().toLowerCase()
     return (
@@ -63,71 +60,100 @@ export function SessionSkillsSection({
 
   const defaultMode = currentWorkspaceId ? 'workspace' : 'global'
 
+  const activeSourceMode: 'workspace' | 'global' | 'custom' =
+    scope === 'global'
+      ? 'custom'
+      : scope === 'workspace'
+        ? skillsConfig?.mode === 'custom'
+          ? 'custom'
+          : 'global'
+        : skillsConfig?.mode === 'custom'
+          ? 'custom'
+          : (skillsConfig?.mode ?? defaultMode)
+
+  const isReadonly =
+    scope === 'session'
+      ? activeSourceMode !== 'custom'
+      : scope === 'workspace'
+        ? activeSourceMode !== 'custom'
+        : false
+
+  const sourceTabs =
+    scope === 'session'
+      ? [
+          ...(currentWorkspaceId
+            ? [
+                {
+                  key: 'workspace',
+                  label: t('sessionSettings.sourceTabs.workspace'),
+                  active: activeSourceMode === 'workspace',
+                  onClick: () => onSkillsModeChange('workspace'),
+                },
+              ]
+            : []),
+          {
+            key: 'global',
+            label: t('sessionSettings.sourceTabs.global'),
+            active: activeSourceMode === 'global',
+            onClick: () => onSkillsModeChange('global'),
+          },
+          {
+            key: 'custom',
+            label: t('sessionSettings.sourceTabs.custom'),
+            active: activeSourceMode === 'custom',
+            onClick: () => onSkillsModeChange('custom'),
+          },
+        ]
+      : scope === 'workspace'
+        ? [
+            {
+              key: 'global',
+              label: t('sessionSettings.sourceTabs.global'),
+              active: activeSourceMode === 'global',
+              onClick: () => onSkillsModeChange('global'),
+            },
+            {
+              key: 'custom',
+              label: t('sessionSettings.sourceTabs.workspaceCustom'),
+              active: activeSourceMode === 'custom',
+              onClick: () => onSkillsModeChange('custom'),
+            },
+          ]
+        : []
+
   return e(
     'div',
     { className: 'dsh-view-content-inner' },
-    // Section Header: Title + Description
-    e(
-      'div',
-      { className: 'dsh-section-header' },
-      e(
-        'h3',
-        { className: 'dsh-section-title' },
-        t('sessionSettings.section.skillsTitle'),
-      ),
-      e(
-        'p',
-        { className: 'dsh-section-desc' },
-        t('sessionSettings.section.skillsDesc'),
-      ),
-    ),
-
-    e(ModeSelector, {
-      name: 'sessionSkillsMode',
-      value: skillsConfig.mode ?? defaultMode,
-      onChange: (val) => onSkillsModeChange(val as SettingsMode),
-      options: [
-        {
-          value: 'workspace',
-          visible: Boolean(currentWorkspaceId),
-          title: t('sessionSettings.skillsMode.workspace.title'),
-          badges: [
-            workspaceSettings?.skills?.mode === 'custom'
-              ? {
-                  label: t('sessionSettings.skillsMode.workspace.badgeCustom', {
-                    count: (
-                      workspaceSettings?.skills?.disabledModelSkills ?? []
-                    ).length,
-                  }),
-                  variant: 'custom',
-                }
-              : {
-                  label: t('sessionSettings.skillsMode.workspace.badgeInherit'),
-                  variant: 'inherit',
+    // Source Tabs (Segmented control for workspace / global / custom)
+    sourceTabs.length > 0
+      ? e(
+          'div',
+          { className: 'dsh-source-tabs-wrap' },
+          e(
+            'div',
+            { className: 'dsh-source-tabs-label' },
+            t('sessionSettings.sourceTabs.label'),
+          ),
+          e(
+            'div',
+            { className: 'dsh-source-tabs-nav', role: 'tablist' },
+            sourceTabs.map((tab) =>
+              e(
+                'button',
+                {
+                  key: tab.key,
+                  type: 'button',
+                  role: 'tab',
+                  'aria-selected': tab.active,
+                  className: `dsh-source-tab-btn ${tab.active ? 'active' : ''}`,
+                  onClick: tab.onClick,
                 },
-          ],
-          desc: t('sessionSettings.skillsMode.workspace.desc'),
-        },
-        {
-          value: 'global',
-          title: t('sessionSettings.skillsMode.default.title'),
-          badges: [
-            {
-              label: t('sessionSettings.skillsMode.default.badge', {
-                count: (globalConfig?.skills?.disabledModelSkills ?? []).length,
-              }),
-              variant: 'custom',
-            },
-          ],
-          desc: t('sessionSettings.skillsMode.default.desc'),
-        },
-        {
-          value: 'custom',
-          title: t('sessionSettings.skillsMode.custom.title'),
-          desc: t('sessionSettings.skillsMode.custom.desc'),
-        },
-      ],
-    }),
+                tab.label,
+              ),
+            ),
+          ),
+        )
+      : null,
 
     availableSkills.length === 0
       ? e(EmptyState, { message: t('sessionSettings.skills.empty') })
@@ -150,11 +176,11 @@ export function SessionSkillsSection({
                 onClick: onRefreshSkills,
               },
               refreshingSkills
-                ? e(IconLoadingOutline16, {
+                ? e(IconLoadingOutlineMedium, {
                     size: 12,
                     className: 'dsh-spin',
                   })
-                : e(IconRefreshOutline16, { size: 12 }),
+                : e(IconRefreshOutlineMedium, { size: 12 }),
               t('sessionSettings.skills.refresh'),
             ),
           }),
@@ -174,7 +200,7 @@ export function SessionSkillsSection({
                     isModelDisabled: effectiveDisabledModelSet.has(skill.name),
                     isUserDisabled: effectiveDisabledUserSet.has(skill.name),
                     showStatusBadges: true,
-                    onClick: () => onOpenSessionSkillModal(skill),
+                    onClick: () => onOpenSessionSkillModal(skill, isReadonly),
                     t,
                   }),
                 ),

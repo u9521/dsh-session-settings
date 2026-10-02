@@ -6,29 +6,15 @@ English | [中文](README.zh.md)
 
 Configure per-session or global settings directly from the Web GUI with immediate effect:
 1. **Subagent Model & Reasoning Effort**: Independently configure provider, model, and reasoning effort for subagents (`subagent`, `subagent_fork`, `workflow`).
-2. **Centralized MCP Server Management**: First-class sidebar navigation item for Model Context Protocol (MCP) servers with 2-stage compatibility probing, automatic protocol downgrade, and tool schema inspection.
+2. **Centralized MCP Server Management**: First-class sidebar navigation item for Model Context Protocol (MCP) servers with 2-stage compatibility probing, automatic protocol downgrade, tool schema inspection, and read-only browsing of resources and prompts.
 3. **Session-Level MCP Tool Control**: Granularly enable/disable MCP servers and specific tools per session or follow global defaults.
 4. **Session-Level Skill Management & Control**: Independently enable/disable bundled, user, and project skills per session, with automatic dynamic prompt catalog filtering and execution enforcement.
-
----
-
-## Screenshots
-
-### 1. Per-Session Settings (Models / MCP Tools / Skills)
-![Per-Session Settings](docs/pics/session-settings.png)
-
-### 2. Centralized MCP Server Management
-![Centralized MCP Server Management](docs/pics/mcp-servers.png)
-
-### 3. Skill Management & Dedicated Rule Modal
-![Skill Management & Dedicated Rule Modal](docs/pics/skills-management.png)
 
 ---
 
 ## Table of Contents
 
 - [Features](#features)
-- [Screenshots](#screenshots)
 - [Mainline Compatibility](#mainline-compatibility)
 - [Installation](#installation)
   - [🚀 One-Line Quick Install (Recommended)](#-one-line-quick-install-recommended)
@@ -45,13 +31,15 @@ Configure per-session or global settings directly from the Web GUI with immediat
 
 ## Features
 
-- **Settings Sidebar Navigation Entry**: Top-level section in Settings navigation sidebar (dedicated icon) for direct MCP server and Skills management.
+- **Settings Sidebar Navigation Entry**: Top-level section in Settings navigation sidebar (dedicated icon) for direct MCP server management.
 - **Session-Specific Tab**: Dedicated tab in the conversation view for configuring the active session's subagent models, MCP tools, and skills.
-- **Flexible Modes**:
-  - **Use Global Default**: Inherit global default rules automatically.
-  - **Follow Parent Session**: Inherit model and reasoning effort from parent session.
-  - **Customize for Session**: Specify custom models, available MCP servers, and per-tool / per-skill disablement.
-- **Instant Effect**: Real-time request interception and on-demand MCP client lifecycle management without restarting DSH.
+- **Switch-Based Subagent Control**: Three explicit switches — allow agents to choose a subagent model, replace the model of forked subagents, and specify a subagent model with its reasoning effort.
+- **Instant Effect**: Each agent's scope layers are re-declared on save and on tool-registry changes, so an updated policy applies on the very next request without restarting DSH.
+- **Three Explicit Scopes**: Session, Workspace, and Global are distinct write targets chosen on the page, never inferred from which fields a request happens to carry.
+- **New-Session Page Targets a Live Session**: Choosing a workspace on the New-Session page connects that workspace's blank session, and the modal writes session-scope edits straight to it — effective on the next request. A page with no session has no session scope to write to, so that tab disables itself and explains why.
+- **Single Interface Contract**: Paths, HTTP methods, and request bodies are each declared once in `src/types.ts`; the client sends and the server validates against the same definitions, with no server-side compatibility branches.
+- **Authenticated Routes**: All routes are registered on the official connection carrier, so a request passes the Host/Origin fence and browser authentication before any handler runs.
+- **Read-Only Resource & Prompt Browsing**: The MCP server modal offers **Resources** and **Prompts** tabs. Resources are grouped into resources and templates, and a template's parameters are expanded server-side before reading; prompts are shown per role with copy-full-text and a Raw JSON view. Lists are cache-first and content is never persisted — reads happen only on click, and the read-only views never change what the model can see (that stays a session policy decision).
 
 ---
 
@@ -59,9 +47,9 @@ Configure per-session or global settings directly from the Web GUI with immediat
 
 | Plugin Branch | Compatible DeepSeek Harness (DSH) Mainline | Architecture & Features |
 | :--- | :--- | :--- |
-| **`main` branch** | **`>= 0.1.5-rc.1`** | Native support for **Session Format V3**, **Cordis 4.0.2**, modern `subagent/descriptor` contracts, and dynamic `SystemPromptProjection`. |
+| **`main` branch** | **`>= 0.2.0-rc.1`** | Native support for **Session Format V4**, **Cordis 4.0.4**, the `subagent/descriptor` v3 contract, the `AgentPresetRegistry` scope API, and the 0.2.0 `ui-primitives` icon set. |
 
-> **⚠️ Note**: The `main` branch of this plugin targets DSH 0.1.5-rc.1 and above natively without legacy backward-compatibility shims. It **does not support DSH ≤ 0.1.2**. Please ensure your DSH host is upgraded to the latest mainline release.
+> **⚠️ Note**: The `main` branch targets DSH 0.2.0-rc.1 and above natively. It keeps **no backward-compatibility shims** and does not support earlier DSH lines. Since DSH 0.2.0 the host no longer reads `engines.dsh`; compatibility is enforced through the `peerDependencies` range on `@deepseek-ai/dsh`, so an incompatible host refuses the plugin instead of loading it half-broken.
 
 ---
 
@@ -188,15 +176,23 @@ dsh plugin --profile web remove @local/dsh-session-settings
 | `pnpm run check` | Type check only (`tsc --noEmit`) without emitting files |
 | `pnpm run fmt` | Format source code and configuration files with Prettier |
 | `pnpm run fmt:check` | Check code formatting compliance |
+| `pnpm run verify:gates` | Run the zero-dependency documentation and convention gates |
+| `pnpm run verify` | Aggregate pre-commit check (`check` + `verify:gates`) |
 
 ---
 
 ## Frequently Asked Questions (FAQ)
 
 ### Q1: Do I need to restart `dsh web` after updating session settings or disabling tools/skills?
-**A**: No. The host plugin intercepts requests dynamically at runtime and manages tool/skill policies on demand. As soon as you save settings in the Web GUI, they take effect on the very next request.
+**A**: No. The host plugin declares each agent's policy on that agent's own scope (tool restrictions, execution guards, and scoped prompt sections) and re-declares it when you save. As soon as you save settings in the Web GUI, they take effect on the very next request.
 
-### Q2: How do I uninstall or remove the plugin?
+### Q2: What happens if I save session settings before the session exists?
+**A**: On the New-Session page a blank session already exists as soon as a workspace is connected, so session-scope edits are written to that session and take effect on the next request. On a page with no session at all there is nothing to write to: the Session tab is disabled and a note beside the tabs says so. Workspace and Global defaults remain editable there. Nothing is ever staged or retargeted — a save lands only on the scope you selected.
+
+### Q3: Are the plugin's API routes authenticated?
+**A**: Yes. All routes are registered through the official connection carrier, so an unauthenticated request receives `401` before any handler runs. The plugin holds no credentials of its own.
+
+### Q4: How do I uninstall or remove the plugin?
 **A**: See the [Uninstallation](#uninstallation) section above and run `dsh plugin --profile web remove` from the corresponding profile.
 
 ---

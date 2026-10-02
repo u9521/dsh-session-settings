@@ -1,9 +1,9 @@
 import * as React from 'react'
 import {
-  IconLoadingOutline16,
-  IconEditOutline16,
-  IconTrashOutline16,
-  IconWarningOutline16,
+  IconLoadingOutlineMedium,
+  IconEditOutlineMedium,
+  IconTrashOutlineMedium,
+  IconWarningOutlineMedium,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { GlobalMcpServerConfig } from '../../types/index.ts'
 import { ServerIcon } from '../../components/index.ts'
@@ -144,13 +144,6 @@ export function McpServerCard({
               )
             : null
         })(),
-        server.enabledByDefault
-          ? e(
-              'span',
-              { className: 'dsh-mcp-default-badge' },
-              t('mcpServers.table.enabledDefault'),
-            )
-          : null,
       ),
     ),
 
@@ -180,7 +173,7 @@ export function McpServerCard({
           {
             className: `dsh-mcp-inline-test ${testResult.ok ? 'success' : 'error'}`,
           },
-          !testResult.ok ? e(IconWarningOutline16, { size: 14 }) : null,
+          !testResult.ok ? e(IconWarningOutlineMedium, { size: 14 }) : null,
           e('span', null, testResult.message),
         )
       : null,
@@ -206,7 +199,9 @@ export function McpServerCard({
             disabled: isTesting,
             onClick: () => onTest(server),
           },
-          isTesting ? e(IconLoadingOutline16, { className: 'dsh-spin' }) : null,
+          isTesting
+            ? e(IconLoadingOutlineMedium, { className: 'dsh-spin' })
+            : null,
           isTesting
             ? t('mcpServers.actions.testing')
             : t('mcpServers.actions.test'),
@@ -232,7 +227,7 @@ export function McpServerCard({
             title: t('mcpServers.actions.edit'),
             onClick: () => onOpenEdit(server),
           },
-          e(IconEditOutline16),
+          e(IconEditOutlineMedium),
         ),
         e(
           'button',
@@ -242,7 +237,7 @@ export function McpServerCard({
             title: t('mcpServers.actions.delete'),
             onClick: () => onDelete(server),
           },
-          e(IconTrashOutline16),
+          e(IconTrashOutlineMedium),
         ),
       ),
     ),

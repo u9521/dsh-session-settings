@@ -1,13 +1,13 @@
-import type { IncomingMessage, ServerResponse } from 'node:http'
 import {
+  type ConnectionService,
   type GlobalMcpServerConfig,
+  type McpCachedView,
+  type McpProbeResult,
   type McpRefreshResult,
   type McpServerStore,
   type McpTransportType,
   type McpReconnectConfig,
   type SessionSettingsStore,
-  type WebServer,
-  API_ENDPOINTS,
 } from '../../types.ts'
 import { loadMcpStore, saveMcpStore } from './storage.ts'
 import {
@@ -16,28 +16,20 @@ import {
   renameServerIdInSessionStore,
 } from '../session/storage.ts'
 import { testMcpConnection } from './tester/index.ts'
+import { getPrompt, readResource } from './tester/read.ts'
 import type { McpManager } from './manager.ts'
-import { readRequestBody } from '../common/http.ts'
+import {
+  badRequest,
+  jsonResponse,
+  readJsonBody,
+  toFetchRoute,
+} from '../common/http.ts'
 
 /**
  * How long a manual refresh waits for the freshly mounted official client to
  * settle before reading its runtime status. Bounded so the request stays snappy.
  */
 const MCP_REFRESH_SETTLE_MS = 3000
-
-function sendJson(
-  res: ServerResponse,
-  statusCode: number,
-  data: unknown,
-): void {
-  res.setHeader('Content-Type', 'application/json; charset=utf-8')
-  res.writeHead(statusCode)
-  res.end(JSON.stringify(data))
-}
-
-function sendMethodNotAllowed(res: ServerResponse): void {
-  sendJson(res, 405, { ok: false, error: 'Method Not Allowed' })
-}
 
 /**
  * Build the client-facing representation of the MCP servers.
@@ -54,17 +46,78 @@ function getSanitizedServers(
   // The registry is walked once and shared by every server in the response.
   const registeredNames = mcpManager?.collectRegisteredToolNames()
   return Object.values(store.servers).map((s) => {
-    const { toolDetails, tools, disabledTools, ...rest } = s
+    const {
+      toolDetails,
+      resourceDetails,
+      resourceTemplateDetails,
+      promptDetails,
+      capabilities,
+      tools,
+      disabledTools,
+      ...rest
+    } = s
     const server = {
       ...rest,
       tools: Array.isArray(tools) ? tools.length : 0,
       disabledTools: Array.isArray(disabledTools) ? disabledTools.length : 0,
+      // Counts replace the full arrays on the list response; the detail arrays
+      // are served by `toolview` for the one server the panel opens.
+      resourceCount: Array.isArray(resourceDetails)
+        ? resourceDetails.length
+        : 0,
+      resourceTemplateCount: Array.isArray(resourceTemplateDetails)
+        ? resourceTemplateDetails.length
+        : 0,
+      promptCount: Array.isArray(promptDetails) ? promptDetails.length : 0,
+      capabilities,
     } as GlobalMcpServerConfig
     if (mcpManager) {
       server.runtime = mcpManager.getServerStatus(s.id, registeredNames)
     }
     return server
   })
+}
+
+/** Official `dsh-mcp-client` namespacing contract for `mcp__<serverName>__<tool>`. */
+const SERVER_NAME_PATTERN = /^[A-Za-z0-9_-]{1,32}$/
+
+/**
+ * Fold one successful probe's discovery into the stored server.
+ *
+ * The single writer for everything a probe learns. Three call sites (the tools
+ * endpoint, the test endpoint, and the manual refresh) previously repeated the
+ * same field list, so every new discovered primitive had to be added in three
+ * places or one of them would silently drop it. Arrays are assigned only when
+ * the probe reported them, so a partial result cannot erase a good cache.
+ *
+ * @param server - stored config to update in place.
+ * @param result - a successful probe outcome.
+ */
+function applyProbeResult(
+  server: GlobalMcpServerConfig,
+  result: {
+    tools?: string[]
+    toolDetails?: GlobalMcpServerConfig['toolDetails']
+    resourceDetails?: GlobalMcpServerConfig['resourceDetails']
+    resourceTemplateDetails?: GlobalMcpServerConfig['resourceTemplateDetails']
+    promptDetails?: GlobalMcpServerConfig['promptDetails']
+    capabilities?: GlobalMcpServerConfig['capabilities']
+    detectedTransport?: GlobalMcpServerConfig['detectedTransport']
+    serverInfo?: GlobalMcpServerConfig['serverInfo']
+  },
+): void {
+  if (result.tools) server.tools = result.tools
+  if (result.toolDetails) server.toolDetails = result.toolDetails
+  if (result.resourceDetails) server.resourceDetails = result.resourceDetails
+  if (result.resourceTemplateDetails) {
+    server.resourceTemplateDetails = result.resourceTemplateDetails
+  }
+  if (result.promptDetails) server.promptDetails = result.promptDetails
+  if (result.capabilities) server.capabilities = result.capabilities
+  if (result.detectedTransport)
+    server.detectedTransport = result.detectedTransport
+  if (result.serverInfo) server.serverInfo = result.serverInfo
+  server.lastTestedAt = Date.now()
 }
 
 function parseServerConfig(
@@ -77,6 +130,15 @@ function parseServerConfig(
 
   if (!id || !name) {
     return { error: 'Server ID and name are required' }
+  }
+
+  // The official mcp-client derives model-facing tool names from this id and
+  // rejects anything outside the pattern, so refuse it here with a clear message
+  // instead of failing later at mount time.
+  if (!SERVER_NAME_PATTERN.test(id)) {
+    return {
+      error: 'Server ID must be 1-32 characters of letters, digits, "_" or "-"',
+    }
   }
 
   const rawTransport = incoming.transport
@@ -117,26 +179,21 @@ function parseServerConfig(
 
   let reconnect: McpReconnectConfig | undefined = undefined
   if (incoming.reconnect && typeof incoming.reconnect === 'object') {
+    // The official schema requires delays and attempt counts >= 1; "do not
+    // retry" is expressed by `enabled: false`, never by a zero budget.
+    const atLeastOne = (value: unknown): number | undefined =>
+      typeof value === 'number' && Number.isFinite(value)
+        ? Math.max(1, Math.floor(value))
+        : undefined
+
     reconnect = {
       enabled:
         typeof incoming.reconnect.enabled === 'boolean'
           ? incoming.reconnect.enabled
           : undefined,
-      initialDelayMs:
-        typeof incoming.reconnect.initialDelayMs === 'number' &&
-        incoming.reconnect.initialDelayMs >= 0
-          ? Math.floor(incoming.reconnect.initialDelayMs)
-          : undefined,
-      maxDelayMs:
-        typeof incoming.reconnect.maxDelayMs === 'number' &&
-        incoming.reconnect.maxDelayMs >= 0
-          ? Math.floor(incoming.reconnect.maxDelayMs)
-          : undefined,
-      maxAttempts:
-        typeof incoming.reconnect.maxAttempts === 'number' &&
-        incoming.reconnect.maxAttempts >= 0
-          ? Math.floor(incoming.reconnect.maxAttempts)
-          : undefined,
+      initialDelayMs: atLeastOne(incoming.reconnect.initialDelayMs),
+      maxDelayMs: atLeastOne(incoming.reconnect.maxDelayMs),
+      maxAttempts: atLeastOne(incoming.reconnect.maxAttempts),
     }
   }
 
@@ -170,9 +227,13 @@ function parseServerConfig(
       incoming.headers && typeof incoming.headers === 'object'
         ? incoming.headers
         : undefined,
-    enabledByDefault: Boolean(incoming.enabledByDefault),
     toolCallTimeoutMs: toolCallTimeoutMs ?? existing?.toolCallTimeoutMs,
     failOnStartupError: failOnStartupError ?? existing?.failOnStartupError,
+    maxInstructionBytes:
+      typeof incoming.maxInstructionBytes === 'number' &&
+      incoming.maxInstructionBytes > 0
+        ? Math.floor(incoming.maxInstructionBytes)
+        : existing?.maxInstructionBytes,
     reconnect: reconnect ?? existing?.reconnect,
     disabledTools:
       Array.isArray(disabledTools) && disabledTools.length > 0
@@ -180,6 +241,14 @@ function parseServerConfig(
         : undefined,
     tools: Array.isArray(incoming.tools) ? incoming.tools : existing?.tools,
     toolDetails: incoming.toolDetails ?? existing?.toolDetails,
+    // Cached discovery lists ride through every edit so a rename or a settings
+    // change cannot silently drop them; the panel would otherwise show an empty
+    // resource tab until the next probe. Content is never among these.
+    resourceDetails: incoming.resourceDetails ?? existing?.resourceDetails,
+    resourceTemplateDetails:
+      incoming.resourceTemplateDetails ?? existing?.resourceTemplateDetails,
+    promptDetails: incoming.promptDetails ?? existing?.promptDetails,
+    capabilities: incoming.capabilities ?? existing?.capabilities,
     detectedTransport:
       incoming.detectedTransport ?? existing?.detectedTransport,
     serverInfo: incoming.serverInfo ?? existing?.serverInfo,
@@ -192,554 +261,542 @@ function parseServerConfig(
 }
 
 export function registerMcpRoutes(
-  webServer: WebServer,
+  connection: ConnectionService,
   getMcpStore: () => McpServerStore,
   setMcpStore: (s: McpServerStore) => void,
   mcpManager?: McpManager,
   getSessionSettingsStore?: () => SessionSettingsStore,
   setSessionSettingsStore?: (s: SessionSettingsStore) => void,
+  invalidatePolicies?: () => void,
 ): () => void {
   // 1. GET /mcp-servers/list
-  const unregisterListRoute = webServer.register({
-    kind: 'exact',
-    path: API_ENDPOINTS.mcpServersList,
-    handler: async (req: IncomingMessage, res: ServerResponse) => {
-      if (req.method !== 'GET') {
-        sendMethodNotAllowed(res)
-        return
-      }
-
-      try {
-        const currentStore = loadMcpStore()
-        setMcpStore(currentStore)
-        const sanitizedServers = getSanitizedServers(currentStore, mcpManager)
-        sendJson(res, 200, { ok: true, servers: sanitizedServers })
-      } catch (err: unknown) {
-        sendJson(res, 500, {
-          ok: false,
-          error: err instanceof Error ? err.message : String(err),
-        })
-      }
-    },
-  })
+  const unregisterListRoute = connection.fetch.register(
+    toFetchRoute({
+      endpoint: 'mcpServersList',
+      handler: async () => {
+        try {
+          const currentStore = loadMcpStore()
+          setMcpStore(currentStore)
+          const sanitizedServers = getSanitizedServers(currentStore, mcpManager)
+          return jsonResponse({ ok: true, servers: sanitizedServers })
+        } catch (err: unknown) {
+          return jsonResponse(
+            {
+              ok: false,
+              error: err instanceof Error ? err.message : String(err),
+            },
+            500,
+          )
+        }
+      },
+    }),
+  )
 
   // 2. POST /mcp-servers/add
-  const unregisterAddRoute = webServer.register({
-    kind: 'exact',
-    path: API_ENDPOINTS.mcpServersAdd,
-    handler: async (req: IncomingMessage, res: ServerResponse) => {
-      if (req.method !== 'POST') {
-        sendMethodNotAllowed(res)
-        return
-      }
-
-      try {
-        const bodyStr = await readRequestBody(req)
-        const parsed = JSON.parse(bodyStr || '{}') as Record<string, unknown>
-        const incoming = (parsed.server ||
-          parsed) as Partial<GlobalMcpServerConfig>
-        const { error, config, id } = parseServerConfig(incoming)
-
-        if (error || !config || !id) {
-          sendJson(res, 400, {
-            ok: false,
-            error: error || 'Invalid server configuration',
-          })
-          return
+  const unregisterAddRoute = connection.fetch.register(
+    toFetchRoute({
+      endpoint: 'mcpServersAdd',
+      handler: async (request) => {
+        const parsed = await readJsonBody(request)
+        if (!parsed) return badRequest('A JSON request body is required')
+        const incoming = parsed.server as
+          Partial<GlobalMcpServerConfig> | undefined
+        if (!incoming || typeof incoming !== 'object') {
+          return badRequest('A "server" payload is required')
         }
 
-        const mcpStore = getMcpStore()
-        mcpStore.servers[id] = config
-        saveMcpStore(mcpStore)
-        setMcpStore(mcpStore)
+        try {
+          const { error, config, id } = parseServerConfig(incoming)
+          if (error || !config || !id) {
+            return badRequest(error || 'Invalid server configuration')
+          }
 
-        mcpManager?.syncServer(config)
+          const mcpStore = getMcpStore()
+          mcpStore.servers[id] = config
+          saveMcpStore(mcpStore)
+          setMcpStore(mcpStore)
 
-        sendJson(res, 200, { ok: true, server: config })
-      } catch (err: unknown) {
-        sendJson(res, 400, {
-          ok: false,
-          error: err instanceof Error ? err.message : String(err),
-        })
-      }
-    },
-  })
+          mcpManager?.syncServer(config)
+          invalidatePolicies?.()
+
+          return jsonResponse({ ok: true, server: config })
+        } catch (err: unknown) {
+          return badRequest(err instanceof Error ? err.message : String(err))
+        }
+      },
+    }),
+  )
 
   // 3. POST /mcp-servers/edit
-  const unregisterEditRoute = webServer.register({
-    kind: 'exact',
-    path: API_ENDPOINTS.mcpServersEdit,
-    handler: async (req: IncomingMessage, res: ServerResponse) => {
-      if (req.method !== 'POST') {
-        sendMethodNotAllowed(res)
-        return
-      }
-
-      try {
-        const bodyStr = await readRequestBody(req)
-        const parsed = JSON.parse(bodyStr || '{}') as Record<string, unknown>
-        const incoming = (parsed.server ||
-          parsed) as Partial<GlobalMcpServerConfig>
+  const unregisterEditRoute = connection.fetch.register(
+    toFetchRoute({
+      endpoint: 'mcpServersEdit',
+      handler: async (request) => {
+        const parsed = await readJsonBody(request)
+        if (!parsed) return badRequest('A JSON request body is required')
+        const incoming = parsed.server as
+          Partial<GlobalMcpServerConfig> | undefined
+        if (!incoming || typeof incoming !== 'object') {
+          return badRequest('A "server" payload is required')
+        }
         const originalId =
           typeof parsed.originalId === 'string' ? parsed.originalId.trim() : ''
 
-        const mcpStore = getMcpStore()
-        const isRename = Boolean(originalId && mcpStore.servers[originalId])
-        const existing = isRename
-          ? mcpStore.servers[originalId]
-          : typeof incoming.id === 'string'
-            ? mcpStore.servers[incoming.id.trim()]
-            : undefined
+        try {
+          const mcpStore = getMcpStore()
+          const isRename = Boolean(originalId && mcpStore.servers[originalId])
+          const existing = isRename
+            ? mcpStore.servers[originalId]
+            : typeof incoming.id === 'string'
+              ? mcpStore.servers[incoming.id.trim()]
+              : undefined
 
-        const { error, config, id } = parseServerConfig(incoming, existing)
-        if (error || !config || !id) {
-          sendJson(res, 400, {
-            ok: false,
-            error: error || 'Invalid server configuration',
-          })
-          return
-        }
-
-        if (isRename && originalId !== id) {
-          delete mcpStore.servers[originalId]
-          await mcpManager?.unmountOfficialClient(originalId)
-
-          const currentSessionSettings = getSessionSettingsStore
-            ? getSessionSettingsStore()
-            : loadSessionSettingsStore()
-          if (
-            renameServerIdInSessionStore(currentSessionSettings, originalId, id)
-          ) {
-            saveSessionSettingsStore(currentSessionSettings)
-            setSessionSettingsStore?.(currentSessionSettings)
+          const { error, config, id } = parseServerConfig(incoming, existing)
+          if (error || !config || !id) {
+            return badRequest(error || 'Invalid server configuration')
           }
+
+          if (isRename && originalId !== id) {
+            delete mcpStore.servers[originalId]
+            await mcpManager?.unmountOfficialClient(originalId)
+
+            const currentSessionSettings = getSessionSettingsStore
+              ? getSessionSettingsStore()
+              : loadSessionSettingsStore()
+            if (
+              renameServerIdInSessionStore(
+                currentSessionSettings,
+                originalId,
+                id,
+              )
+            ) {
+              saveSessionSettingsStore(currentSessionSettings)
+              setSessionSettingsStore?.(currentSessionSettings)
+            }
+          }
+
+          mcpStore.servers[id] = config
+          saveMcpStore(mcpStore)
+          setMcpStore(mcpStore)
+
+          mcpManager?.syncServer(config)
+          invalidatePolicies?.()
+
+          return jsonResponse({ ok: true, server: config })
+        } catch (err: unknown) {
+          return badRequest(err instanceof Error ? err.message : String(err))
         }
-
-        mcpStore.servers[id] = config
-        saveMcpStore(mcpStore)
-        setMcpStore(mcpStore)
-
-        mcpManager?.syncServer(config)
-
-        sendJson(res, 200, { ok: true, server: config })
-      } catch (err: unknown) {
-        sendJson(res, 400, {
-          ok: false,
-          error: err instanceof Error ? err.message : String(err),
-        })
-      }
-    },
-  })
+      },
+    }),
+  )
 
   // 4. POST /mcp-servers/rm
-  const unregisterRmRoute = webServer.register({
-    kind: 'exact',
-    path: API_ENDPOINTS.mcpServersRm,
-    handler: async (req: IncomingMessage, res: ServerResponse) => {
-      if (req.method !== 'POST') {
-        sendMethodNotAllowed(res)
-        return
-      }
+  const unregisterRmRoute = connection.fetch.register(
+    toFetchRoute({
+      endpoint: 'mcpServersRm',
+      handler: async (request) => {
+        const parsed = await readJsonBody(request)
+        if (!parsed) return badRequest('A JSON request body is required')
+        const targetId = (typeof parsed.id === 'string' ? parsed.id : '').trim()
+        if (!targetId) return badRequest('Server ID is required')
 
-      try {
-        const bodyStr = await readRequestBody(req)
-        const parsed = (bodyStr ? JSON.parse(bodyStr) : {}) as { id?: string }
-        const url = new URL(req.url ?? '/', 'http://localhost')
-        const targetId = (parsed.id || url.searchParams.get('id') || '').trim()
+        try {
+          const mcpStore = getMcpStore()
+          if (mcpStore.servers[targetId]) {
+            delete mcpStore.servers[targetId]
+            saveMcpStore(mcpStore)
+            setMcpStore(mcpStore)
+            await mcpManager?.unmountOfficialClient(targetId)
+          }
 
-        if (!targetId) {
-          sendJson(res, 400, { ok: false, error: 'Server ID is required' })
-          return
+          return jsonResponse({ ok: true, id: targetId })
+        } catch (err: unknown) {
+          return badRequest(err instanceof Error ? err.message : String(err))
         }
+      },
+    }),
+  )
 
-        const mcpStore = getMcpStore()
-        if (mcpStore.servers[targetId]) {
-          delete mcpStore.servers[targetId]
-          saveMcpStore(mcpStore)
-          setMcpStore(mcpStore)
-          await mcpManager?.unmountOfficialClient(targetId)
-        }
-
-        sendJson(res, 200, { ok: true, id: targetId })
-      } catch (err: unknown) {
-        sendJson(res, 400, {
-          ok: false,
-          error: err instanceof Error ? err.message : String(err),
-        })
-      }
-    },
-  })
-
-  // 5. GET /mcp-servers/toolview
-  const unregisterToolviewRoute = webServer.register({
-    kind: 'exact',
-    path: API_ENDPOINTS.mcpServersToolview,
-    handler: async (req: IncomingMessage, res: ServerResponse) => {
-      if (req.method !== 'GET') {
-        sendMethodNotAllowed(res)
-        return
-      }
-
-      const url = new URL(req.url ?? '/', 'http://localhost')
-      const targetId = (url.searchParams.get('id') || '').trim()
-      const currentStore = loadMcpStore()
-      setMcpStore(currentStore)
-
-      if (!targetId || !currentStore.servers[targetId]) {
-        sendJson(res, 404, { ok: false, error: 'Server not found' })
-        return
-      }
-
-      const s = currentStore.servers[targetId]
-      sendJson(res, 200, {
-        ok: true,
-        cached: true,
-        tools: s.tools || [],
-        toolDetails: s.toolDetails || [],
-        disabledTools: Array.isArray(s.disabledTools) ? s.disabledTools : [],
-        serverInfo: s.serverInfo,
-        detectedTransport: s.detectedTransport,
-      })
-    },
-  })
-
-  // 6. POST /mcp-servers/tools
-  const unregisterToolsRoute = webServer.register({
-    kind: 'exact',
-    path: API_ENDPOINTS.mcpServersTools,
-    handler: async (req: IncomingMessage, res: ServerResponse) => {
-      if (req.method !== 'POST') {
-        sendMethodNotAllowed(res)
-        return
-      }
-
-      try {
-        const bodyStr = await readRequestBody(req)
-        const parsed = JSON.parse(bodyStr || '{}') as Record<string, unknown>
-        const testPayload = (parsed.server ||
-          parsed) as Partial<GlobalMcpServerConfig>
-        const mcpStore = getMcpStore()
+  // 5. GET /mcp-servers/cache
+  //
+  // The single cache-preview entry point: report what a previous probe stored
+  // for one server. It reads the store and never opens a connection, so a panel
+  // can render immediately. The four list types share this one response.
+  const unregisterCacheRoute = connection.fetch.register(
+    toFetchRoute({
+      endpoint: 'mcpServersCache',
+      handler: async (request) => {
         const targetId = (
-          typeof testPayload.id === 'string' ? testPayload.id : ''
+          new URL(request.url).searchParams.get('id') || ''
         ).trim()
-        const existing = targetId ? mcpStore.servers[targetId] : undefined
-        const effectiveServer = existing
-          ? { ...existing, ...testPayload }
-          : testPayload
-        const testResult = await testMcpConnection(effectiveServer)
+        const currentStore = loadMcpStore()
+        setMcpStore(currentStore)
 
-        if (targetId && mcpStore.servers[targetId] && testResult.ok) {
-          const s = mcpStore.servers[targetId]
-          if (testResult.tools) s.tools = testResult.tools
-          if (testResult.toolDetails) s.toolDetails = testResult.toolDetails
-          if (testResult.detectedTransport)
-            s.detectedTransport = testResult.detectedTransport
-          if (testResult.serverInfo) s.serverInfo = testResult.serverInfo
-          s.lastTestedAt = Date.now()
-
-          saveMcpStore(mcpStore)
-          setMcpStore(mcpStore)
-          mcpManager?.syncServer(s)
+        if (!targetId || !currentStore.servers[targetId]) {
+          return jsonResponse({ ok: false, error: 'Server not found' }, 404)
         }
 
-        sendJson(res, 200, testResult)
-      } catch (err: unknown) {
-        sendJson(res, 400, {
-          ok: false,
-          error: err instanceof Error ? err.message : String(err),
-        })
-      }
-    },
-  })
+        const s = currentStore.servers[targetId]
+        const cached: McpCachedView = {
+          ok: true,
+          tools: s.tools || [],
+          toolDetails: s.toolDetails || [],
+          resourceDetails: s.resourceDetails || [],
+          resourceTemplateDetails: s.resourceTemplateDetails || [],
+          promptDetails: s.promptDetails || [],
+          capabilities: s.capabilities,
+          disabledTools: Array.isArray(s.disabledTools) ? s.disabledTools : [],
+          serverInfo: s.serverInfo,
+          detectedTransport: s.detectedTransport,
+        }
+        return jsonResponse(cached)
+      },
+    }),
+  )
 
-  // 7. POST /mcp-servers/test
-  const unregisterTestRoute = webServer.register({
-    kind: 'exact',
-    path: API_ENDPOINTS.mcpServersTest,
-    handler: async (req: IncomingMessage, res: ServerResponse) => {
-      if (req.method !== 'POST') {
-        sendMethodNotAllowed(res)
-        return
-      }
-
-      try {
-        const bodyStr = await readRequestBody(req)
-        const parsed = JSON.parse(bodyStr || '{}') as Record<string, unknown>
-        const testPayload = (parsed.server ||
-          parsed) as Partial<GlobalMcpServerConfig>
-        const mcpStore = getMcpStore()
-        const targetId = (
-          typeof testPayload.id === 'string' ? testPayload.id : ''
-        ).trim()
-        const existing = targetId ? mcpStore.servers[targetId] : undefined
-        const effectiveServer = existing
-          ? { ...existing, ...testPayload }
-          : testPayload
-        const testResult = await testMcpConnection(effectiveServer)
-
-        if (targetId && mcpStore.servers[targetId] && testResult.ok) {
-          const s = mcpStore.servers[targetId]
-          if (testResult.tools) s.tools = testResult.tools
-          if (testResult.toolDetails) s.toolDetails = testResult.toolDetails
-          if (testResult.detectedTransport)
-            s.detectedTransport = testResult.detectedTransport
-          if (testResult.serverInfo) s.serverInfo = testResult.serverInfo
-          s.lastTestedAt = Date.now()
-
-          saveMcpStore(mcpStore)
-          setMcpStore(mcpStore)
-          mcpManager?.syncServer(s)
+  // 6. POST /mcp-servers/probe
+  //
+  // The single discovery entry point. One connection reports every primitive the
+  // server declares — tools, resources, resource templates, and prompts — so a
+  // caller never needs a second request per primitive family. This absorbs the
+  // former /tools and /test routes, which were byte-identical.
+  //
+  // `remount: true` appends the former /refresh behaviour: after probing, tear
+  // down and rebuild the official client. That is the recovery path for a server
+  // whose bridge already exhausted its reconnect budget — such a fiber stays
+  // alive while every tool has been unregistered, so nothing else ever retries
+  // it (the lazy mount path skips servers that still have a live fork). It is
+  // opt-in precisely because it disrupts a live connection.
+  const unregisterProbeRoute = connection.fetch.register(
+    toFetchRoute({
+      endpoint: 'mcpServersProbe',
+      handler: async (request) => {
+        const parsed = await readJsonBody(request)
+        if (!parsed) return badRequest('A JSON request body is required')
+        const probePayload = parsed.server as
+          Partial<GlobalMcpServerConfig> | undefined
+        if (!probePayload || typeof probePayload !== 'object') {
+          return badRequest('A "server" payload is required')
         }
 
-        sendJson(res, 200, testResult)
-      } catch (err: unknown) {
-        sendJson(res, 400, {
-          ok: false,
-          error: err instanceof Error ? err.message : String(err),
-        })
-      }
-    },
-  })
+        try {
+          const mcpStore = getMcpStore()
+          const targetId = (
+            typeof probePayload.id === 'string' ? probePayload.id : ''
+          ).trim()
+          const existing = targetId ? mcpStore.servers[targetId] : undefined
+          const effectiveServer = existing
+            ? { ...existing, ...probePayload }
+            : probePayload
+          const startedAt = Date.now()
+          const probe = await testMcpConnection(effectiveServer)
 
-  // 8. POST /mcp-servers/import
-  const unregisterImportRoute = webServer.register({
-    kind: 'exact',
-    path: API_ENDPOINTS.mcpServersImport,
-    handler: async (req: IncomingMessage, res: ServerResponse) => {
-      if (req.method !== 'POST') {
-        sendMethodNotAllowed(res)
-        return
-      }
+          if (targetId && mcpStore.servers[targetId] && probe.ok) {
+            const s = mcpStore.servers[targetId]
+            applyProbeResult(s, probe)
 
-      try {
-        const bodyStr = await readRequestBody(req)
-        const parsed = JSON.parse(bodyStr || '{}') as Record<string, unknown>
-        const rootObj = (parsed.data || parsed) as Record<string, unknown>
-        const serversMap = (rootObj.mcpServers || rootObj) as Record<
+            saveMcpStore(mcpStore)
+            setMcpStore(mcpStore)
+            mcpManager?.syncServer(s)
+            invalidatePolicies?.()
+          }
+
+          let remount: McpRefreshResult | undefined
+          if (parsed.remount === true) {
+            if (!targetId) {
+              return badRequest('A "server.id" is required to remount')
+            }
+            if (!mcpStore.servers[targetId]) {
+              return jsonResponse(
+                { ok: false, error: `Unknown MCP server "${targetId}"` },
+                404,
+              )
+            }
+
+            // `settleMs` makes the response wait (bounded) for the rebuilt fork
+            // to register its tools, so a caller can update its badge from this
+            // single response without polling.
+            const outcome = mcpManager
+              ? await mcpManager.refreshServer(mcpStore.servers[targetId], {
+                  force: parsed.force === true,
+                  settleMs: probe.ok ? MCP_REFRESH_SETTLE_MS : 0,
+                })
+              : undefined
+
+            remount = {
+              id: targetId,
+              name: mcpStore.servers[targetId].name,
+              ok: probe.ok,
+              message: probe.message,
+              toolCount: probe.tools?.length ?? 0,
+              durationMs: outcome?.durationMs ?? Date.now() - startedAt,
+              remounted: outcome?.remounted ?? false,
+              status: outcome?.status ?? {
+                mountAttempted: false,
+                mounted: false,
+                registeredToolCount: 0,
+              },
+            }
+          }
+
+          const result: McpProbeResult = {
+            ...probe,
+            ...(remount ? { remount } : {}),
+            ...(targetId
+              ? {
+                  server: getSanitizedServers(mcpStore, mcpManager).find(
+                    (s) => s.id === targetId,
+                  ),
+                }
+              : {}),
+          }
+
+          return jsonResponse(result)
+        } catch (err: unknown) {
+          return badRequest(err instanceof Error ? err.message : String(err))
+        }
+      },
+    }),
+  )
+
+  // 7. POST /mcp-servers/import
+  const unregisterImportRoute = connection.fetch.register(
+    toFetchRoute({
+      endpoint: 'mcpServersImport',
+      handler: async (request) => {
+        const parsed = await readJsonBody(request)
+        if (!parsed) return badRequest('A JSON request body is required')
+        if (parsed.data === undefined) {
+          return badRequest('A "data" payload is required')
+        }
+        const rootObj = parsed.data as Record<string, unknown>
+        const serversMap = (rootObj.mcpServers ?? rootObj) as Record<
           string,
           unknown
         >
 
-        if (
-          !serversMap ||
-          typeof serversMap !== 'object' ||
-          Array.isArray(serversMap)
-        ) {
-          sendJson(res, 400, {
-            ok: false,
-            message: 'Invalid JSON format: expected mcpServers object mapping',
-          })
-          return
-        }
-
-        const mcpStore = getMcpStore()
-        let count = 0
-
-        for (const [key, rawVal] of Object.entries(serversMap)) {
-          if (!rawVal || typeof rawVal !== 'object') continue
-          const raw = rawVal as Record<string, unknown>
-          const rawId = (typeof raw.id === 'string' ? raw.id : key).trim()
-          const id = rawId.replace(/[^a-zA-Z0-9_-]/g, '_')
-          if (!id) continue
-
-          const name =
-            (typeof raw.name === 'string' ? raw.name : key).trim() || id
-          const transport: McpTransportType =
-            raw.transport === 'stdio'
-              ? 'stdio'
-              : raw.transport === 'streamable-http' ||
-                  raw.transport === 'streamable-http-or-sse' ||
-                  raw.transport === 'sse'
-                ? 'streamable-http'
-                : raw.url
-                  ? 'streamable-http'
-                  : 'stdio'
-
-          const existing = mcpStore.servers[id]
-          const now = Date.now()
-
-          const serverConfig: GlobalMcpServerConfig = {
-            id,
-            name,
-            description:
-              typeof raw.description === 'string'
-                ? raw.description.trim()
-                : existing?.description,
-            transport,
-            command:
-              typeof raw.command === 'string'
-                ? raw.command.trim()
-                : existing?.command,
-            args: Array.isArray(raw.args)
-              ? raw.args.filter((a): a is string => typeof a === 'string')
-              : existing?.args || [],
-            env:
-              raw.env && typeof raw.env === 'object'
-                ? (raw.env as Record<string, string>)
-                : existing?.env,
-            cwd: typeof raw.cwd === 'string' ? raw.cwd.trim() : existing?.cwd,
-            url: typeof raw.url === 'string' ? raw.url.trim() : existing?.url,
-            headers:
-              raw.headers && typeof raw.headers === 'object'
-                ? (raw.headers as Record<string, string>)
-                : existing?.headers,
-            enabledByDefault:
-              typeof raw.enabledByDefault === 'boolean'
-                ? raw.enabledByDefault
-                : (existing?.enabledByDefault ?? true),
-            toolCallTimeoutMs:
-              typeof raw.toolCallTimeoutMs === 'number'
-                ? raw.toolCallTimeoutMs
-                : existing?.toolCallTimeoutMs,
-            failOnStartupError:
-              typeof raw.failOnStartupError === 'boolean'
-                ? raw.failOnStartupError
-                : existing?.failOnStartupError,
-            reconnect: (raw.reconnect && typeof raw.reconnect === 'object'
-              ? raw.reconnect
-              : existing?.reconnect) as McpReconnectConfig | undefined,
-            disabledTools: Array.isArray(raw.disabledTools)
-              ? raw.disabledTools
-              : existing?.disabledTools,
-            tools: existing?.tools,
-            toolDetails: existing?.toolDetails,
-            detectedTransport: existing?.detectedTransport,
-            serverInfo: existing?.serverInfo,
-            lastTestedAt: existing?.lastTestedAt,
-            createdAt: existing?.createdAt ?? now,
-            updatedAt: now,
+        try {
+          if (
+            !serversMap ||
+            typeof serversMap !== 'object' ||
+            Array.isArray(serversMap)
+          ) {
+            return jsonResponse(
+              {
+                ok: false,
+                message:
+                  'Invalid JSON format: expected mcpServers object mapping',
+              },
+              400,
+            )
           }
 
-          mcpStore.servers[id] = serverConfig
-          count++
-        }
+          const mcpStore = getMcpStore()
+          let count = 0
 
-        saveMcpStore(mcpStore)
-        setMcpStore(mcpStore)
+          for (const [key, rawVal] of Object.entries(serversMap)) {
+            if (!rawVal || typeof rawVal !== 'object') continue
+            const raw = rawVal as Record<string, unknown>
+            const rawId = (typeof raw.id === 'string' ? raw.id : key).trim()
+            const id = rawId.replace(/[^a-zA-Z0-9_-]/g, '_')
+            if (!id) continue
 
-        mcpManager?.syncAll()
+            const name =
+              (typeof raw.name === 'string' ? raw.name : key).trim() || id
+            const transport: McpTransportType =
+              raw.transport === 'stdio'
+                ? 'stdio'
+                : raw.transport === 'streamable-http' ||
+                    raw.transport === 'streamable-http-or-sse' ||
+                    raw.transport === 'sse'
+                  ? 'streamable-http'
+                  : raw.url
+                    ? 'streamable-http'
+                    : 'stdio'
 
-        const sanitizedServers = getSanitizedServers(mcpStore, mcpManager)
-        sendJson(res, 200, {
-          ok: true,
-          count,
-          servers: sanitizedServers,
-        })
-      } catch (err: unknown) {
-        sendJson(res, 400, {
-          ok: false,
-          message: err instanceof Error ? err.message : String(err),
-        })
-      }
-    },
-  })
+            const existing = mcpStore.servers[id]
+            const now = Date.now()
 
-  // 9. POST /mcp-servers/refresh
-  //
-  // Tear down and remount the official mcp-client for a single server, then
-  // report the fresh runtime status. This is the recovery path for a server
-  // whose bridge already exhausted its reconnect budget: such a fiber stays
-  // alive while every tool has been unregistered, so nothing else ever retries
-  // it (the lazy mount path skips servers that still have a live fork).
-  const unregisterRefreshRoute = webServer.register({
-    kind: 'exact',
-    path: API_ENDPOINTS.mcpServersRefresh,
-    handler: async (req: IncomingMessage, res: ServerResponse) => {
-      if (req.method !== 'POST') {
-        sendMethodNotAllowed(res)
-        return
-      }
+            const serverConfig: GlobalMcpServerConfig = {
+              id,
+              name,
+              description:
+                typeof raw.description === 'string'
+                  ? raw.description.trim()
+                  : existing?.description,
+              transport,
+              command:
+                typeof raw.command === 'string'
+                  ? raw.command.trim()
+                  : existing?.command,
+              args: Array.isArray(raw.args)
+                ? raw.args.filter((a): a is string => typeof a === 'string')
+                : existing?.args || [],
+              env:
+                raw.env && typeof raw.env === 'object'
+                  ? (raw.env as Record<string, string>)
+                  : existing?.env,
+              cwd: typeof raw.cwd === 'string' ? raw.cwd.trim() : existing?.cwd,
+              url: typeof raw.url === 'string' ? raw.url.trim() : existing?.url,
+              headers:
+                raw.headers && typeof raw.headers === 'object'
+                  ? (raw.headers as Record<string, string>)
+                  : existing?.headers,
+              toolCallTimeoutMs:
+                typeof raw.toolCallTimeoutMs === 'number'
+                  ? raw.toolCallTimeoutMs
+                  : existing?.toolCallTimeoutMs,
+              failOnStartupError:
+                typeof raw.failOnStartupError === 'boolean'
+                  ? raw.failOnStartupError
+                  : existing?.failOnStartupError,
+              reconnect: (raw.reconnect && typeof raw.reconnect === 'object'
+                ? raw.reconnect
+                : existing?.reconnect) as McpReconnectConfig | undefined,
+              disabledTools: Array.isArray(raw.disabledTools)
+                ? raw.disabledTools
+                : existing?.disabledTools,
+              tools: existing?.tools,
+              toolDetails: existing?.toolDetails,
+              detectedTransport: existing?.detectedTransport,
+              serverInfo: existing?.serverInfo,
+              lastTestedAt: existing?.lastTestedAt,
+              createdAt: existing?.createdAt ?? now,
+              updatedAt: now,
+            }
 
-      try {
-        const bodyStr = await readRequestBody(req)
-        const parsed = JSON.parse(bodyStr || '{}') as {
-          id?: string
-          serverId?: string
-          force?: boolean
-        }
-        const targetId = (parsed.id || parsed.serverId || '').trim()
-        if (!targetId) {
-          sendJson(res, 400, { ok: false, error: 'Server ID is required' })
-          return
-        }
-
-        const mcpStore = getMcpStore()
-        const server = mcpStore.servers[targetId]
-        if (!server) {
-          sendJson(res, 404, {
-            ok: false,
-            error: `Unknown MCP server "${targetId}"`,
-          })
-          return
-        }
-
-        const startedAt = Date.now()
-
-        // 1. Probe for real: gives the card a human readable failure reason and
-        //    refreshes the cached tool list / server info on success.
-        const probe = await testMcpConnection(server)
-
-        if (probe.ok) {
-          const live = mcpStore.servers[targetId]
-          if (probe.tools) live.tools = probe.tools
-          if (probe.toolDetails) live.toolDetails = probe.toolDetails
-          if (probe.detectedTransport)
-            live.detectedTransport = probe.detectedTransport
-          if (probe.serverInfo) live.serverInfo = probe.serverInfo
-          live.lastTestedAt = Date.now()
+            mcpStore.servers[id] = serverConfig
+            count++
+          }
 
           saveMcpStore(mcpStore)
           setMcpStore(mcpStore)
+
+          mcpManager?.syncAll()
+          invalidatePolicies?.()
+
+          const sanitizedServers = getSanitizedServers(mcpStore, mcpManager)
+          return jsonResponse({
+            ok: true,
+            count,
+            servers: sanitizedServers,
+          })
+        } catch (err: unknown) {
+          return jsonResponse(
+            {
+              ok: false,
+              message: err instanceof Error ? err.message : String(err),
+            },
+            400,
+          )
+        }
+      },
+    }),
+  )
+
+  // 8. POST /mcp-servers/resource-read
+  //
+  // Read ONE resource for the preview pane. This opens its own short-lived
+  // connection rather than reusing the mounted official client, which lives
+  // inside a Cordis fiber with no query API and exposes resources only to the
+  // model-facing `ctx.mcpResources`. Nothing here is registered anywhere: the
+  // read is a GUI action whose result stays in the browser.
+  const unregisterResourceReadRoute = connection.fetch.register(
+    toFetchRoute({
+      endpoint: 'mcpServersResourceRead',
+      handler: async (request) => {
+        const parsed = await readJsonBody(request)
+        if (!parsed) return badRequest('A JSON request body is required')
+
+        const target = parsed.server as
+          Partial<GlobalMcpServerConfig> | undefined
+        if (!target || typeof target !== 'object') {
+          return badRequest('A "server" payload is required')
         }
 
-        // 2. Remount. `settleMs` makes the response wait (bounded) for the new
-        //    fork to register its tools, so the client can update the badge from
-        //    this single response without polling.
-        const outcome = mcpManager
-          ? await mcpManager.refreshServer(mcpStore.servers[targetId], {
-              force: parsed.force === true,
-              settleMs: probe.ok ? MCP_REFRESH_SETTLE_MS : 0,
-            })
-          : undefined
-
-        const result: McpRefreshResult = {
-          id: targetId,
-          name: server.name,
-          ok: probe.ok,
-          message: probe.message,
-          toolCount: probe.tools?.length ?? 0,
-          durationMs: outcome?.durationMs ?? Date.now() - startedAt,
-          remounted: outcome?.remounted ?? false,
-          status: outcome?.status ?? {
-            mountAttempted: false,
-            mounted: false,
-            registeredToolCount: 0,
-          },
+        const uri = typeof parsed.uri === 'string' ? parsed.uri.trim() : ''
+        const uriTemplate =
+          typeof parsed.uriTemplate === 'string'
+            ? parsed.uriTemplate.trim()
+            : ''
+        if (!uri && !uriTemplate) {
+          return badRequest('Either "uri" or "uriTemplate" is required')
         }
 
-        const sanitizedServer = getSanitizedServers(mcpStore, mcpManager).find(
-          (s) => s.id === targetId,
-        )
+        const variables =
+          parsed.variables && typeof parsed.variables === 'object'
+            ? Object.fromEntries(
+                Object.entries(
+                  parsed.variables as Record<string, unknown>,
+                ).filter((entry): entry is [string, string] => {
+                  return typeof entry[1] === 'string'
+                }),
+              )
+            : undefined
 
-        sendJson(res, 200, { ok: true, result, server: sanitizedServer })
-      } catch (err: unknown) {
-        sendJson(res, 400, {
-          ok: false,
-          error: err instanceof Error ? err.message : String(err),
+        const result = await readResource({
+          server: target,
+          ...(uri ? { uri } : {}),
+          ...(uriTemplate ? { uriTemplate } : {}),
+          ...(variables ? { variables } : {}),
         })
-      }
-    },
-  })
+        return jsonResponse(result)
+      },
+    }),
+  )
 
-  return () => {
-    unregisterListRoute()
-    unregisterAddRoute()
-    unregisterEditRoute()
-    unregisterRmRoute()
-    unregisterToolviewRoute()
-    unregisterToolsRoute()
-    unregisterTestRoute()
-    unregisterImportRoute()
-    unregisterRefreshRoute()
+  // 9. POST /mcp-servers/prompt-get
+  //
+  // Render ONE prompt template, on demand. Same one-shot-connection reasoning as
+  // the resource read above. The host supports no prompt invocation mechanism
+  // at all, so this deliberately stops at showing the rendered text: it is a
+  // viewer, not a way to inject content into a session.
+  const unregisterPromptGetRoute = connection.fetch.register(
+    toFetchRoute({
+      endpoint: 'mcpServersPromptGet',
+      handler: async (request) => {
+        const parsed = await readJsonBody(request)
+        if (!parsed) return badRequest('A JSON request body is required')
+
+        const target = parsed.server as
+          Partial<GlobalMcpServerConfig> | undefined
+        if (!target || typeof target !== 'object') {
+          return badRequest('A "server" payload is required')
+        }
+
+        const name = typeof parsed.name === 'string' ? parsed.name.trim() : ''
+        if (!name) return badRequest('A "name" field is required')
+
+        const args =
+          parsed.arguments && typeof parsed.arguments === 'object'
+            ? Object.fromEntries(
+                Object.entries(
+                  parsed.arguments as Record<string, unknown>,
+                ).filter((entry): entry is [string, string] => {
+                  return typeof entry[1] === 'string'
+                }),
+              )
+            : undefined
+
+        const result = await getPrompt({
+          server: target,
+          name,
+          ...(args ? { arguments: args } : {}),
+        })
+        return jsonResponse(result)
+      },
+    }),
+  )
+
+  return async () => {
+    await unregisterListRoute()
+    await unregisterAddRoute()
+    await unregisterEditRoute()
+    await unregisterRmRoute()
+    await unregisterCacheRoute()
+    await unregisterProbeRoute()
+    await unregisterImportRoute()
+    await unregisterResourceReadRoute()
+    await unregisterPromptGetRoute()
   }
 }

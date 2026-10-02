@@ -1,10 +1,12 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type {
-  AgentRequestPayload,
+  Agent,
   AssembleContext,
   LlmCallConfig,
   PromptAssembly,
   SessionSettingsStore,
+  SubagentModelConfig,
+  SubagentModelTarget,
   ToolExecution,
 } from '../../types.ts'
 import { resolveEffectiveSubagentModel } from '../session/storage.ts'
@@ -14,146 +16,215 @@ import {
 } from '../session/resolution.ts'
 
 /**
- * Set of child session IDs where the calling Agent explicitly provided provider/model
- * in the delegation tool call (subagent / subagent_fork).
+ * The route this child's direct parent is running, i.e. the route the child
+ * would have inherited had the delegation named nothing.
+ *
+ * This mirrors the host's own baseline, `parentAgentOptionsForDelegation`:
+ * prefer the parent Session's last request header and fall back to the live
+ * Agent's options. The DIRECT parent is the right reference — a delegation
+ * inherits from the agent that called it, not from the root Session whose
+ * settings `resolveAgentSessionId` resolves.
  */
-const explicitModelSubagents = new Set<string>()
+function parentRoute(
+  ctx: Context,
+  agent?: Agent,
+): SubagentModelTarget | undefined {
+  const parentId = agent?.session?.header?.parentSession
+  if (!parentId) return undefined
 
-/**
- * Checks whether the child agent was spawned by the "fork" provider.
- */
-function isForkSubagent(session: any): boolean {
-  if (!session) return false
+  const parent = ctx.get('agents')?.get(parentId)
+  if (!parent) return undefined
 
-  // 1. Official session header check (O(1), established immediately upon creation)
-  // In DSH architecture, a subagent session with isSeeded: true is strictly a forked subagent.
-  if (
-    session.header?.origin === 'subagent' &&
-    session.header?.isSeeded === true
-  ) {
-    return true
-  }
-
-  // 2. Official subagent descriptor check in session events (fallback for zero-history forks & cold restores)
-  if (typeof session.snapshotEvents === 'function') {
-    const events = session.snapshotEvents()
-    for (let i = events.length - 1; i >= 0; i--) {
-      const ev = events[i]
-      if (ev?.type === 'subagent/descriptor') {
-        return ev.data?.provider === 'fork'
-      }
+  const logged = parent.session?.requestHeader?.()?.config
+  if (logged?.provider && logged?.model) {
+    return {
+      provider: logged.provider,
+      model: logged.model,
+      ...(logged.reasoningEffort
+        ? { reasoningEffort: logged.reasoningEffort }
+        : {}),
     }
   }
 
-  return false
+  const options = parent.options
+  if (!options?.provider || !options?.model) return undefined
+  return {
+    provider: options.provider,
+    model: options.model,
+    ...(options.reasoningEffort
+      ? { reasoningEffort: options.reasoningEffort }
+      : {}),
+  }
 }
 
 /**
- * Checks whether the Agent explicitly selected a custom provider/model
- * for this child subagent run.
+ * Whether this child Agent actually chose its own LLM route.
+ *
+ * Having a route proves nothing: the host's `resolveChildAgentOptions` merges
+ * the parent's provider/model into EVERY child's `options`, so a plainly
+ * inherited child looks identical to one that named a route. An explicit
+ * choice is therefore exactly a route the child would NOT have inherited.
+ *
+ * When the parent cannot be resolved the route is treated as the child's own,
+ * which leaves it alone — the conservative direction, since overriding a
+ * deliberate choice is worse than missing one.
+ *
+ * This is also why the interceptor must never write `agent.options`: doing so
+ * would destroy the signal it depends on.
  */
-function hasAgentSelectedModel(session: any, ctx?: Context): boolean {
-  if (!session?.header?.id) return false
-  if (explicitModelSubagents.has(session.header.id)) return true
+function hasExplicitChildModel(ctx: Context, agent?: Agent): boolean {
+  const options = agent?.options
+  if (!options?.provider || !options?.model) return false
 
-  // Fallback check in parent session events (for cold sessions or after server restarts)
-  if (ctx && session.header?.parentSession) {
-    try {
-      const sessionsService = ctx.get('sessions') as any
-      const parentSession = sessionsService?.get?.(session.header.parentSession)
-      if (parentSession && typeof parentSession.snapshotEvents === 'function') {
-        const events = parentSession.snapshotEvents()
-        let matchedCallId: string | undefined
-        for (let i = events.length - 1; i >= 0; i--) {
-          const ev = events[i]
-          if (ev?.type === 'tool/result') {
-            const val = ev.data?.message?.content?.[0]?.value
-            const subId = val?.subagentId
-            if (subId === session.header.id) {
-              matchedCallId = ev.data?.message?.source?.callId
-              break
-            }
-          }
-        }
+  const inherited = parentRoute(ctx, agent)
+  if (!inherited) return true
 
-        if (matchedCallId) {
-          for (let i = events.length - 1; i >= 0; i--) {
-            const ev = events[i]
-            if (
-              ev?.type === 'assistant/message' &&
-              Array.isArray(ev.data?.message?.content)
-            ) {
-              for (const block of ev.data.message.content) {
-                if (block?.type === 'tool-call' && block.id === matchedCallId) {
-                  const args = block.args as any
-                  if (args?.provider && args?.model) {
-                    explicitModelSubagents.add(session.header.id)
-                    return true
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    } catch {
-      // Ignore lookup errors
-    }
+  return (
+    options.provider !== inherited.provider || options.model !== inherited.model
+  )
+}
+
+/**
+ * Whether this Session was produced by the fork provider. A forked child
+ * inherits a copy of its parent's event log, which the immutable Session header
+ * records as `isSeeded`.
+ */
+function isForkSubagent(agent?: Agent): boolean {
+  const header = agent?.session?.header
+  return header?.origin === 'subagent' && header.isSeeded === true
+}
+
+/** Remove the child-model-selection surface from one assembly. */
+function withoutModelSelection(
+  assembly: PromptAssembly,
+  config: SubagentModelConfig,
+): PromptAssembly {
+  if (
+    config.allowAgentSelectModel !== false ||
+    !Array.isArray(assembly.tools)
+  ) {
+    return assembly
   }
 
-  return false
+  const stripped = new Set(['model', 'provider', 'reasoning_effort'])
+
+  const tools = assembly.tools
+    .filter((tool) => tool.name !== 'list_subagent_models')
+    .map((tool) => {
+      const isDelegation =
+        tool.name === 'subagent' || tool.name.startsWith('subagent_')
+      if (
+        !isDelegation ||
+        !tool.parameters ||
+        typeof tool.parameters !== 'object'
+      ) {
+        return tool
+      }
+
+      const parameters = tool.parameters as {
+        properties?: Record<string, unknown>
+        required?: unknown
+      }
+      const properties = parameters.properties
+      if (!properties || typeof properties !== 'object') return tool
+
+      const required = Array.isArray(parameters.required)
+        ? parameters.required.filter(
+            (name: unknown) => typeof name === 'string' && !stripped.has(name),
+          )
+        : parameters.required
+
+      return {
+        ...tool,
+        parameters: {
+          ...parameters,
+          properties: Object.fromEntries(
+            Object.entries(properties).filter(([name]) => !stripped.has(name)),
+          ),
+          ...(required === undefined ? {} : { required }),
+        },
+        description:
+          typeof tool.description === 'string'
+            ? tool.description
+                .replace(
+                  /Child LLM selection is optional\..*?default effort\./g,
+                  '',
+                )
+                .trim()
+            : tool.description,
+      }
+    })
+
+  return { ...assembly, tools }
 }
 
 export function registerSubagentModelInterceptor(
   ctx: Context,
   getSessionSettingsStore: () => SessionSettingsStore,
 ): void {
-  // 0. Observe tool results to track explicit model requests on delegation tools
-  ctx.on('tools/result', (exec: any, result: any) => {
-    if (exec?.name === 'subagent' || exec?.name?.startsWith('subagent_')) {
-      const args = exec?.args as any
-      const hasExplicitModel = Boolean(args?.provider && args?.model)
-      const subagentId =
-        result?.value?.subagentId ??
-        result?.value?.childId ??
-        (result?.content?.[0] as any)?.value?.subagentId
-      if (subagentId && hasExplicitModel) {
-        explicitModelSubagents.add(subagentId)
-      }
-    }
-  })
+  /** Effective subagent-model settings for the session an Agent belongs to. */
+  const configFor = async (agent?: Agent): Promise<SubagentModelConfig> =>
+    resolveEffectiveSubagentModel(
+      getSessionSettingsStore(),
+      resolveAgentSessionId(agent, ctx),
+      await resolveWorkspaceForSession(ctx, resolveAgentSessionId(agent, ctx)),
+    )
 
-  // 1. Guard against list_subagent_models execution when allowAgentSelectModel is disabled
-  ctx.inject(['tools'], (toolsCtx: any) => {
-    if (typeof toolsCtx?.tools?.guard === 'function') {
-      toolsCtx.tools.guard((exec: ToolExecution) => {
-        if (exec?.name === 'list_subagent_models') {
-          const agent = exec.agent
-          const session = agent?.session
-          if (session) {
-            const isSubagent = session.header?.origin === 'subagent'
-            const sessionId = isSubagent
-              ? (resolveAgentSessionId(agent, ctx) ??
-                session.header?.parentSession)
-              : session.header?.id
-            const sessionSettingsStore = getSessionSettingsStore()
-            const effectiveCfg = resolveEffectiveSubagentModel(
-              sessionSettingsStore,
-              sessionId,
-            )
-            if (effectiveCfg.allowAgentSelectModel === false) {
-              return 'list_subagent_models is disabled by user settings for this session'
-            }
-          }
+  /**
+   * The route this interceptor must force onto a child, or `undefined` to leave
+   * the child's own configuration alone.
+   *
+   * A forked child preserves its inherited prefix (and the parent's KV cache)
+   * unless the user opted in through `overrideForkModel`. In forced mode the
+   * child's own choice is overridden; otherwise an explicit child route wins.
+   */
+  const forcedRouteFor = async (
+    agent?: Agent,
+  ): Promise<SubagentModelTarget | undefined> => {
+    if (agent?.session?.header?.origin !== 'subagent') return undefined
+
+    const config = await configFor(agent)
+    if (isForkSubagent(agent) && config.overrideForkModel !== true) {
+      return undefined
+    }
+
+    const target = config.inherit ? undefined : config.model
+    if (!target) return undefined
+    if (
+      config.allowAgentSelectModel !== false &&
+      hasExplicitChildModel(ctx, agent)
+    ) {
+      return undefined
+    }
+    return target
+  }
+
+  // 1. Monotonic guard: refuse list_subagent_models while the agent is barred
+  //    from choosing a child model.
+  ctx.inject(['tools'], (toolsCtx: Context) => {
+    const guard = (
+      toolsCtx as {
+        tools?: {
+          guard?: (
+            check: (exec: ToolExecution) => string | undefined,
+          ) => unknown
         }
-        return undefined
-      })
-    }
+      }
+    ).tools?.guard
+    if (typeof guard !== 'function') return
+    guard((exec) => {
+      if (exec?.name !== 'list_subagent_models') return undefined
+      return resolveEffectiveSubagentModel(
+        getSessionSettingsStore(),
+        resolveAgentSessionId(exec.agent, ctx),
+      ).allowAgentSelectModel === false
+        ? 'list_subagent_models is disabled by user settings for this session'
+        : undefined
+    })
   })
 
-  // 2. Intercept system-prompt/assemble:
-  //    - When allowAgentSelectModel is false: strip list_subagent_models from tools and strip model parameter from subagent tool
-  //    - For subagent sessions: update prompt variables ({{model}} / {{provider}})
+  // 2. Prompt assembly: hide the selection surface in forced mode, and keep the
+  //    child's {{provider}}/{{model}} variables in step with the routed call.
   ctx.on(
     'system-prompt/assemble',
     async (
@@ -161,212 +232,44 @@ export function registerSubagentModelInterceptor(
       context: AssembleContext,
       next: () => Promise<PromptAssembly>,
     ): Promise<PromptAssembly> => {
-      const transformed = await next()
       const agent = context?.agent
-      const session = agent?.session
-      if (!session) {
-        return transformed
+      const assembled = await next()
+      if (!agent) return assembled
+
+      const themed = withoutModelSelection(assembled, await configFor(agent))
+      const target = await forcedRouteFor(agent)
+      if (!target) return themed
+
+      return {
+        ...themed,
+        variables: {
+          ...themed.variables,
+          provider: target.provider,
+          model: target.model,
+        },
       }
-
-      const isSubagent = session.header?.origin === 'subagent'
-      const sessionId = isSubagent
-        ? (resolveAgentSessionId(agent, ctx) ?? session.header?.parentSession)
-        : session.header?.id
-      const workspaceId = await resolveWorkspaceForSession(ctx, sessionId)
-
-      const sessionSettingsStore = getSessionSettingsStore()
-      const effectiveCfg = resolveEffectiveSubagentModel(
-        sessionSettingsStore,
-        sessionId,
-        workspaceId,
-      )
-
-      // A. If allowAgentSelectModel is false (forced mode):
-      //    Strip list_subagent_models from visible tool schemas and strip model parameter from subagent tool
-      if (
-        effectiveCfg.allowAgentSelectModel === false &&
-        Array.isArray(transformed.tools)
-      ) {
-        transformed.tools = transformed.tools
-          .filter((t) => t.name !== 'list_subagent_models')
-          .map((tool) => {
-            if (tool.name === 'subagent' || tool.name.startsWith('subagent_')) {
-              if (tool.parameters && typeof tool.parameters === 'object') {
-                const rawProps = (tool.parameters as any).properties
-                if (rawProps && typeof rawProps === 'object') {
-                  const newProps = { ...rawProps }
-                  delete newProps.model
-                  delete newProps.provider
-                  delete newProps.reasoning_effort
-
-                  const rawReq = (tool.parameters as any).required
-                  const newReq = Array.isArray(rawReq)
-                    ? rawReq.filter(
-                        (r: string) =>
-                          r !== 'model' &&
-                          r !== 'provider' &&
-                          r !== 'reasoning_effort',
-                      )
-                    : rawReq
-
-                  const updatedParams: Record<string, unknown> = {
-                    ...tool.parameters,
-                    properties: newProps,
-                  }
-                  if (newReq) {
-                    updatedParams.required = newReq
-                  }
-
-                  let updatedDescription = tool.description
-                  if (
-                    typeof updatedDescription === 'string' &&
-                    updatedDescription.includes(
-                      'Child LLM selection is optional.',
-                    )
-                  ) {
-                    updatedDescription = updatedDescription
-                      .replace(
-                        /Child LLM selection is optional\..*?default effort\./g,
-                        '',
-                      )
-                      .trim()
-                  }
-
-                  return {
-                    ...tool,
-                    parameters: updatedParams,
-                    ...(updatedDescription !== undefined
-                      ? { description: updatedDescription }
-                      : {}),
-                  }
-                }
-              }
-            }
-            return tool
-          })
-      }
-
-      // B. If this is a subagent assembling its own prompt, sync {{model}} and {{provider}} variables
-      if (isSubagent) {
-        const isFork = isForkSubagent(session)
-        if (isFork && effectiveCfg.overrideForkModel !== true) {
-          return transformed
-        }
-
-        const hasCustomModel =
-          !effectiveCfg.inherit &&
-          Boolean(effectiveCfg.model?.provider && effectiveCfg.model?.model)
-
-        const shouldApply =
-          effectiveCfg.allowAgentSelectModel === false
-            ? hasCustomModel
-            : hasCustomModel && !hasAgentSelectedModel(session, ctx)
-
-        if (shouldApply && effectiveCfg.model) {
-          if (agent?.options) {
-            agent.options.provider = effectiveCfg.model.provider
-            agent.options.model = effectiveCfg.model.model
-          }
-          return {
-            ...transformed,
-            variables: {
-              ...transformed.variables,
-              provider: effectiveCfg.model.provider,
-              model: effectiveCfg.model.model,
-            },
-          }
-        }
-      }
-
-      return transformed
     },
   )
 
-  // 3. Intercept agent/request to route the actual LLM call to the effective subagent model
+  // 3. Route the child's actual LLM call.
   ctx.on(
     'agent/request',
     async (
-      payload: AgentRequestPayload,
+      payload: { agent: Agent },
       next: () => Promise<LlmCallConfig>,
     ): Promise<LlmCallConfig> => {
       const proposal = await next()
-      const session = payload?.agent?.session
-      if (!session?.header || session.header.origin !== 'subagent') {
-        return proposal
+      const target = await forcedRouteFor(payload?.agent)
+      if (!target) return proposal
+
+      return {
+        ...proposal,
+        provider: target.provider,
+        model: target.model,
+        ...(target.reasoningEffort
+          ? { reasoningEffort: target.reasoningEffort }
+          : {}),
       }
-
-      const parentId =
-        resolveAgentSessionId(payload?.agent, ctx) ??
-        session.header.parentSession
-      const workspaceId = await resolveWorkspaceForSession(ctx, parentId)
-
-      const sessionSettingsStore = getSessionSettingsStore()
-      const effectiveCfg = resolveEffectiveSubagentModel(
-        sessionSettingsStore,
-        parentId,
-        workspaceId,
-      )
-
-      // Subagent fork check: preserve KV cache unless overrideForkModel is explicitly enabled
-      const isFork = isForkSubagent(session)
-      if (isFork && effectiveCfg.overrideForkModel !== true) {
-        return proposal
-      }
-
-      const hasCustomModel =
-        !effectiveCfg.inherit &&
-        Boolean(effectiveCfg.model?.provider && effectiveCfg.model?.model)
-
-      // When allowAgentSelectModel is false: forced mode
-      if (effectiveCfg.allowAgentSelectModel === false) {
-        if (!hasCustomModel || !effectiveCfg.model) {
-          return proposal
-        }
-        if (payload.agent?.options) {
-          payload.agent.options.provider = effectiveCfg.model.provider
-          payload.agent.options.model = effectiveCfg.model.model
-          if (effectiveCfg.model.reasoningEffort) {
-            ;(payload.agent.options as any).reasoningEffort =
-              effectiveCfg.model.reasoningEffort
-          }
-        }
-        return {
-          ...proposal,
-          provider: effectiveCfg.model.provider,
-          model: effectiveCfg.model.model,
-          ...(effectiveCfg.model.reasoningEffort
-            ? { reasoningEffort: effectiveCfg.model.reasoningEffort }
-            : {}),
-        }
-      }
-
-      // When allowAgentSelectModel is true (default):
-      // If the Agent explicitly chose a model, do NOT overwrite it!
-      if (hasAgentSelectedModel(session, ctx)) {
-        return proposal
-      }
-
-      // If Agent did not specify a model and custom model is configured, use it as fallback
-      if (hasCustomModel && effectiveCfg.model) {
-        if (payload.agent?.options) {
-          payload.agent.options.provider = effectiveCfg.model.provider
-          payload.agent.options.model = effectiveCfg.model.model
-          if (effectiveCfg.model.reasoningEffort) {
-            ;(payload.agent.options as any).reasoningEffort =
-              effectiveCfg.model.reasoningEffort
-          }
-        }
-        return {
-          ...proposal,
-          provider: effectiveCfg.model.provider,
-          model: effectiveCfg.model.model,
-          ...(effectiveCfg.model.reasoningEffort
-            ? { reasoningEffort: effectiveCfg.model.reasoningEffort }
-            : {}),
-        }
-      }
-
-      return proposal
     },
   )
 }

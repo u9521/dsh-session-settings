@@ -24,8 +24,15 @@
     "LICENSE"
   ],
   "engines": {
-    "node": "^22.19 || >=24",
-    "dsh": ">=0.1.5-rc.1"
+    "node": "^22.19 || >=24"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh": ">=0.2.0-rc.1"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh": {
+      "optional": true
+    }
   },
   "dsh": {
     "bundle": {
@@ -33,9 +40,8 @@
     },
     "client": {
       "inject": [
-        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-renderer",
         "@deepseek-ai/dsh-client-ui-settings",
-        "@deepseek-ai/dsh-client-ui-primitives",
         "@deepseek-ai/dsh-client-locale",
         "@deepseek-ai/dsh-api-remotes"
       ],
@@ -45,9 +51,10 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "check": "node scripts/build.mjs --check",
-    "fmt": "prettier --write \"src/**/*.ts\" \"scripts/*.mjs\" \"*.mjs\" \"*.json\" \"*.yml\"",
-    "fmt:check": "prettier --check \"src/**/*.ts\" \"scripts/*.mjs\" \"*.mjs\" \"*.json\" \"*.yml\"",
-    "sync": "node scripts/sync-tsdown.mjs"
+    "verify:gates": "node scripts/gates/verify-agent-note-format.mjs && node scripts/gates/verify-doc-budgets.mjs && node scripts/gates/verify-md-links.mjs && node scripts/gates/verify-agent-skills.mjs",
+    "verify": "pnpm run check && pnpm run verify:gates",
+    "fmt": "prettier --write \"src/**/*.ts\" \"scripts/**/*.mjs\" \"*.mjs\" \"*.json\" \"*.yml\"",
+    "fmt:check": "prettier --check \"src/**/*.ts\" \"scripts/**/*.mjs\" \"*.mjs\" \"*.json\" \"*.yml\""
   },
   "keywords": [
     "dsh-plugin",
@@ -56,13 +63,13 @@
     "model"
   ],
   "devDependencies": {
-    "@deepseek-ai/cordis": "^4.0.2",
-    "@deepseek-ai/dsh-client-ui-primitives": "0.1.5-rc.1",
-    "@types/node": "^26.2.0",
+    "@deepseek-ai/cordis": "~4.0.4",
+    "@deepseek-ai/dsh-client-ui-primitives": "0.2.0-rc.1",
+    "@types/node": "^26.6.2",
     "@types/react": "^18.3.1",
-    "lightningcss": "^1.33.0",
-    "prettier": "^3.9.6",
-    "tsdown": "^0.22.14",
+    "@types/react-dom": "^18.3.1",
+    "prettier": "^3.9.9",
+    "tsdown": "^0.23.0",
     "typescript": "^7.0.2"
   },
   "exports": {
@@ -75,6 +82,6 @@
     "./package.json": "./package.json"
   },
   "dependencies": {
-    "@modelcontextprotocol/client": "^2.0.0"
+    "@modelcontextprotocol/client": "2.0.0"
   }
 }

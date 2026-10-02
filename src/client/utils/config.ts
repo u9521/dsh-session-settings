@@ -3,7 +3,6 @@ import type {
   SubagentModelConfig,
   SessionMcpConfig,
   SessionSkillsConfig,
-  GlobalMcpServerConfig,
 } from '../types/index.ts'
 
 export function isSessionCustomized(
@@ -130,16 +129,14 @@ export function resolveEffectiveMcp(
   sessionConfig?: SessionSettingsConfig,
   workspaceConfig?: SessionSettingsConfig,
   globalConfig?: SessionSettingsConfig,
-  availableMcpServers?: GlobalMcpServerConfig[],
 ): SessionMcpConfig {
-  const defaultMcpIds = (availableMcpServers || [])
-    .filter((s) => s.enabledByDefault)
-    .map((s) => s.id)
-
+  // The global scope is exactly its explicit list. There is no per-server
+  // "enabled by default" flag: such a flag could only ever drive mounting,
+  // since visibility is resolved from the scope lists.
   const globalMcp = globalConfig?.mcp
   const globalEnabledIds = Array.isArray(globalMcp?.enabledServerIds)
     ? globalMcp.enabledServerIds
-    : defaultMcpIds
+    : []
   const globalToolsMode = globalMcp?.toolsMode || {}
   const globalDisabledTools = globalMcp?.disabledTools || {}
 
@@ -261,7 +258,6 @@ export function resolveEffectiveSessionConfig(
   sessionConfig?: SessionSettingsConfig,
   workspaceConfig?: SessionSettingsConfig,
   globalConfig?: SessionSettingsConfig,
-  availableMcpServers?: GlobalMcpServerConfig[],
 ): SessionSettingsConfig {
   return {
     subagentModel: resolveEffectiveSubagentModel(
@@ -269,12 +265,7 @@ export function resolveEffectiveSessionConfig(
       workspaceConfig,
       globalConfig,
     ),
-    mcp: resolveEffectiveMcp(
-      sessionConfig,
-      workspaceConfig,
-      globalConfig,
-      availableMcpServers,
-    ),
+    mcp: resolveEffectiveMcp(sessionConfig, workspaceConfig, globalConfig),
     skills: resolveEffectiveSkills(
       sessionConfig,
       workspaceConfig,

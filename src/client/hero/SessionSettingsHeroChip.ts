@@ -1,23 +1,37 @@
 import * as React from 'react'
 import { createPortal } from 'react-dom'
-import { IconSettingsOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconSettingsOutlineMedium } from '@deepseek-ai/dsh-client-ui-primitives'
 import { SessionSettingsViewPage } from '../session/index.ts'
 import {
   LOCALE_NS,
   API_ENDPOINTS,
-  type ClientRemoteApi,
   type ClientRemoteServiceRef,
   type SessionsState,
   type WorkspacesState,
-  type WorkspaceInfo,
   type SessionSettingsConfig,
 } from '../types/index.ts'
 import { isSessionCustomized } from '../utils/config.ts'
+import {
+  resolveMainSessionId,
+  resolvePageWorkspace,
+} from '../utils/sessionScope.ts'
 
 const e = React.createElement
 
+/**
+ * Stable empty snapshots for the `useSyncExternalStore` fallbacks.
+ *
+ * These MUST be module-level constants: a fresh object literal returned from
+ * `getSnapshot` reads as a changed snapshot every time, which spins the
+ * subscription whenever the store is absent.
+ */
+const EMPTY_SESSIONS: SessionsState = { byId: {}, current: undefined }
+const EMPTY_WORKSPACES: WorkspacesState = {
+  items: [],
+  recentWorkspaceId: undefined,
+}
+
 export interface SessionSettingsHeroChipProps {
-  api?: ClientRemoteApi
   remote?: ClientRemoteServiceRef
   locale?: {
     bind?: (
@@ -39,7 +53,6 @@ export interface SessionSettingsHeroChipProps {
 }
 
 export function SessionSettingsHeroChip({
-  api,
   remote,
   locale,
   sessions,
@@ -60,7 +73,7 @@ export function SessionSettingsHeroChip({
       : () => () => {},
     sessions?.list?.getSnapshot
       ? sessions.list.getSnapshot.bind(sessions.list)
-      : () => ({ current: undefined, byId: {} }),
+      : () => EMPTY_SESSIONS,
   )
 
   // Subscribe to workspaces list state to reactively track workspace
@@ -70,36 +83,19 @@ export function SessionSettingsHeroChip({
       : () => () => {},
     workspaces?.list?.getSnapshot
       ? workspaces.list.getSnapshot.bind(workspaces.list)
-      : () => ({ items: [], recentWorkspaceId: undefined }),
+      : () => EMPTY_WORKSPACES,
   )
 
-  const currentSessionId = sessionsState?.current
-  const currentSession =
-    currentSessionId && sessionsState?.byId
-      ? sessionsState.byId[currentSessionId]
-      : currentSessionId && Array.isArray(sessionsState?.items)
-        ? sessionsState.items.find((s) => s?.id === currentSessionId)
-        : undefined
+  // The hero page always has a session: picking a workspace connects its blank
+  // one, and that session is what the main view retains. Resolving it is what
+  // lets a session-scope save land on the conversation about to start, and what
+  // makes the workspace follow a switch.
+  const currentSessionId = resolveMainSessionId(sessionsState)
 
-  const workspaceItems: WorkspaceInfo[] = Array.isArray(workspacesState?.items)
-    ? workspacesState.items
-    : []
-  const currentWorkspace =
-    workspaceItems.find(
-      (w) =>
-        (currentSessionId &&
-          Array.isArray(w?.sessionIds) &&
-          w.sessionIds.includes(currentSessionId)) ||
-        (currentSession?.cwd &&
-          (w?.path === currentSession.cwd || w?.cwd === currentSession.cwd)),
-    ) ??
-    (!currentSessionId && workspacesState?.recentWorkspaceId
-      ? workspaceItems.find(
-          (w) =>
-            w.workspaceId === workspacesState.recentWorkspaceId ||
-            w.id === workspacesState.recentWorkspaceId,
-        )
-      : workspaceItems[0])
+  const currentWorkspace = resolvePageWorkspace({
+    sessions: sessionsState,
+    workspaces: workspacesState,
+  })
   const currentWorkspaceId =
     currentWorkspace?.workspaceId ?? currentWorkspace?.id
   const currentWorkspaceTitle =
@@ -156,7 +152,7 @@ export function SessionSettingsHeroChip({
         'aria-haspopup': 'dialog',
         'aria-expanded': modalOpen,
       },
-      e(IconSettingsOutline16, {
+      e(IconSettingsOutlineMedium, {
         size: 16,
         className: 'dsh-hero-session-settings-icon',
       }),
@@ -194,7 +190,6 @@ export function SessionSettingsHeroChip({
                 'aria-label': t('sessionSettings.title'),
               },
               e(SessionSettingsViewPage, {
-                api,
                 remote,
                 t,
                 sessionId: currentSessionId,

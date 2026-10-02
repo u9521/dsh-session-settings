@@ -1,7 +1,3 @@
-# Vendored upstream copy — must stay byte-identical to
-# deepseek-ai/deepseek-harness for `pnpm run sync --check` to report clean.
-external/
-
 # Build output
 lib/
 

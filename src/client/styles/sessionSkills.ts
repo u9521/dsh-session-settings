@@ -110,7 +110,7 @@ export const SESSION_SKILLS_CSS = `
   background: rgba(245, 158, 11, 0.08);
   border: 1px dashed rgba(245, 158, 11, 0.3);
   border-radius: 6px;
-  color: var(--dsw-alias-state-warning-primary, #f59e0b);
+  color: var(--dsw-alias-state-warn-primary, #f59e0b);
   font-size: 12px;
   line-height: 16px;
   padding: 8px 12px;

@@ -4,6 +4,9 @@
 
 export * from './stdio-runner.ts'
 export * from './http-runner.ts'
+export * from './read.ts'
+export * from './connect.ts'
+export * from './collect.ts'
 
 import type { GlobalMcpServerConfig, McpTestResult } from '../../../types.ts'
 import { testStdioConnection } from './stdio-runner.ts'
@@ -22,13 +25,5 @@ export async function testMcpConnection(
     return testStdioConnection(server)
   }
 
-  // 2. Streamable HTTP / SSE Transport
-  if (
-    server.transport === 'streamable-http' ||
-    (server.transport as string) === 'streamable-http-or-sse'
-  ) {
-    return testHttpConnection(server)
-  }
-
-  return { ok: false, message: `不支持的传输协议: ${server.transport}` }
+  return testHttpConnection(server)
 }

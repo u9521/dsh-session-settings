@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { IconLoadingOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconLoadingOutlineMedium } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SkillItem } from '../../types/index.ts'
 import { ModalDialog, Badge } from '../../components/index.ts'
 import { getSkillSourceMeta } from '../../utils/index.ts'
@@ -13,6 +13,7 @@ export interface SkillDetailModalProps {
   isUserDisabled: boolean
   loadingContent: boolean
   isSessionContext?: boolean
+  isReadonly?: boolean
   saving?: boolean
   onSave?: (
     name: string,
@@ -30,6 +31,7 @@ export function SkillDetailModal({
   isUserDisabled,
   loadingContent,
   isSessionContext = false,
+  isReadonly = false,
   saving = false,
   onSave,
   onClose,
@@ -48,59 +50,60 @@ export function SkillDetailModal({
   if (!skill || !detail) return null
 
   const isRuntime = Boolean(skill.isRuntime)
-  const canToggle = !isRuntime || isSessionContext
+  const canToggle = !isReadonly && (!isRuntime || isSessionContext)
   const { sourceClass, sourceLabel } = getSkillSourceMeta(skill, t)
 
   const handleSave = () => {
-    if (onSave) {
+    if (onSave && !isReadonly) {
       onSave(skill.name, localModelDisabled, localUserDisabled)
     } else {
       onClose()
     }
   }
 
-  const footerButtons = canToggle
-    ? [
-        e(
-          'button',
-          {
-            key: 'cancel',
-            type: 'button',
-            className: 'dsh-sam-btn secondary',
-            disabled: saving,
-            onClick: onClose,
-          },
-          t('sessionSettings.skills.modalCancelBtn'),
-        ),
-        e(
-          'button',
-          {
-            key: 'save',
-            type: 'button',
-            className: 'dsh-sam-btn primary',
-            disabled: saving,
-            onClick: handleSave,
-          },
-          saving
-            ? e(IconLoadingOutline16, { size: 12, className: 'dsh-spin' })
-            : null,
-          saving
-            ? t('sessionSettings.skills.modalSavingBtn')
-            : t('sessionSettings.skills.modalSaveBtn'),
-        ),
-      ]
-    : [
-        e(
-          'button',
-          {
-            key: 'close',
-            type: 'button',
-            className: 'dsh-sam-btn primary',
-            onClick: onClose,
-          },
-          t('sessionSettings.skills.modalDoneBtn'),
-        ),
-      ]
+  const footerButtons =
+    canToggle && !isReadonly && onSave
+      ? [
+          e(
+            'button',
+            {
+              key: 'cancel',
+              type: 'button',
+              className: 'dsh-sam-btn secondary',
+              disabled: saving,
+              onClick: onClose,
+            },
+            t('sessionSettings.skills.modalCancelBtn'),
+          ),
+          e(
+            'button',
+            {
+              key: 'save',
+              type: 'button',
+              className: 'dsh-sam-btn primary',
+              disabled: saving,
+              onClick: handleSave,
+            },
+            saving
+              ? e(IconLoadingOutlineMedium, { size: 12, className: 'dsh-spin' })
+              : null,
+            saving
+              ? t('sessionSettings.skills.modalSavingBtn')
+              : t('sessionSettings.skills.modalSaveBtn'),
+          ),
+        ]
+      : [
+          e(
+            'button',
+            {
+              key: 'close',
+              type: 'button',
+              className: 'dsh-sam-btn primary',
+              onClick: onClose,
+            },
+            t('sessionSettings.skills.modalDoneBtn'),
+          ),
+        ]
 
   return e(
     ModalDialog,
@@ -115,28 +118,20 @@ export function SkillDetailModal({
           label: sourceLabel,
           variant: sourceClass,
         }),
-        canToggle
-          ? e(Badge, {
-              key: 'model',
-              label: !localModelDisabled
-                ? t('sessionSettings.skills.modelInvocableEnabled')
-                : t('sessionSettings.skills.modelInvocableDisabled'),
-              variant: !localModelDisabled
-                ? 'status-enabled'
-                : 'status-disabled',
-            })
-          : null,
-        canToggle
-          ? e(Badge, {
-              key: 'user',
-              label: !localUserDisabled
-                ? t('sessionSettings.skills.userInvocableEnabled')
-                : t('sessionSettings.skills.userInvocableDisabled'),
-              variant: !localUserDisabled
-                ? 'status-enabled'
-                : 'status-disabled',
-            })
-          : null,
+        e(Badge, {
+          key: 'model',
+          label: !localModelDisabled
+            ? t('sessionSettings.skills.modelInvocableEnabled')
+            : t('sessionSettings.skills.modelInvocableDisabled'),
+          variant: !localModelDisabled ? 'status-enabled' : 'status-disabled',
+        }),
+        e(Badge, {
+          key: 'user',
+          label: !localUserDisabled
+            ? t('sessionSettings.skills.userInvocableEnabled')
+            : t('sessionSettings.skills.userInvocableDisabled'),
+          variant: !localUserDisabled ? 'status-enabled' : 'status-disabled',
+        }),
       ].filter(Boolean),
       footer: [
         e(
@@ -199,78 +194,104 @@ export function SkillDetailModal({
           { className: 'dsh-skill-modal-section-title' },
           t('sessionSettings.skills.rulesSectionTitle'),
         ),
-        canToggle
-          ? e(
+        e(
+          'div',
+          {
+            style: {
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '8px',
+            },
+          },
+          // Switch 1: Model Invocable
+          e(
+            'div',
+            {
+              className: `dsh-mcp-switch-card mini ${!localModelDisabled ? 'active' : ''} ${!canToggle ? 'readonly' : ''}`,
+              onClick: canToggle
+                ? () => setLocalModelDisabled((prev) => !prev)
+                : undefined,
+              onKeyDown: canToggle
+                ? (evt: React.KeyboardEvent) => {
+                    if (evt.key === ' ' || evt.key === 'Enter') {
+                      evt.preventDefault()
+                      setLocalModelDisabled((prev) => !prev)
+                    }
+                  }
+                : undefined,
+              tabIndex: canToggle ? 0 : -1,
+              role: 'switch',
+              'aria-checked': !localModelDisabled,
+              'aria-disabled': !canToggle ? true : undefined,
+              style: { cursor: canToggle ? 'pointer' : 'default' },
+            },
+            e(
+              'div',
+              { className: 'dsh-mcp-switch-text' },
+              e(
+                'span',
+                { className: 'dsh-mcp-switch-title' },
+                t('sessionSettings.skills.modelInvocableTitle'),
+              ),
+              e(
+                'span',
+                { className: 'dsh-mcp-switch-desc' },
+                t('sessionSettings.skills.modelInvocableDesc'),
+              ),
+            ),
+            e(
               'div',
               {
-                style: {
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '8px',
-                },
+                className: `dsh-mcp-switch-btn ${!localModelDisabled ? 'active' : ''}`,
               },
-              // Switch 1: Model Invocable
+              e('span', { className: 'dsh-mcp-switch-thumb' }),
+            ),
+          ),
+          // Switch 2: User Invocable
+          e(
+            'div',
+            {
+              className: `dsh-mcp-switch-card mini ${!localUserDisabled ? 'active' : ''} ${!canToggle ? 'readonly' : ''}`,
+              onClick: canToggle
+                ? () => setLocalUserDisabled((prev) => !prev)
+                : undefined,
+              onKeyDown: canToggle
+                ? (evt: React.KeyboardEvent) => {
+                    if (evt.key === ' ' || evt.key === 'Enter') {
+                      evt.preventDefault()
+                      setLocalUserDisabled((prev) => !prev)
+                    }
+                  }
+                : undefined,
+              tabIndex: canToggle ? 0 : -1,
+              role: 'switch',
+              'aria-checked': !localUserDisabled,
+              'aria-disabled': !canToggle ? true : undefined,
+              style: { cursor: canToggle ? 'pointer' : 'default' },
+            },
+            e(
+              'div',
+              { className: 'dsh-mcp-switch-text' },
               e(
-                'div',
-                {
-                  className: `dsh-mcp-switch-card mini ${!localModelDisabled ? 'active' : ''}`,
-                  onClick: () => setLocalModelDisabled((prev) => !prev),
-                  style: { cursor: 'pointer' },
-                },
-                e(
-                  'div',
-                  { className: 'dsh-mcp-switch-text' },
-                  e(
-                    'span',
-                    { className: 'dsh-mcp-switch-title' },
-                    t('sessionSettings.skills.modelInvocableTitle'),
-                  ),
-                  e(
-                    'span',
-                    { className: 'dsh-mcp-switch-desc' },
-                    t('sessionSettings.skills.modelInvocableDesc'),
-                  ),
-                ),
-                e(
-                  'div',
-                  {
-                    className: `dsh-mcp-switch-btn ${!localModelDisabled ? 'active' : ''}`,
-                  },
-                  e('span', { className: 'dsh-mcp-switch-thumb' }),
-                ),
+                'span',
+                { className: 'dsh-mcp-switch-title' },
+                t('sessionSettings.skills.userInvocableTitle'),
               ),
-              // Switch 2: User Invocable
               e(
-                'div',
-                {
-                  className: `dsh-mcp-switch-card mini ${!localUserDisabled ? 'active' : ''}`,
-                  onClick: () => setLocalUserDisabled((prev) => !prev),
-                  style: { cursor: 'pointer' },
-                },
-                e(
-                  'div',
-                  { className: 'dsh-mcp-switch-text' },
-                  e(
-                    'span',
-                    { className: 'dsh-mcp-switch-title' },
-                    t('sessionSettings.skills.userInvocableTitle'),
-                  ),
-                  e(
-                    'span',
-                    { className: 'dsh-mcp-switch-desc' },
-                    t('sessionSettings.skills.userInvocableDesc'),
-                  ),
-                ),
-                e(
-                  'div',
-                  {
-                    className: `dsh-mcp-switch-btn ${!localUserDisabled ? 'active' : ''}`,
-                  },
-                  e('span', { className: 'dsh-mcp-switch-thumb' }),
-                ),
+                'span',
+                { className: 'dsh-mcp-switch-desc' },
+                t('sessionSettings.skills.userInvocableDesc'),
               ),
-            )
-          : null,
+            ),
+            e(
+              'div',
+              {
+                className: `dsh-mcp-switch-btn ${!localUserDisabled ? 'active' : ''}`,
+              },
+              e('span', { className: 'dsh-mcp-switch-thumb' }),
+            ),
+          ),
+        ),
       ),
 
       // Section 2: Instructions & Rules

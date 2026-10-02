@@ -1,8 +1,8 @@
 import * as React from 'react'
 import {
-  IconPlayOutline16,
-  IconChecklistOutline14,
-  IconLoadingOutline16,
+  IconPlayOutlineMedium,
+  IconChecklistOutlineMedium,
+  IconLoadingOutlineMedium,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {
   GlobalMcpServerConfig,
@@ -10,6 +10,7 @@ import type {
   EnvEntry,
 } from '../../types/index.ts'
 import { ModalDialog, KeyValueEditor } from '../../components/index.ts'
+import { parseArgs, reconcileArgsDraft } from '../../utils/index.ts'
 
 const e = React.createElement
 
@@ -56,6 +57,15 @@ export function McpServerFormModal({
   onSave,
   t,
 }: McpServerFormModalProps) {
+  // The Arguments textarea owns its raw text; see utils/args.ts for why it must
+  // not be a direct projection of the parsed array.
+  const [argsDraft, setArgsDraft] = React.useState<string>(() =>
+    (server.args ?? []).join('\n'),
+  )
+  React.useEffect(() => {
+    setArgsDraft((current) => reconcileArgsDraft(current, server.args ?? []))
+  }, [server.args])
+
   if (!open) return null
 
   const detectedInfo = server.serverInfo
@@ -97,8 +107,8 @@ export function McpServerFormModal({
               title: t('mcpServers.actions.test'),
             },
             testing
-              ? e(IconLoadingOutline16, { size: 14, className: 'dsh-spin' })
-              : e(IconPlayOutline16, { size: 14 }),
+              ? e(IconLoadingOutlineMedium, { size: 14, className: 'dsh-spin' })
+              : e(IconPlayOutlineMedium, { size: 14 }),
             testing
               ? t('mcpServers.actions.testing')
               : t('mcpServers.actions.test'),
@@ -112,7 +122,7 @@ export function McpServerFormModal({
               onClick: onOpenTools,
               title: t('mcpServers.actions.toolsList'),
             },
-            e(IconChecklistOutline14, { size: 14 }),
+            e(IconChecklistOutlineMedium, { size: 14 }),
             t('mcpServers.actions.toolsList'),
             (() => {
               const disabledCount =
@@ -181,51 +191,6 @@ export function McpServerFormModal({
     e(
       'div',
       { className: 'dsh-mcp-form-body' },
-      // Top Switch: Enabled By Default
-      e(
-        'div',
-        {
-          className: `dsh-mcp-switch-card ${server.enabledByDefault ? 'active' : ''}`,
-          role: 'button',
-          tabIndex: 0,
-          onClick: () =>
-            onChange({
-              ...server,
-              enabledByDefault: !server.enabledByDefault,
-            }),
-          onKeyDown: (evt: React.KeyboardEvent) => {
-            if (evt.key === ' ' || evt.key === 'Enter') {
-              evt.preventDefault()
-              onChange({
-                ...server,
-                enabledByDefault: !server.enabledByDefault,
-              })
-            }
-          },
-        },
-        e(
-          'div',
-          { className: 'dsh-mcp-switch-text' },
-          e(
-            'div',
-            { className: 'dsh-mcp-switch-title' },
-            t('mcpServers.form.enabledByDefault'),
-          ),
-          e(
-            'div',
-            { className: 'dsh-mcp-switch-desc' },
-            t('mcpServers.form.enabledByDefaultDesc'),
-          ),
-        ),
-        e(
-          'div',
-          {
-            className: `dsh-mcp-switch-btn ${server.enabledByDefault ? 'active' : ''}`,
-            'aria-hidden': 'true',
-          },
-          e('span', { className: 'dsh-mcp-switch-thumb' }),
-        ),
-      ),
 
       // ID & Name Row
       e(
@@ -406,15 +371,12 @@ export function McpServerFormModal({
                 className: 'dsh-mcp-textarea',
                 placeholder: t('mcpServers.form.argsPlaceholder'),
                 rows: 3,
-                value: (server.args || []).join('\n'),
-                onChange: (evt: React.ChangeEvent<HTMLTextAreaElement>) =>
-                  onChange({
-                    ...server,
-                    args: evt.target.value
-                      .split('\n')
-                      .map((s: string) => s.trim())
-                      .filter(Boolean),
-                  }),
+                value: argsDraft,
+                onChange: (evt: React.ChangeEvent<HTMLTextAreaElement>) => {
+                  const text = evt.target.value
+                  setArgsDraft(text)
+                  onChange({ ...server, args: parseArgs(text) })
+                },
               }),
             ),
             // CWD
@@ -655,7 +617,7 @@ export function McpServerFormModal({
                       ),
                       e('input', {
                         type: 'number',
-                        min: 0,
+                        min: 1,
                         step: 100,
                         className: 'dsh-sam-select',
                         placeholder: t(
@@ -687,7 +649,7 @@ export function McpServerFormModal({
                       ),
                       e('input', {
                         type: 'number',
-                        min: 0,
+                        min: 1,
                         step: 1000,
                         className: 'dsh-sam-select',
                         placeholder: t(
@@ -719,7 +681,7 @@ export function McpServerFormModal({
                       ),
                       e('input', {
                         type: 'number',
-                        min: 0,
+                        min: 1,
                         step: 1,
                         className: 'dsh-sam-select',
                         placeholder: t(

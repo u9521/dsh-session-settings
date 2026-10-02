@@ -154,6 +154,24 @@ export class McpManager {
   /** serverIds whose current mount lifecycle we attempted to mount */
   private mountAttempted = new Set<string>()
 
+  /**
+   * serverId -> wall clock when the current mount attempt began.
+   *
+   * Runtime status is a TRANSIENT observation: a freshly started fork reports
+   * zero tools until its handshake completes, which is indistinguishable from a
+   * permanent failure without knowing how long it has been that way.
+   */
+  private mountStartedAt = new Map<string, number>()
+
+  /**
+   * serverId -> fingerprint of the config the live fork was mounted with.
+   *
+   * Lets `syncServer()` skip a teardown+remount when nothing that affects the
+   * connection actually changed; a settings save used to rebuild every live
+   * connection even when it touched no server config at all.
+   */
+  private mountedConfigKeys = new Map<string, string>()
+
   /** Map of serverId -> timestamp of the last manual client refresh */
   private lastRefreshAt = new Map<string, number>()
 
@@ -171,17 +189,18 @@ export class McpManager {
   }
 
   /**
-   * Check if an MCP server is currently needed (enabled by default or enabled in any active session).
+   * Check if an MCP server is currently needed.
+   *
+   * "Needed" means some scope's explicit `enabledServerIds` names it. There is
+   * deliberately no per-server default flag: such a flag could only ever drive
+   * mounting, since visibility is resolved from the scope lists, and a server
+   * that is connected but visible nowhere is pure cost.
    */
   public isServerNeeded(serverId: string): boolean {
     const store = this.getMcpStore()
     const server = store.servers[serverId]
     if (!server) return false
 
-    // 1. Is it enabled by default in global server settings?
-    if (server.enabledByDefault) return true
-
-    // 2. Is it enabled in session settings?
     const sessionSettingsStore = this.getSessionSettingsStore?.()
     if (sessionSettingsStore) {
       if (
@@ -235,6 +254,68 @@ export class McpManager {
   }
 
   /**
+   * The exact config object handed to the official client.
+   *
+   * The single source for BOTH the fork's config and its fingerprint, so the
+   * two cannot drift: a field added here is automatically part of the identity
+   * that decides whether a remount is needed.
+   */
+  private mountConfigOf(
+    server: GlobalMcpServerConfig,
+  ): Record<string, unknown> {
+    const baseConfig = {
+      serverName: server.id,
+      toolCallTimeoutMs: server.toolCallTimeoutMs ?? 60000,
+      failOnStartupError: Boolean(server.failOnStartupError),
+      ...(server.maxInstructionBytes !== undefined
+        ? { maxInstructionBytes: server.maxInstructionBytes }
+        : {}),
+      reconnect: {
+        enabled: server.reconnect?.enabled ?? true,
+        initialDelayMs: server.reconnect?.initialDelayMs ?? 500,
+        maxDelayMs: server.reconnect?.maxDelayMs ?? 30000,
+        maxAttempts: server.reconnect?.maxAttempts ?? 10,
+      },
+    }
+
+    return server.transport === 'stdio'
+      ? {
+          ...baseConfig,
+          transport: 'stdio',
+          command: server.command ?? '',
+          args: server.args ?? [],
+          env: server.env ?? {},
+          cwd: server.cwd ?? '',
+        }
+      : {
+          ...baseConfig,
+          transport: 'streamable-http',
+          url: server.url ?? '',
+          headers: server.headers ?? {},
+        }
+  }
+
+  /**
+   * Key-order-independent serialization for config comparison.
+   *
+   * `JSON.stringify` alone would report a change whenever the form re-submits
+   * the same `env`/`headers` entries in a different order, causing a remount
+   * that changes nothing.
+   */
+  private canonical(value: unknown): string {
+    if (value === null || typeof value !== 'object')
+      return JSON.stringify(value)
+    if (Array.isArray(value)) {
+      return `[${value.map((entry) => this.canonical(entry)).join(',')}]`
+    }
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([, entry]) => entry !== undefined)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([key, entry]) => `${JSON.stringify(key)}:${this.canonical(entry)}`)
+    return `{${entries.join(',')}}`
+  }
+
+  /**
    * Mount official @deepseek-ai/dsh-mcp-client plugin instance dynamically in memory.
    */
   public async mountOfficialClient(
@@ -244,39 +325,14 @@ export class McpManager {
   ): Promise<boolean> {
     await this.unmountOfficialClient(server.id)
 
-    const baseConfig = {
-      serverName: server.id,
-      toolCallTimeoutMs: server.toolCallTimeoutMs ?? 60000,
-      failOnStartupError: Boolean(server.failOnStartupError),
-      reconnect: {
-        enabled: server.reconnect?.enabled ?? true,
-        initialDelayMs: server.reconnect?.initialDelayMs ?? 500,
-        maxDelayMs: server.reconnect?.maxDelayMs ?? 30000,
-        maxAttempts: server.reconnect?.maxAttempts ?? 10,
-      },
-    }
-
-    const officialConfig =
-      server.transport === 'stdio'
-        ? {
-            ...baseConfig,
-            transport: 'stdio' as const,
-            command: server.command ?? '',
-            args: server.args ?? [],
-            env: server.env ?? {},
-            cwd: server.cwd ?? '',
-          }
-        : {
-            ...baseConfig,
-            transport: 'streamable-http' as const,
-            url: server.url ?? '',
-            headers: server.headers ?? {},
-          }
+    const officialConfig = this.mountConfigOf(server)
 
     try {
       const fork = this.ctx.plugin(officialPlugin, officialConfig)
       this.officialForks.set(server.id, fork)
       this.mountAttempted.add(server.id)
+      this.mountStartedAt.set(server.id, Date.now())
+      this.mountedConfigKeys.set(server.id, this.canonical(officialConfig))
 
       // Surface activation errors (invalid config, startup rejection, ...).
       // NOTE: the official bridge retries plain connection failures internally and
@@ -356,6 +412,8 @@ export class McpManager {
 
     this.lastErrors.delete(serverId)
     this.mountAttempted.delete(serverId)
+    this.mountStartedAt.delete(serverId)
+    this.mountedConfigKeys.delete(serverId)
 
     if (!fork) return
     try {
@@ -429,6 +487,9 @@ export class McpManager {
       mounted: this.isMounted(serverId),
       registeredToolCount,
     }
+
+    const mountStartedAt = this.mountStartedAt.get(serverId)
+    if (mountStartedAt !== undefined) status.mountStartedAt = mountStartedAt
 
     const lastError = this.lastErrors.get(serverId)
     if (lastError) status.lastError = lastError
@@ -545,6 +606,17 @@ export class McpManager {
       return
     }
 
+    // A live fork carrying the same connection config is already the desired
+    // state. Tearing it down and reconnecting would drop working tools (and
+    // briefly report zero) for a change that cannot affect the connection.
+    if (
+      this.isMounted(server.id) &&
+      this.mountedConfigKeys.get(server.id) ===
+        this.canonical(this.mountConfigOf(server))
+    ) {
+      return
+    }
+
     if (this.activeSyncs.has(server.id)) {
       return this.activeSyncs.get(server.id)
     }
@@ -623,6 +695,8 @@ export class McpManager {
     this.serverToolMap.clear()
     this.lastErrors.clear()
     this.mountAttempted.clear()
+    this.mountStartedAt.clear()
+    this.mountedConfigKeys.clear()
     this.lastRefreshAt.clear()
     this.activeSyncs.clear()
 

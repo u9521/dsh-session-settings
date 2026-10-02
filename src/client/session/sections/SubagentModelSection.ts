@@ -1,18 +1,17 @@
 import * as React from 'react'
-import { IconAgentPresetOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {
   SubagentModelConfig,
   SubagentModelMode,
   ModelProviderGroup,
   SessionSettingsConfig,
 } from '../../types/index.ts'
-import { ModeSelector } from '../../components/index.ts'
 import { effortLabel } from '../../utils/index.ts'
 import { resolveEffectiveSubagentModel } from '../../utils/config.ts'
 
 const e = React.createElement
 
 export interface SubagentModelSectionProps {
+  scope?: 'session' | 'workspace' | 'global'
   modelConfig: SubagentModelConfig
   providers: ModelProviderGroup[]
   loadingModels?: boolean
@@ -29,6 +28,7 @@ export interface SubagentModelSectionProps {
 }
 
 export function SubagentModelSection({
+  scope = 'session',
   modelConfig,
   providers,
   loadingModels = false,
@@ -43,9 +43,50 @@ export function SubagentModelSection({
   onOverrideForkModelChange,
   t,
 }: SubagentModelSectionProps) {
-  const currentProvider = modelConfig.model?.provider || ''
-  const currentModel = modelConfig.model?.model || ''
-  const currentEffort = modelConfig.model?.reasoningEffort || ''
+  const defaultMode = currentWorkspaceId ? 'workspace' : 'global'
+
+  // Determine active source mode: 'workspace' | 'global' | 'custom'
+  const activeSourceMode: 'workspace' | 'global' | 'custom' =
+    scope === 'global'
+      ? 'custom'
+      : scope === 'workspace'
+        ? modelConfig?.mode === 'custom'
+          ? 'custom'
+          : 'global'
+        : modelConfig?.mode === 'custom'
+          ? 'custom'
+          : (modelConfig?.mode ?? defaultMode)
+
+  const isReadonly =
+    scope === 'session'
+      ? activeSourceMode !== 'custom'
+      : scope === 'workspace'
+        ? activeSourceMode !== 'custom'
+        : false
+
+  const effectiveModelConfig = resolveEffectiveSubagentModel(
+    { subagentModel: modelConfig, mcp: {}, skills: {} },
+    workspaceSettings,
+    globalConfig,
+  )
+
+  const isInheritParent = isReadonly
+    ? effectiveModelConfig.inherit !== false
+    : modelConfig?.mode === 'custom'
+      ? Boolean(modelConfig.inherit)
+      : true
+
+  const isSpecifyModel = !isInheritParent
+
+  const currentProvider = isReadonly
+    ? effectiveModelConfig.model?.provider || ''
+    : modelConfig?.model?.provider || ''
+  const currentModel = isReadonly
+    ? effectiveModelConfig.model?.model || ''
+    : modelConfig?.model?.model || ''
+  const currentEffort = isReadonly
+    ? effectiveModelConfig.model?.reasoningEffort || ''
+    : modelConfig?.model?.reasoningEffort || ''
 
   const currentProviderGroup = Array.isArray(providers)
     ? providers.find((g) => g.id === currentProvider)
@@ -55,116 +96,253 @@ export function SubagentModelSection({
     : null
   const availableEfforts = currentModelItem?.reasoning?.efforts ?? []
 
-  const hasGlobalCustomModel = Boolean(
-    globalConfig?.subagentModel?.inherit === false &&
-    globalConfig?.subagentModel?.model?.provider &&
-    globalConfig?.subagentModel?.model?.model,
-  )
+  const isAllowAgentSelect = isReadonly
+    ? effectiveModelConfig.allowAgentSelectModel !== false
+    : modelConfig?.allowAgentSelectModel !== undefined
+      ? modelConfig.allowAgentSelectModel !== false
+      : effectiveModelConfig.allowAgentSelectModel !== false
 
-  const effectiveModelConfig = resolveEffectiveSubagentModel(
-    { subagentModel: modelConfig, mcp: {}, skills: {} },
-    workspaceSettings,
-    globalConfig,
-  )
+  const isOverrideFork = isReadonly
+    ? effectiveModelConfig.overrideForkModel === true
+    : modelConfig?.overrideForkModel !== undefined
+      ? modelConfig.overrideForkModel === true
+      : effectiveModelConfig.overrideForkModel === true
 
-  const isAllowAgentSelect =
-    effectiveModelConfig.allowAgentSelectModel !== false
-  const isOverrideFork = effectiveModelConfig.overrideForkModel === true
+  const handleToggleSpecifyModel = () => {
+    if (isReadonly) return
+    if (isSpecifyModel) {
+      onModelModeChange('inherit')
+    } else {
+      onModelModeChange('custom')
+    }
+  }
 
-  const defaultMode = currentWorkspaceId ? 'workspace' : 'global'
-  const selectedModeValue: SubagentModelMode =
-    modelConfig.mode === 'custom'
-      ? modelConfig.inherit
-        ? 'inherit'
-        : 'custom'
-      : (modelConfig.mode ?? defaultMode)
+  const sourceTabs =
+    scope === 'session'
+      ? [
+          ...(currentWorkspaceId
+            ? [
+                {
+                  key: 'workspace',
+                  label: t('sessionSettings.sourceTabs.workspace'),
+                  active: activeSourceMode === 'workspace',
+                  onClick: () => onModelModeChange('workspace'),
+                },
+              ]
+            : []),
+          {
+            key: 'global',
+            label: t('sessionSettings.sourceTabs.global'),
+            active: activeSourceMode === 'global',
+            onClick: () => onModelModeChange('global'),
+          },
+          {
+            key: 'custom',
+            label: t('sessionSettings.sourceTabs.custom'),
+            active: activeSourceMode === 'custom',
+            onClick: () => onModelModeChange('custom'),
+          },
+        ]
+      : scope === 'workspace'
+        ? [
+            {
+              key: 'global',
+              label: t('sessionSettings.sourceTabs.global'),
+              active: activeSourceMode === 'global',
+              onClick: () => onModelModeChange('global'),
+            },
+            {
+              key: 'custom',
+              label: t('sessionSettings.sourceTabs.workspaceCustom'),
+              active: activeSourceMode === 'custom',
+              onClick: () => onModelModeChange('custom'),
+            },
+          ]
+        : []
 
   return e(
     'div',
     { className: 'dsh-view-content-inner' },
-    // Section Header
+    // Source Tabs (Segmented control for workspace / global / custom)
+    sourceTabs.length > 0
+      ? e(
+          'div',
+          { className: 'dsh-source-tabs-wrap' },
+          e(
+            'div',
+            { className: 'dsh-source-tabs-label' },
+            t('sessionSettings.sourceTabs.label'),
+          ),
+          e(
+            'div',
+            { className: 'dsh-source-tabs-nav', role: 'tablist' },
+            sourceTabs.map((tab) =>
+              e(
+                'button',
+                {
+                  key: tab.key,
+                  type: 'button',
+                  role: 'tab',
+                  'aria-selected': tab.active,
+                  className: `dsh-source-tab-btn ${tab.active ? 'active' : ''}`,
+                  onClick: tab.onClick,
+                },
+                tab.label,
+              ),
+            ),
+          ),
+        )
+      : null,
+
+    // Switch 1: 允许 Agent 选择子代理模型
     e(
       'div',
-      { className: 'dsh-section-header' },
+      {
+        className: `dsh-mcp-switch-card ${isAllowAgentSelect ? 'active' : ''} ${isReadonly ? 'readonly' : ''}`,
+        style: { marginBottom: 12 },
+        tabIndex: isReadonly ? -1 : 0,
+        role: 'switch',
+        'aria-checked': isAllowAgentSelect,
+        onClick: () => {
+          if (!isReadonly && onAllowAgentSelectModelChange) {
+            onAllowAgentSelectModelChange(!isAllowAgentSelect)
+          }
+        },
+        onKeyDown: (evt: React.KeyboardEvent) => {
+          if (!isReadonly && (evt.key === ' ' || evt.key === 'Enter')) {
+            evt.preventDefault()
+            if (onAllowAgentSelectModelChange) {
+              onAllowAgentSelectModelChange(!isAllowAgentSelect)
+            }
+          }
+        },
+      },
       e(
-        'h3',
-        { className: 'dsh-section-title' },
-        t('sessionSettings.section.modelTitle'),
+        'div',
+        { className: 'dsh-mcp-switch-text' },
+        e(
+          'div',
+          { className: 'dsh-mcp-switch-title' },
+          t('sessionSettings.switch.allowAgentSelectModel.title'),
+        ),
+        e(
+          'div',
+          { className: 'dsh-mcp-switch-desc' },
+          t('sessionSettings.switch.allowAgentSelectModel.desc'),
+        ),
       ),
       e(
-        'p',
-        { className: 'dsh-section-desc' },
-        t('sessionSettings.section.modelDesc'),
+        'button',
+        {
+          type: 'button',
+          className: `dsh-mcp-switch-btn ${isAllowAgentSelect ? 'active' : ''}`,
+          tabIndex: -1,
+          disabled: isReadonly,
+          'aria-hidden': 'true',
+        },
+        e('span', { className: 'dsh-mcp-switch-thumb' }),
       ),
     ),
 
-    // Mode Selector
-    e(ModeSelector, {
-      name: 'subagentModelMode',
-      value: selectedModeValue,
-      onChange: (val) => onModelModeChange(val as SubagentModelMode),
-      options: [
-        {
-          value: 'workspace',
-          visible: Boolean(currentWorkspaceId),
-          title: t('sessionSettings.mode.workspace.title'),
-          badges: [
-            workspaceSettings?.subagentModel?.mode === 'custom'
-              ? workspaceSettings.subagentModel.inherit
-                ? {
-                    label: t('sessionSettings.badge.inherit'),
-                    variant: 'inherit',
-                  }
-                : {
-                    label: `${t('sessionSettings.badge.custom')}: ${workspaceSettings.subagentModel.model?.provider || ''} / ${workspaceSettings.subagentModel.model?.model || ''}`,
-                    variant: 'custom',
-                  }
-              : hasGlobalCustomModel
-                ? {
-                    label: `${t('sessionSettings.badge.custom')}: ${globalConfig?.subagentModel?.model?.provider || ''} / ${globalConfig?.subagentModel?.model?.model || ''}`,
-                    variant: 'custom',
-                  }
-                : {
-                    label: t('sessionSettings.badge.inherit'),
-                    variant: 'inherit',
-                  },
-          ],
-          desc: t('sessionSettings.mode.workspace.desc'),
+    // Switch 2: 替换 subagent fork 的模型
+    e(
+      'div',
+      {
+        className: `dsh-mcp-switch-card ${isOverrideFork ? 'active' : ''} ${isReadonly ? 'readonly' : ''}`,
+        style: { marginBottom: 12 },
+        tabIndex: isReadonly ? -1 : 0,
+        role: 'switch',
+        'aria-checked': isOverrideFork,
+        onClick: () => {
+          if (!isReadonly && onOverrideForkModelChange) {
+            onOverrideForkModelChange(!isOverrideFork)
+          }
         },
-        {
-          value: 'global',
-          title: t('sessionSettings.mode.default.title'),
-          badges: [
-            hasGlobalCustomModel
-              ? {
-                  label: `${t('sessionSettings.badge.custom')}: ${globalConfig?.subagentModel?.model?.provider || ''} / ${globalConfig?.subagentModel?.model?.model || ''}`,
-                  variant: 'custom',
-                }
-              : {
-                  label: t('sessionSettings.badge.inherit'),
-                  variant: 'inherit',
-                },
-          ],
-          desc: t('sessionSettings.mode.default.desc'),
+        onKeyDown: (evt: React.KeyboardEvent) => {
+          if (!isReadonly && (evt.key === ' ' || evt.key === 'Enter')) {
+            evt.preventDefault()
+            if (onOverrideForkModelChange) {
+              onOverrideForkModelChange(!isOverrideFork)
+            }
+          }
         },
+      },
+      e(
+        'div',
+        { className: 'dsh-mcp-switch-text' },
+        e(
+          'div',
+          { className: 'dsh-mcp-switch-title' },
+          t('sessionSettings.switch.overrideForkModel.title'),
+        ),
+        e(
+          'div',
+          { className: 'dsh-mcp-switch-desc' },
+          t('sessionSettings.switch.overrideForkModel.desc'),
+        ),
+      ),
+      e(
+        'button',
         {
-          value: 'inherit',
-          title: t('sessionSettings.mode.inherit.title'),
-          desc: t('sessionSettings.mode.inherit.desc'),
+          type: 'button',
+          className: `dsh-mcp-switch-btn ${isOverrideFork ? 'active' : ''}`,
+          tabIndex: -1,
+          disabled: isReadonly,
+          'aria-hidden': 'true',
         },
-        {
-          value: 'custom',
-          title: t('sessionSettings.mode.custom.title'),
-          desc: t('sessionSettings.mode.custom.desc'),
-        },
-      ],
-    }),
+        e('span', { className: 'dsh-mcp-switch-thumb' }),
+      ),
+    ),
 
-    // Custom Mode Fields (Only when mode === 'custom' and inherit !== true)
-    modelConfig.mode === 'custom' && !modelConfig.inherit
+    // Switch 3: 指定子代理模型 (Placed at the very bottom)
+    e(
+      'div',
+      {
+        className: `dsh-mcp-switch-card ${isSpecifyModel ? 'active' : ''} ${isReadonly ? 'readonly' : ''}`,
+        style: { marginBottom: isSpecifyModel ? 10 : 16 },
+        tabIndex: isReadonly ? -1 : 0,
+        role: 'switch',
+        'aria-checked': isSpecifyModel,
+        onClick: handleToggleSpecifyModel,
+        onKeyDown: (evt: React.KeyboardEvent) => {
+          if (!isReadonly && (evt.key === ' ' || evt.key === 'Enter')) {
+            evt.preventDefault()
+            handleToggleSpecifyModel()
+          }
+        },
+      },
+      e(
+        'div',
+        { className: 'dsh-mcp-switch-text' },
+        e(
+          'div',
+          { className: 'dsh-mcp-switch-title' },
+          t('sessionSettings.switch.specifySubagentModel.title'),
+        ),
+        e(
+          'div',
+          { className: 'dsh-mcp-switch-desc' },
+          t('sessionSettings.switch.specifySubagentModel.desc'),
+        ),
+      ),
+      e(
+        'button',
+        {
+          type: 'button',
+          className: `dsh-mcp-switch-btn ${isSpecifyModel ? 'active' : ''}`,
+          tabIndex: -1,
+          disabled: isReadonly,
+          'aria-hidden': 'true',
+        },
+        e('span', { className: 'dsh-mcp-switch-thumb' }),
+      ),
+    ),
+
+    // Model Parameter Dropdowns (Expanded directly under Switch 3 when it is ON)
+    isSpecifyModel
       ? e(
           'div',
-          { className: 'dsh-sam-fields-panel' },
+          { className: 'dsh-sam-fields-panel', style: { marginBottom: 16 } },
           e(
             'div',
             { className: 'dsh-sam-field-group' },
@@ -178,9 +356,10 @@ export function SubagentModelSection({
               {
                 className: 'dsh-sam-select',
                 value: currentProvider,
-                disabled: loadingModels || providers.length === 0,
-                onChange: (evt: React.ChangeEvent<HTMLSelectElement>) =>
-                  onProviderChange(evt.target.value),
+                disabled: isReadonly || loadingModels || providers.length === 0,
+                onChange: (evt: React.ChangeEvent<HTMLSelectElement>) => {
+                  if (!isReadonly) onProviderChange(evt.target.value)
+                },
               },
               loadingModels
                 ? e(
@@ -235,11 +414,13 @@ export function SubagentModelSection({
                 className: 'dsh-sam-select',
                 value: currentModel,
                 disabled:
+                  isReadonly ||
                   loadingModels ||
                   !currentProvider ||
                   !currentProviderGroup?.models?.length,
-                onChange: (evt: React.ChangeEvent<HTMLSelectElement>) =>
-                  onModelSelectChange(evt.target.value),
+                onChange: (evt: React.ChangeEvent<HTMLSelectElement>) => {
+                  if (!isReadonly) onModelSelectChange(evt.target.value)
+                },
               },
               !currentModel
                 ? e(
@@ -278,8 +459,10 @@ export function SubagentModelSection({
                   {
                     className: 'dsh-sam-select',
                     value: currentEffort,
-                    onChange: (evt: React.ChangeEvent<HTMLSelectElement>) =>
-                      onReasoningEffortChange(evt.target.value),
+                    disabled: isReadonly,
+                    onChange: (evt: React.ChangeEvent<HTMLSelectElement>) => {
+                      if (!isReadonly) onReasoningEffortChange(evt.target.value)
+                    },
                   },
                   e(
                     'option',
@@ -298,208 +481,5 @@ export function SubagentModelSection({
             : null,
         )
       : null,
-
-    // Effective Preview Card (when inheriting workspace/global and effective model is custom)
-    (modelConfig.mode === 'workspace' || modelConfig.mode === 'global') &&
-      !effectiveModelConfig.inherit &&
-      effectiveModelConfig.model
-      ? e(
-          'div',
-          { className: 'dsh-sam-effective-model-card' },
-          e(
-            'div',
-            { className: 'dsh-sam-effective-model-header' },
-            e(
-              'span',
-              { className: 'dsh-sam-effective-model-title' },
-              e(IconAgentPresetOutline16, { size: 14 }),
-              t('sessionSettings.preview.effectiveModelTitle'),
-            ),
-            e(
-              'span',
-              { className: 'dsh-sam-effective-model-source' },
-              modelConfig.mode === 'workspace' &&
-                workspaceSettings?.subagentModel?.mode === 'custom'
-                ? t('sessionSettings.preview.fromWorkspace')
-                : t('sessionSettings.preview.fromGlobal'),
-            ),
-          ),
-          e(
-            'div',
-            { className: 'dsh-sam-effective-model-grid' },
-            e(
-              'div',
-              { className: 'dsh-sam-effective-model-item' },
-              e(
-                'span',
-                { className: 'dsh-sam-effective-model-label' },
-                t('sessionSettings.field.provider'),
-              ),
-              e(
-                'span',
-                { className: 'dsh-sam-effective-model-value' },
-                effectiveModelConfig.model.provider || '-',
-              ),
-            ),
-            e(
-              'div',
-              { className: 'dsh-sam-effective-model-item' },
-              e(
-                'span',
-                { className: 'dsh-sam-effective-model-label' },
-                t('sessionSettings.field.model'),
-              ),
-              e(
-                'span',
-                { className: 'dsh-sam-effective-model-value' },
-                effectiveModelConfig.model.model || '-',
-              ),
-            ),
-            effectiveModelConfig.model.reasoningEffort
-              ? e(
-                  'div',
-                  { className: 'dsh-sam-effective-model-item' },
-                  e(
-                    'span',
-                    { className: 'dsh-sam-effective-model-label' },
-                    t('sessionSettings.field.reasoningEffort'),
-                  ),
-                  e(
-                    'span',
-                    { className: 'dsh-sam-effective-model-value' },
-                    effortLabel(t, effectiveModelConfig.model.reasoningEffort),
-                  ),
-                )
-              : null,
-          ),
-        )
-      : null,
-
-    // Behavior Control Options Section
-    e(
-      'div',
-      { style: { marginTop: 24, marginBottom: 8 } },
-      e(
-        'h4',
-        {
-          style: {
-            fontSize: '13px',
-            fontWeight: 600,
-            margin: '0 0 4px 0',
-            color: 'var(--dsh-color-fg-default)',
-          },
-        },
-        t('sessionSettings.section.behaviorControlTitle'),
-      ),
-      e(
-        'p',
-        {
-          style: {
-            fontSize: '12px',
-            margin: 0,
-            color: 'var(--dsh-color-fg-muted)',
-          },
-        },
-        t('sessionSettings.section.behaviorControlDesc'),
-      ),
-    ),
-
-    // Switch 1: 允许 Agent 选择子代理模型
-    e(
-      'div',
-      {
-        className: `dsh-mcp-switch-card ${isAllowAgentSelect ? 'active' : ''}`,
-        style: { marginBottom: 12 },
-        tabIndex: 0,
-        role: 'switch',
-        'aria-checked': isAllowAgentSelect,
-        onClick: () => {
-          if (onAllowAgentSelectModelChange) {
-            onAllowAgentSelectModelChange(!isAllowAgentSelect)
-          }
-        },
-        onKeyDown: (evt: React.KeyboardEvent) => {
-          if (evt.key === ' ' || evt.key === 'Enter') {
-            evt.preventDefault()
-            if (onAllowAgentSelectModelChange) {
-              onAllowAgentSelectModelChange(!isAllowAgentSelect)
-            }
-          }
-        },
-      },
-      e(
-        'div',
-        { className: 'dsh-mcp-switch-text' },
-        e(
-          'div',
-          { className: 'dsh-mcp-switch-title' },
-          t('sessionSettings.switch.allowAgentSelectModel.title'),
-        ),
-        e(
-          'div',
-          { className: 'dsh-mcp-switch-desc' },
-          t('sessionSettings.switch.allowAgentSelectModel.desc'),
-        ),
-      ),
-      e(
-        'button',
-        {
-          type: 'button',
-          className: `dsh-mcp-switch-btn ${isAllowAgentSelect ? 'active' : ''}`,
-          tabIndex: -1,
-          'aria-hidden': 'true',
-        },
-        e('span', { className: 'dsh-mcp-switch-thumb' }),
-      ),
-    ),
-
-    // Switch 2: 替换 subagent fork 的模型
-    e(
-      'div',
-      {
-        className: `dsh-mcp-switch-card ${isOverrideFork ? 'active' : ''}`,
-        style: { marginBottom: 16 },
-        tabIndex: 0,
-        role: 'switch',
-        'aria-checked': isOverrideFork,
-        onClick: () => {
-          if (onOverrideForkModelChange) {
-            onOverrideForkModelChange(!isOverrideFork)
-          }
-        },
-        onKeyDown: (evt: React.KeyboardEvent) => {
-          if (evt.key === ' ' || evt.key === 'Enter') {
-            evt.preventDefault()
-            if (onOverrideForkModelChange) {
-              onOverrideForkModelChange(!isOverrideFork)
-            }
-          }
-        },
-      },
-      e(
-        'div',
-        { className: 'dsh-mcp-switch-text' },
-        e(
-          'div',
-          { className: 'dsh-mcp-switch-title' },
-          t('sessionSettings.switch.overrideForkModel.title'),
-        ),
-        e(
-          'div',
-          { className: 'dsh-mcp-switch-desc' },
-          t('sessionSettings.switch.overrideForkModel.desc'),
-        ),
-      ),
-      e(
-        'button',
-        {
-          type: 'button',
-          className: `dsh-mcp-switch-btn ${isOverrideFork ? 'active' : ''}`,
-          tabIndex: -1,
-          'aria-hidden': 'true',
-        },
-        e('span', { className: 'dsh-mcp-switch-thumb' }),
-      ),
-    ),
   )
 }

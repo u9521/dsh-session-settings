@@ -6,24 +6,174 @@ const API_BASE = '/api/session-settings'
 export const API_ENDPOINTS = {
   getSettings: `${API_BASE}/get-settings`,
   saveSettings: `${API_BASE}/save-settings`,
-  deleteSettings: `${API_BASE}/delete-settings`,
   mcpServersList: `${API_BASE}/mcp-servers/list`,
   mcpServersAdd: `${API_BASE}/mcp-servers/add`,
   mcpServersEdit: `${API_BASE}/mcp-servers/edit`,
   mcpServersRm: `${API_BASE}/mcp-servers/rm`,
-  mcpServersToolview: `${API_BASE}/mcp-servers/toolview`,
-  mcpServersTools: `${API_BASE}/mcp-servers/tools`,
-  mcpServersTest: `${API_BASE}/mcp-servers/test`,
+  /**
+   * The single discovery entry point: connect once and report every primitive
+   * the server declares, optionally also rebuilding the official client.
+   */
+  mcpServersProbe: `${API_BASE}/mcp-servers/probe`,
+  /**
+   * The single cache-preview entry point: read what a previous probe stored.
+   * Never opens a connection.
+   */
+  mcpServersCache: `${API_BASE}/mcp-servers/cache`,
   mcpServersImport: `${API_BASE}/mcp-servers/import`,
-  mcpServersRefresh: `${API_BASE}/mcp-servers/refresh`,
+  mcpServersResourceRead: `${API_BASE}/mcp-servers/resource-read`,
+  mcpServersPromptGet: `${API_BASE}/mcp-servers/prompt-get`,
   skills: `${API_BASE}/skills`,
   skillsContent: `${API_BASE}/skills/content`,
 } as const
+
+export type ApiEndpointKey = keyof typeof API_ENDPOINTS
+
+/**
+ * Methods the official carrier admits on a Fetch route.
+ *
+ * `DELETE` is deliberately absent: the carrier's route type only accepts these
+ * three, so expressing a reset as an explicit `scope` on the save endpoint is
+ * both simpler and the only shape the transport can carry.
+ */
+export type ApiHttpMethod = 'GET' | 'POST'
+
+/**
+ * The HTTP method each endpoint answers to.
+ *
+ * Typed as `Record<ApiEndpointKey, …>` so the method table cannot drift from the
+ * path table: adding an endpoint without a method (or naming one that does not
+ * exist) is a compile error. Both halves read this single source — the client to
+ * send, the server to declare its route methods.
+ */
+export const API_METHODS: Record<ApiEndpointKey, ApiHttpMethod> = {
+  getSettings: 'GET',
+  saveSettings: 'POST',
+  mcpServersList: 'GET',
+  mcpServersAdd: 'POST',
+  mcpServersEdit: 'POST',
+  mcpServersRm: 'POST',
+  mcpServersProbe: 'POST',
+  mcpServersCache: 'GET',
+  mcpServersImport: 'POST',
+  mcpServersResourceRead: 'POST',
+  mcpServersPromptGet: 'POST',
+  skills: 'GET',
+  skillsContent: 'GET',
+}
+
+/**
+ * One exact route registered on the official authenticated `/api` channel.
+ *
+ * The carrier applies its Host/Origin fence and browser authentication before
+ * `fetch` runs, so a handler registered this way is never reachable unauthenticated.
+ */
+export interface ConnectionFetchRoute {
+  /** Absolute pathname under `/api`. */
+  readonly path: string
+  readonly methods: readonly ApiHttpMethod[]
+  /** Buffered bodies are read by the carrier, subject to its JSON size cap. */
+  readonly requestBody: 'buffered'
+  readonly fetch: (request: Request) => Promise<Response>
+}
 
 export type SettingsMode = 'global' | 'workspace' | 'custom'
 export type SubagentModelMode = SettingsMode | 'inherit'
 export type SessionMcpMode = SettingsMode
 export type SessionSkillsMode = SettingsMode
+
+/**
+ * The explicit write target of a settings save.
+ *
+ * This is a required discriminator rather than something inferred from which
+ * fields happen to be present: inferring "no sessionId means global" is exactly
+ * how a session-scoped save from a New-Session page silently overwrote the
+ * global defaults.
+ *
+ * - `session`: one live session (`sessionId` required).
+ * - `workspace`: a workspace's defaults (`workspaceId` required).
+ * - `global`: the deployment-wide defaults.
+ *
+ * A page with no live session has no session scope to write to; it must say so
+ * rather than guess a target. There is deliberately no staging scope: a staged
+ * entry could only be keyed by a workspace the page had not selected.
+ */
+export type SettingsScopeId = 'session' | 'workspace' | 'global'
+
+/** Write targets accepted by `API_ENDPOINTS.saveSettings`. */
+export const SETTINGS_SCOPE_IDS: readonly SettingsScopeId[] = [
+  'session',
+  'workspace',
+  'global',
+]
+
+export function isSettingsScopeId(value: unknown): value is SettingsScopeId {
+  return (
+    typeof value === 'string' &&
+    (SETTINGS_SCOPE_IDS as readonly string[]).includes(value)
+  )
+}
+
+/** Fields shared by every save/reset request. */
+interface SaveSettingsBaseRequest {
+  /** Reset this scope to its inherited default instead of writing a config. */
+  isRestoringDefault?: boolean
+}
+
+export interface SaveSettingsGlobalRequest extends SaveSettingsBaseRequest {
+  scope: 'global'
+  /** Required unless `isRestoringDefault`. */
+  globalConfig?: SessionSettingsConfig
+}
+
+export interface SaveSettingsWorkspaceRequest extends SaveSettingsBaseRequest {
+  scope: 'workspace'
+  workspaceId: string
+  /** Required unless `isRestoringDefault`. */
+  config?: SessionSettingsConfig
+}
+
+export interface SaveSettingsSessionRequest extends SaveSettingsBaseRequest {
+  scope: 'session'
+  sessionId: string
+  /** Required unless `isRestoringDefault`. */
+  config?: SessionSettingsConfig
+}
+
+/** Body of `API_ENDPOINTS.saveSettings`, discriminated by `scope`. */
+export type SaveSettingsRequest =
+  | SaveSettingsGlobalRequest
+  | SaveSettingsWorkspaceRequest
+  | SaveSettingsSessionRequest
+
+/** Body of the MCP server write endpoints that carry a server payload. */
+export interface McpServerRequest {
+  server: Partial<GlobalMcpServerConfig>
+  /** Present on edit; the id the server had before a rename. */
+  originalId?: string
+}
+
+/** Body of `API_ENDPOINTS.mcpServersImport`. */
+export interface McpImportRequest {
+  data: unknown
+}
+
+/** Body of the MCP endpoints addressed by server id. */
+export interface McpIdRequest {
+  id: string
+}
+
+/** Body of every settings response; fields are present per resolved scope. */
+export interface SettingsSnapshotResponse {
+  ok: boolean
+  scope?: SettingsScopeId
+  sessionId?: string
+  workspaceId?: string
+  sessionConfig?: SessionSettingsConfig
+  workspaceConfig?: SessionSettingsConfig
+  globalConfig?: SessionSettingsConfig
+  error?: string
+}
 
 export interface SubagentModelTarget {
   provider: string
@@ -59,13 +209,26 @@ export interface GlobalMcpServerConfig {
   cwd?: string
   url?: string
   headers?: Record<string, string>
-  enabledByDefault: boolean
   toolCallTimeoutMs?: number
   failOnStartupError?: boolean
+  /** Maximum UTF-8 bytes of attributed server instructions (official default 32768). */
+  maxInstructionBytes?: number
   reconnect?: McpReconnectConfig
   disabledTools?: string[] | number
   tools?: string[] | number
   toolDetails?: McpDiscoveredTool[]
+  /**
+   * Discovered resources, resource templates, and prompts.
+   *
+   * Lists are cached because they are cheap to store and expensive to fetch;
+   * resource TEXT and prompt message bodies are deliberately never persisted —
+   * those are read on demand and live only in component state.
+   */
+  resourceDetails?: McpDiscoveredResource[]
+  resourceTemplateDetails?: McpDiscoveredResourceTemplate[]
+  promptDetails?: McpDiscoveredPrompt[]
+  /** Which primitives the server advertised at the last discovery. */
+  capabilities?: McpServerCapabilities
   detectedTransport?: 'stdio' | 'streamable-http' | 'sse'
   serverInfo?: McpServerInfo
   lastTestedAt?: number
@@ -76,20 +239,31 @@ export interface GlobalMcpServerConfig {
    * Response-only: attached by the MCP routes, never persisted to disk.
    */
   runtime?: McpServerRuntimeStatus
+  /**
+   * Counts of cached discovery lists, substituted for the arrays themselves on
+   * the list response. Response-only, like `runtime`: the detail arrays are
+   * served by `toolview` for the one server a panel opens.
+   */
+  resourceCount?: number
+  resourceTemplateCount?: number
+  promptCount?: number
 }
 
 /**
  * Live status of the official @deepseek-ai/dsh-mcp-client fork for one server.
  *
- * The official bridge exposes no status API, so this is inferred from three
+ * The official bridge exposes no status API, so this is inferred from four
  * observable facts:
  *  - whether we ever attempted to mount the official client in this process,
  *  - whether a (not yet disposed) Cordis fork exists,
- *  - how many `mcp__<serverId>__*` tools are currently registered on ctx.tools.
+ *  - how many `mcp__<serverId>__*` tools are currently registered on ctx.tools,
+ *  - when the current mount attempt began.
  *
  * The bridge unregisters every tool once its reconnect budget is exhausted
  * ("giving up"), while the fork itself stays alive — hence `mounted` alone
- * cannot tell a healthy server from a permanently disabled one.
+ * cannot tell a healthy server from a permanently disabled one. A zero tool
+ * count is likewise ambiguous on its own, since a fork still completing its
+ * handshake looks identical; `mountStartedAt` is what separates the two.
  */
 export interface McpServerRuntimeStatus {
   /** True once this process attempted to mount the official client for the server. */
@@ -98,6 +272,8 @@ export interface McpServerRuntimeStatus {
   mounted: boolean
   /** Number of currently registered `mcp__<serverId>__*` tools on ctx.tools. */
   registeredToolCount: number
+  /** Wall clock when the current mount attempt began; absent when never attempted. */
+  mountStartedAt?: number
   /** Activation/mount error (invalid config, fork startup rejection). Not set for plain connection failures. */
   lastError?: string
   /** Timestamp of the last manual client refresh for this server. */
@@ -128,6 +304,62 @@ export interface McpDiscoveredTool {
   inputSchema?: Record<string, unknown>
 }
 
+/**
+ * Which primitives one server advertised during discovery.
+ *
+ * This exists because the MCP SDK answers a `list*` call for an unadvertised
+ * capability with an EMPTY LIST plus a console warning, not an error. Without
+ * these flags an empty result and an unsupported capability are literally the
+ * same response, and the panel could only guess which message to show.
+ */
+export interface McpServerCapabilities {
+  tools?: boolean
+  resources?: boolean
+  prompts?: boolean
+}
+
+/** One concrete resource a server exposes. */
+export interface McpDiscoveredResource {
+  uri: string
+  name: string
+  title?: string
+  description?: string
+  mimeType?: string
+  size?: number
+}
+
+/**
+ * One parameterized resource URI template.
+ *
+ * `variableNames` is resolved server-side with the MCP SDK's `UriTemplate`: the
+ * client half may not value-import `@modelcontextprotocol/client`, and a naive
+ * brace-scan in the client would disagree with the SDK's operator handling
+ * (`{?q}`, `{+path}`, …). The server is the single source for this parse.
+ */
+export interface McpDiscoveredResourceTemplate {
+  uriTemplate: string
+  name: string
+  title?: string
+  description?: string
+  mimeType?: string
+  variableNames: string[]
+}
+
+/** One argument a prompt template accepts. */
+export interface McpPromptArgument {
+  name: string
+  description?: string
+  required?: boolean
+}
+
+/** One prompt template a server exposes. */
+export interface McpDiscoveredPrompt {
+  name: string
+  title?: string
+  description?: string
+  arguments?: McpPromptArgument[]
+}
+
 export interface McpIcon {
   src: string
   mimeType?: string
@@ -151,10 +383,134 @@ export interface McpTestResult {
   message: string
   tools?: string[]
   toolDetails?: McpDiscoveredTool[]
+  resourceDetails?: McpDiscoveredResource[]
+  resourceTemplateDetails?: McpDiscoveredResourceTemplate[]
+  promptDetails?: McpDiscoveredPrompt[]
+  capabilities?: McpServerCapabilities
   serverInfo?: McpServerInfo
   supportedVersions?: string[]
   detectedTransport?: 'stdio' | 'streamable-http' | 'sse'
   count?: number
+}
+
+/**
+ * Body of the single discovery request.
+ *
+ * `remount` is the recovery action for a bridge that exhausted its reconnect
+ * budget, folded into this entry rather than living at its own path. It is
+ * opt-in and defaults to off: a plain probe must never tear down a live client.
+ */
+export interface McpProbeRequest {
+  server: Partial<GlobalMcpServerConfig>
+  /** Passed through to the remount path; ignored unless `remount` is set. */
+  force?: boolean
+  /** Also rebuild the official client for this server after probing. */
+  remount?: boolean
+}
+
+/** Discovery response: the probe's own result, plus the remount outcome when asked. */
+export interface McpProbeResult extends McpTestResult {
+  /** Present only when the request asked for a remount. */
+  remount?: McpRefreshResult
+  /** Sanitized server record, so a caller can refresh its list from one response. */
+  server?: GlobalMcpServerConfig
+}
+
+/**
+ * One server's cached discovery, as stored by the last successful probe.
+ *
+ * Served without connecting, so a panel can render immediately. Absent fields
+ * mean nothing was cached for that primitive yet.
+ */
+export interface McpCachedView {
+  ok: boolean
+  /** Tool names when known; a stored count is also possible, see `GlobalMcpServerConfig`. */
+  tools?: string[] | number
+  toolDetails?: McpDiscoveredTool[]
+  resourceDetails?: McpDiscoveredResource[]
+  resourceTemplateDetails?: McpDiscoveredResourceTemplate[]
+  promptDetails?: McpDiscoveredPrompt[]
+  capabilities?: McpServerCapabilities
+  disabledTools?: string[]
+  serverInfo?: McpServerInfo
+  detectedTransport?: 'stdio' | 'streamable-http' | 'sse'
+}
+
+/**
+ * Body of a resource read.
+ *
+ * Exactly one addressing form: a literal `uri`, or a `uriTemplate` with the
+ * `variables` that expand it. The server expands template form itself and
+ * refuses when any variable the template names is missing — `UriTemplate.expand`
+ * silently drops unfilled variables, so `db://{table}/{id}` with no values
+ * yields the plausible-but-wrong `"db:///"` instead of throwing.
+ */
+export interface McpResourceReadRequest {
+  server: Partial<GlobalMcpServerConfig>
+  uri?: string
+  uriTemplate?: string
+  variables?: Record<string, string>
+}
+
+/**
+ * One resource payload.
+ *
+ * `blob` is deliberately absent: binary payloads are reported by their base64
+ * length only, matching the host's own `renderResourceResult`, so a large
+ * resource cannot reach the browser as inline base64.
+ */
+export interface McpResourceContent {
+  uri: string
+  mimeType?: string
+  text?: string
+  /** Base64 length of a binary payload; the payload itself is not transferred. */
+  blobBytes?: number
+  /** True when this entry's text was truncated at the size cap. */
+  truncated?: boolean
+}
+
+export interface McpResourceReadResult {
+  ok: boolean
+  message: string
+  /** The URI actually read; expanded from the template when template form was used. */
+  uri?: string
+  contents?: McpResourceContent[]
+}
+
+/** Body of a prompt fetch. */
+export interface McpPromptGetRequest {
+  server: Partial<GlobalMcpServerConfig>
+  name: string
+  arguments?: Record<string, string>
+}
+
+/**
+ * One block of a rendered prompt message.
+ *
+ * Only `text` survives verbatim. Image, audio, and embedded-resource blocks are
+ * reduced to a description: this panel never forwards content into a session, so
+ * carrying binary payloads to the browser would be cost without purpose.
+ */
+export interface McpPromptBlock {
+  type: 'text' | 'image' | 'audio' | 'resource' | 'unknown'
+  text?: string
+  mimeType?: string
+  description?: string
+  /** True when this block's text was truncated at the size cap. */
+  truncated?: boolean
+}
+
+/** One role-tagged message returned by a prompt fetch. */
+export interface McpPromptMessage {
+  role: 'user' | 'assistant'
+  blocks: McpPromptBlock[]
+}
+
+export interface McpPromptGetResult {
+  ok: boolean
+  message: string
+  description?: string
+  messages?: McpPromptMessage[]
 }
 
 export interface McpServerStore {
@@ -217,6 +573,19 @@ export interface WebServer {
   register(route: WebRoute): () => void
 }
 
+/**
+ * The official browser-connection carrier slice this plugin consumes.
+ *
+ * Routes registered here are reached only after the carrier has applied its
+ * Host/Origin fence and browser authentication, which is why this plugin no
+ * longer registers directly on `webServer`.
+ */
+export interface ConnectionService {
+  fetch: {
+    register(route: ConnectionFetchRoute): () => Promise<void>
+  }
+}
+
 // --------------------------------------------------------------------------
 // DSH Skills Registry Types
 // --------------------------------------------------------------------------
@@ -234,7 +603,11 @@ export interface SkillSummary {
   readonly source: string
   readonly provider: string
   readonly path?: string
-  readonly metadata?: Readonly<Record<string, unknown>>
+  /** Provider-specific base for resolving relative resources. */
+  readonly resourceBase?: {
+    readonly kind?: string
+    readonly path?: string
+  }
 }
 
 export interface SkillDefinition extends SkillSummary {
@@ -259,6 +632,29 @@ export interface SkillsService {
     name: string,
     options?: SkillViewOptions,
   ): Promise<SkillDefinition | undefined>
+  /**
+   * Register a readonly runtime skill into the calling context's layer. A
+   * scoped registration shadows a same-name entry in an ancestor layer, which
+   * is how a per-agent invocation policy is expressed without rewriting the
+   * registry's read path.
+   */
+  register(skill: SkillRegistrationInput): () => void
+}
+
+/** Runtime skill contribution; `invocation` and `provider` receive defaults. */
+export interface SkillRegistrationInput {
+  readonly name: string
+  readonly description: string
+  readonly content: string
+  readonly whenToUse?: string
+  readonly source?: string
+  readonly path?: string
+  readonly provider?: string
+  readonly invocation?: SkillInvocationPolicy
+  readonly resourceBase?: {
+    readonly kind?: string
+    readonly path?: string
+  }
 }
 
 // --------------------------------------------------------------------------
@@ -280,7 +676,24 @@ export interface SessionHeader {
 export interface Session {
   readonly id: string
   readonly header: SessionHeader
-  snapshotEvents?(fromSeq?: number, toSeqExclusive?: number): readonly unknown[]
+  /**
+   * The route this Session last requested, as the host folds it from the log's
+   * request-header events. Optional because a Session that has not requested
+   * anything yet has none, and because not every host surface exposes it.
+   *
+   * This is how the subagent-model interceptor recovers the route a delegation
+   * would have inherited: the host's own `resolveChildAgentOptions` uses the
+   * very same fold as its baseline.
+   */
+  requestHeader?():
+    | {
+        config?: {
+          provider?: string
+          model?: string
+          reasoningEffort?: string
+        }
+      }
+    | undefined
 }
 
 export interface SessionsService {
@@ -293,6 +706,7 @@ export interface Agent {
   readonly options: {
     provider?: string
     model?: string
+    reasoningEffort?: string
     maxTokens?: number
   }
   readonly session: Session
@@ -313,7 +727,13 @@ export interface AgentPreset {
 export interface AgentPresetsService {
   list(): Promise<AgentPreset[]>
   resolve(id?: string): Promise<AgentPreset>
-  standingKeyFor(id?: string): Promise<unknown>
+  /**
+   * Lend a standing scope lease for one preset; release it through
+   * `Symbol.asyncDispose` once the scoped read completes.
+   */
+  acquireScope(
+    id?: string,
+  ): Promise<{ key?: unknown; [Symbol.asyncDispose]?: () => Promise<void> }>
   serviceFor<T = unknown>(agent: { ctx: Context }, name: string): T | undefined
 }
 
@@ -328,7 +748,6 @@ export interface SessionPersistenceService {
     id: string,
     options?: { signal?: AbortSignal },
   ): Promise<SessionPersistenceStat | undefined>
-  list(options?: { signal?: AbortSignal }): Promise<string[]>
 }
 
 export interface LoaderEntry {
@@ -354,6 +773,44 @@ export interface ToolSchema {
   parameters?: Record<string, unknown>
 }
 
+/** Per-scope filter over global tools; restrictions intersect. */
+export interface ToolRestriction {
+  allow?: readonly string[]
+  deny?: readonly string[]
+}
+
+/**
+ * Monotonic execution guard. Returning a reason denies the call; no guard can
+ * turn another guard's denial back into permission.
+ */
+export type ToolGuardFn = (exec: ToolExecution) => string | undefined
+
+/**
+ * Minimal view of `ctx.tools` this plugin consumes.
+ *
+ * `schemas()` is the presentation-agnostic, restriction-aware view: called with
+ * no scope it yields the global layer, which is exactly the set of names a
+ * per-agent `restrict()` may legally name.
+ */
+export interface ToolsService {
+  schemas(scope?: unknown): ToolSchema[]
+  restrict(filter: ToolRestriction): () => void
+  guard(guard: ToolGuardFn): () => void
+}
+
+export interface PromptSectionInput {
+  name: string
+  order: number
+  text: string | ((context: AssembleContext) => string)
+  interpolate?: boolean
+}
+
+/** Minimal view of `ctx.systemPrompt` needed for per-agent section shadowing. */
+export interface SystemPromptService {
+  section(section: PromptSectionInput): () => void
+  getSectionOrder(name: string): number
+}
+
 export interface ToolExecution {
   readonly name: string
   readonly arguments: unknown
@@ -366,6 +823,7 @@ export interface ToolExecution {
 export type PreToolDecision =
   | { kind: 'allow' }
   | { kind: 'deny'; reason: string }
+  | { kind: 'cancel' }
   | { kind: 'ask'; reason?: string }
 
 export interface PromptAssembly {
@@ -410,6 +868,13 @@ declare module '@deepseek-ai/cordis' {
     agentPresets?: AgentPresetsService
     loader?: LoaderService
     webServer?: WebServer
+    /**
+     * The official browser-connection carrier. Its `fetch.register` puts a route
+     * behind the Host/Origin fence and browser authentication.
+     */
+    connection?: ConnectionService
+    tools?: ToolsService
+    systemPrompt?: SystemPromptService
     agent?: Agent
   }
 
@@ -432,6 +897,21 @@ declare module '@deepseek-ai/cordis' {
 
     'tools/result'(exec: ToolExecution, result: unknown): void
 
+    /**
+     * A tool was registered or unregistered, or a scoped restriction changed.
+     * Deliberately unfiltered: a listener registered on a scoped context still
+     * observes every change, not just its own scope's.
+     */
+    'tools/change'(): void
+
     'skills/change'(): void
+
+    'agent/created'(payload: {
+      agent: Agent
+      source: unknown
+      signal?: AbortSignal
+    }): undefined | Promise<undefined>
+
+    'agent/disposed'(payload: { agent: Agent }): void
   }
 }

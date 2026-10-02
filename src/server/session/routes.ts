@@ -1,11 +1,12 @@
-import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
 import {
+  type ConnectionService,
   type SessionSettingsConfig,
   type SessionSettingsStore,
+  type SettingsScopeId,
+  type SettingsSnapshotResponse,
   type SkillItem,
-  type WebServer,
-  API_ENDPOINTS,
+  isSettingsScopeId,
 } from '../../types.ts'
 import {
   normalizeSessionSettings,
@@ -14,353 +15,295 @@ import {
 } from './storage.ts'
 import { getAvailableSkills } from '../skills/discovery.ts'
 import type { McpManager } from '../mcp/manager.ts'
-import { readRequestBody } from '../common/http.ts'
+import {
+  badRequest,
+  jsonResponse,
+  readJsonBody,
+  toFetchRoute,
+} from '../common/http.ts'
 
 import { resolveWorkspaceForSession } from './resolution.ts'
 
+/**
+ * Reject a save whose declared scope cannot be satisfied by its target.
+ *
+ * The scope is authoritative: a request that names `session` without a session
+ * id is an error rather than being silently retargeted, which is precisely how
+ * a New-Session save used to overwrite the global defaults.
+ *
+ * @returns an error message, or `undefined` when the target is satisfiable.
+ */
+function validateScopeTarget(
+  scope: SettingsScopeId,
+  sessionId?: string,
+  workspaceId?: string,
+): string | undefined {
+  switch (scope) {
+    case 'session':
+      return sessionId ? undefined : 'scope "session" requires a sessionId'
+    case 'workspace':
+      return workspaceId
+        ? undefined
+        : 'scope "workspace" requires a workspaceId'
+    case 'global':
+      return undefined
+  }
+}
+
+/** The empty cross-scope view a response carries when a scope has no entry. */
+function emptyWorkspaceConfig(): SessionSettingsConfig {
+  return {
+    subagentModel: { mode: 'global' },
+    mcp: { mode: 'global' },
+    skills: { mode: 'global' },
+  }
+}
+
 export function registerSessionSettingsRoutes(
   ctx: Context,
-  webServer: WebServer,
+  connection: ConnectionService,
   getSessionSettingsStore: () => SessionSettingsStore,
   setSessionSettingsStore: (s: SessionSettingsStore) => void,
   mcpManager?: McpManager,
-): () => void {
-  const unregisterGetSettingsRoute = webServer.register({
-    kind: 'exact',
-    path: API_ENDPOINTS.getSettings,
-    handler: async (req: IncomingMessage, res: ServerResponse) => {
-      res.setHeader('Content-Type', 'application/json; charset=utf-8')
-      if (req.method !== 'GET') {
-        res.writeHead(405)
-        res.end(JSON.stringify({ ok: false, error: 'Method Not Allowed' }))
-        return
-      }
+  invalidatePolicies?: () => void,
+): () => Promise<void> {
+  const unregisterGetSettings = connection.fetch.register(
+    toFetchRoute({
+      endpoint: 'getSettings',
+      handler: async (request) => {
+        const query = new URL(request.url).searchParams
+        const querySessionId = query.get('sessionId') || undefined
+        // A New-Session page has no session id yet, so the caller may name the
+        // workspace directly; a real session always resolves its own workspace.
+        const queryWorkspaceId =
+          (await resolveWorkspaceForSession(ctx, querySessionId)) ??
+          query.get('workspaceId') ??
+          undefined
 
-      const url = new URL(req.url ?? '/', 'http://localhost')
-      const querySessionId = url.searchParams.get('sessionId') || undefined
-      const queryWorkspaceId = await resolveWorkspaceForSession(
-        ctx,
-        querySessionId,
-      )
+        try {
+          const sessionSettingsStore = getSessionSettingsStore()
 
-      try {
-        const sessionSettingsStore = getSessionSettingsStore()
+          const sessionEntry = querySessionId
+            ? sessionSettingsStore.sessions[querySessionId]
+            : undefined
 
-        const sessionEntry = querySessionId
-          ? sessionSettingsStore.sessions[querySessionId]
-          : undefined
+          const workspaceEntry = queryWorkspaceId
+            ? sessionSettingsStore.workspaces?.[queryWorkspaceId]
+            : undefined
 
-        const workspaceEntry = queryWorkspaceId
-          ? sessionSettingsStore.workspaces?.[queryWorkspaceId]
-          : undefined
-
-        const rawConfig = sessionEntry || {
-          subagentModel: { mode: 'workspace' },
-          mcp: { mode: 'workspace' },
-          skills: { mode: 'workspace' },
-        }
-
-        res.writeHead(200)
-        res.end(
-          JSON.stringify({
+          const body: SettingsSnapshotResponse = {
             ok: true,
             sessionId: querySessionId,
             workspaceId: queryWorkspaceId,
-            sessionConfig: rawConfig,
-            workspaceConfig: workspaceEntry || {
-              subagentModel: { mode: 'global' },
-              mcp: { mode: 'global' },
-              skills: { mode: 'global' },
+            sessionConfig: sessionEntry ?? {
+              subagentModel: { mode: 'workspace' },
+              mcp: { mode: 'workspace' },
+              skills: { mode: 'workspace' },
             },
+            workspaceConfig: workspaceEntry ?? emptyWorkspaceConfig(),
             globalConfig: sessionSettingsStore.globalConfig,
-          }),
-        )
-      } catch (err: unknown) {
-        res.writeHead(500)
-        res.end(
-          JSON.stringify({
-            ok: false,
-            error: err instanceof Error ? err.message : String(err),
-          }),
-        )
-      }
-    },
-  })
-
-  const unregisterSaveSettingsRoute = webServer.register({
-    kind: 'exact',
-    path: API_ENDPOINTS.saveSettings,
-    handler: async (req: IncomingMessage, res: ServerResponse) => {
-      res.setHeader('Content-Type', 'application/json; charset=utf-8')
-      if (req.method !== 'POST') {
-        res.writeHead(405)
-        res.end(JSON.stringify({ ok: false, error: 'Method Not Allowed' }))
-        return
-      }
-
-      try {
-        const bodyStr = await readRequestBody(req)
-        const parsed = JSON.parse(bodyStr || '{}') as Record<string, unknown>
-        const targetSessionId =
-          typeof parsed.sessionId === 'string' ? parsed.sessionId : undefined
-        const targetWorkspaceId = await resolveWorkspaceForSession(
-          ctx,
-          targetSessionId,
-        )
-
-        const isSaveWorkspaceDefault = Boolean(
-          parsed.isWorkspaceDefault && targetWorkspaceId,
-        )
-        const isSaveDefault =
-          !isSaveWorkspaceDefault &&
-          Boolean(parsed.isDefault || !targetSessionId || parsed.saveAsDefault)
-
-        const sessionSettingsStore = getSessionSettingsStore()
-
-        const incomingConfig: SessionSettingsConfig = normalizeSessionSettings(
-          (parsed.config ?? parsed) as Partial<SessionSettingsConfig>,
-        )
-
-        if (
-          incomingConfig.subagentModel.mode === 'custom' &&
-          !incomingConfig.subagentModel.inherit &&
-          (!incomingConfig.subagentModel.model?.provider ||
-            !incomingConfig.subagentModel.model?.model)
-        ) {
-          res.writeHead(400)
-          res.end(
-            JSON.stringify({
+          }
+          return jsonResponse(body)
+        } catch (err: unknown) {
+          return jsonResponse(
+            {
               ok: false,
-              error: 'Subagent model custom mode requires provider and model',
-            }),
-          )
-          return
-        }
-
-        if (!sessionSettingsStore.workspaces) {
-          sessionSettingsStore.workspaces = {}
-        }
-
-        if (isSaveDefault) {
-          if (parsed.isRestoringDefault) {
-            sessionSettingsStore.globalConfig = {
-              subagentModel: {
-                inherit: true,
-                allowAgentSelectModel: true,
-                overrideForkModel: false,
-              },
-              mcp: { enabledServerIds: [] },
-              skills: { disabledModelSkills: [], disabledUserSkills: [] },
-            }
-          } else {
-            const incomingGlobal = normalizeGlobalSettings(
-              (parsed.globalConfig ??
-                parsed.config ??
-                parsed) as Partial<SessionSettingsConfig>,
-            )
-            // Runtime skills cannot be set as global defaults
-            try {
-              const allSkills = await getAvailableSkills(ctx, undefined)
-              const runtimeSkillNames = new Set(
-                allSkills
-                  .filter((s: SkillItem) => s.isRuntime)
-                  .map((s: SkillItem) => s.name),
-              )
-              if (incomingGlobal.skills?.disabledModelSkills) {
-                incomingGlobal.skills.disabledModelSkills =
-                  incomingGlobal.skills.disabledModelSkills.filter(
-                    (name) => !runtimeSkillNames.has(name),
-                  )
-              }
-              if (incomingGlobal.skills?.disabledUserSkills) {
-                incomingGlobal.skills.disabledUserSkills =
-                  incomingGlobal.skills.disabledUserSkills.filter(
-                    (name) => !runtimeSkillNames.has(name),
-                  )
-              }
-            } catch {}
-
-            sessionSettingsStore.globalConfig = incomingGlobal
-          }
-        } else if (isSaveWorkspaceDefault && targetWorkspaceId) {
-          if (parsed.isRestoringDefault) {
-            delete sessionSettingsStore.workspaces[targetWorkspaceId]
-          } else {
-            // Runtime skills cannot be set as workspace defaults
-            try {
-              const allSkills = await getAvailableSkills(ctx, undefined)
-              const runtimeSkillNames = new Set(
-                allSkills
-                  .filter((s: SkillItem) => s.isRuntime)
-                  .map((s: SkillItem) => s.name),
-              )
-              if (incomingConfig.skills?.disabledModelSkills) {
-                incomingConfig.skills.disabledModelSkills =
-                  incomingConfig.skills.disabledModelSkills.filter(
-                    (name) => !runtimeSkillNames.has(name),
-                  )
-              }
-              if (incomingConfig.skills?.disabledUserSkills) {
-                incomingConfig.skills.disabledUserSkills =
-                  incomingConfig.skills.disabledUserSkills.filter(
-                    (name) => !runtimeSkillNames.has(name),
-                  )
-              }
-            } catch {}
-            sessionSettingsStore.workspaces[targetWorkspaceId] = incomingConfig
-          }
-        }
-
-        if (targetSessionId && !isSaveWorkspaceDefault) {
-          if (isSaveDefault) {
-            delete sessionSettingsStore.sessions[targetSessionId]
-          } else {
-            const isPureWorkspaceInherit =
-              incomingConfig.subagentModel.mode === 'workspace' &&
-              incomingConfig.subagentModel.allowAgentSelectModel ===
-                undefined &&
-              incomingConfig.subagentModel.overrideForkModel === undefined &&
-              incomingConfig.mcp.mode === 'workspace' &&
-              incomingConfig.skills.mode === 'workspace'
-
-            if (isPureWorkspaceInherit) {
-              delete sessionSettingsStore.sessions[targetSessionId]
-            } else {
-              sessionSettingsStore.sessions[targetSessionId] = incomingConfig
-            }
-          }
-        }
-
-        saveSessionSettingsStore(sessionSettingsStore)
-        setSessionSettingsStore(sessionSettingsStore)
-
-        mcpManager?.syncAll()
-
-        ctx.emit('skills/change')
-
-        const sessionEntry =
-          targetSessionId && sessionSettingsStore.sessions[targetSessionId]
-        const workspaceEntry =
-          targetWorkspaceId &&
-          sessionSettingsStore.workspaces?.[targetWorkspaceId]
-
-        res.writeHead(200)
-        res.end(
-          JSON.stringify({
-            ok: true,
-            sessionId: targetSessionId,
-            workspaceId: targetWorkspaceId,
-            sessionConfig: sessionEntry || incomingConfig,
-            workspaceConfig: workspaceEntry || {
-              subagentModel: { mode: 'global' },
-              mcp: { mode: 'global' },
-              skills: { mode: 'global' },
+              error: err instanceof Error ? err.message : String(err),
             },
-            globalConfig: sessionSettingsStore.globalConfig,
-          }),
+            500,
+          )
+        }
+      },
+    }),
+  )
+
+  const unregisterSaveSettings = connection.fetch.register(
+    toFetchRoute({
+      endpoint: 'saveSettings',
+      handler: async (request) => saveSettings(request),
+    }),
+  )
+
+  async function saveSettings(request: Request): Promise<Response> {
+    const parsed = await readJsonBody(request)
+    if (!parsed) return badRequest('A JSON request body is required')
+
+    const scope = parsed.scope
+    if (!isSettingsScopeId(scope)) {
+      return badRequest(
+        'A valid "scope" is required (session, workspace, or global)',
+      )
+    }
+
+    const targetSessionId =
+      typeof parsed.sessionId === 'string' && parsed.sessionId
+        ? parsed.sessionId
+        : undefined
+    // A session-less save names its workspace explicitly; a session-scoped one
+    // resolves it from the session itself.
+    const targetWorkspaceId =
+      (await resolveWorkspaceForSession(ctx, targetSessionId)) ??
+      (typeof parsed.workspaceId === 'string' && parsed.workspaceId
+        ? parsed.workspaceId
+        : undefined)
+
+    const scopeProblem = validateScopeTarget(
+      scope,
+      targetSessionId,
+      targetWorkspaceId,
+    )
+    if (scopeProblem) return badRequest(scopeProblem)
+
+    const isRestoringDefault = parsed.isRestoringDefault === true
+
+    // The config field is per-scope: `global` carries `globalConfig`, the other
+    // three carry `config`. A reset carries neither.
+    let incomingConfig: SessionSettingsConfig | undefined
+    if (!isRestoringDefault) {
+      if (scope === 'global') {
+        if (parsed.globalConfig === undefined) {
+          return badRequest('scope "global" requires a globalConfig')
+        }
+        incomingConfig = normalizeGlobalSettings(
+          parsed.globalConfig as Partial<SessionSettingsConfig>,
         )
-      } catch (err: unknown) {
-        res.writeHead(400)
-        res.end(
-          JSON.stringify({
-            ok: false,
-            error: err instanceof Error ? err.message : String(err),
-          }),
+      } else {
+        if (parsed.config === undefined) {
+          return badRequest(`scope "${scope}" requires a config`)
+        }
+        incomingConfig = normalizeSessionSettings(
+          parsed.config as Partial<SessionSettingsConfig>,
         )
       }
-    },
-  })
+    }
 
-  const unregisterDeleteSettingsRoute = webServer.register({
-    kind: 'exact',
-    path: API_ENDPOINTS.deleteSettings,
-    handler: async (req: IncomingMessage, res: ServerResponse) => {
-      res.setHeader('Content-Type', 'application/json; charset=utf-8')
-      if (req.method !== 'POST') {
-        res.writeHead(405)
-        res.end(JSON.stringify({ ok: false, error: 'Method Not Allowed' }))
-        return
-      }
+    if (
+      incomingConfig?.subagentModel.mode === 'custom' &&
+      !incomingConfig.subagentModel.inherit &&
+      (!incomingConfig.subagentModel.model?.provider ||
+        !incomingConfig.subagentModel.model?.model)
+    ) {
+      return badRequest(
+        'Subagent model custom mode requires provider and model',
+      )
+    }
 
+    const sessionSettingsStore = getSessionSettingsStore()
+    if (!sessionSettingsStore.workspaces) sessionSettingsStore.workspaces = {}
+
+    /**
+     * Runtime skills ship with the composition and cannot be disabled as a
+     * default for anything narrower than a session.
+     */
+    const withoutRuntimeSkills = async (
+      config: SessionSettingsConfig,
+    ): Promise<SessionSettingsConfig> => {
       try {
-        const url = new URL(req.url ?? '/', 'http://localhost')
-        let targetSessionId =
-          url.searchParams.get('sessionId')?.trim() || undefined
-        if (!targetSessionId) {
-          const bodyStr = await readRequestBody(req)
-          const parsed = (bodyStr ? JSON.parse(bodyStr) : {}) as {
-            sessionId?: string
-          }
-          targetSessionId = parsed.sessionId?.trim() || undefined
-        }
-
-        if (!targetSessionId) {
-          res.writeHead(400)
-          res.end(
-            JSON.stringify({ ok: false, error: 'Session ID is required' }),
-          )
-          return
-        }
-
-        const sessionSettingsStore = getSessionSettingsStore()
-        const targetWorkspaceId = await resolveWorkspaceForSession(
-          ctx,
-          targetSessionId,
+        const allSkills = await getAvailableSkills(ctx, undefined)
+        const runtimeSkillNames = new Set(
+          allSkills
+            .filter((s: SkillItem) => s.isRuntime)
+            .map((s: SkillItem) => s.name),
         )
-
-        if (targetSessionId && sessionSettingsStore.sessions[targetSessionId]) {
-          delete sessionSettingsStore.sessions[targetSessionId]
-          saveSessionSettingsStore(sessionSettingsStore)
-          setSessionSettingsStore(sessionSettingsStore)
-          mcpManager?.syncAll()
-
-          ctx.emit('skills/change')
+        if (config.skills?.disabledModelSkills) {
+          config.skills.disabledModelSkills =
+            config.skills.disabledModelSkills.filter(
+              (name) => !runtimeSkillNames.has(name),
+            )
         }
-
-        res.writeHead(200)
-        res.end(
-          JSON.stringify({
-            ok: true,
-            sessionId: targetSessionId,
-            workspaceId: targetWorkspaceId,
-            sessionConfig: {
-              subagentModel: {
-                mode: 'workspace',
-              },
-              mcp: {
-                mode: 'workspace',
-              },
-              skills: {
-                mode: 'workspace',
-              },
-            },
-            workspaceConfig:
-              targetWorkspaceId &&
-              sessionSettingsStore.workspaces?.[targetWorkspaceId]
-                ? sessionSettingsStore.workspaces[targetWorkspaceId]
-                : {
-                    subagentModel: { mode: 'global' },
-                    mcp: { mode: 'global' },
-                    skills: { mode: 'global' },
-                  },
-            globalConfig: sessionSettingsStore.globalConfig,
-          }),
-        )
-      } catch (err: unknown) {
-        res.writeHead(500)
-        res.end(
-          JSON.stringify({
-            ok: false,
-            error: err instanceof Error ? err.message : String(err),
-          }),
-        )
+        if (config.skills?.disabledUserSkills) {
+          config.skills.disabledUserSkills =
+            config.skills.disabledUserSkills.filter(
+              (name) => !runtimeSkillNames.has(name),
+            )
+        }
+      } catch {
+        // Skill discovery is best-effort; never block a save on it.
       }
-    },
-  })
+      return config
+    }
 
-  return () => {
-    unregisterGetSettingsRoute()
-    unregisterSaveSettingsRoute()
-    unregisterDeleteSettingsRoute()
+    switch (scope) {
+      case 'global': {
+        if (isRestoringDefault) {
+          sessionSettingsStore.globalConfig = {
+            subagentModel: {
+              inherit: true,
+              allowAgentSelectModel: true,
+              overrideForkModel: false,
+            },
+            mcp: { enabledServerIds: [] },
+            skills: { disabledModelSkills: [], disabledUserSkills: [] },
+          }
+        } else if (incomingConfig) {
+          sessionSettingsStore.globalConfig =
+            await withoutRuntimeSkills(incomingConfig)
+        }
+        break
+      }
+
+      case 'workspace': {
+        const workspaceId = targetWorkspaceId as string
+        if (isRestoringDefault) {
+          delete sessionSettingsStore.workspaces[workspaceId]
+        } else if (incomingConfig) {
+          sessionSettingsStore.workspaces[workspaceId] =
+            await withoutRuntimeSkills(incomingConfig)
+        }
+        break
+      }
+
+      case 'session': {
+        const sessionId = targetSessionId as string
+        if (isRestoringDefault) {
+          delete sessionSettingsStore.sessions[sessionId]
+        } else if (incomingConfig) {
+          const isPureWorkspaceInherit =
+            incomingConfig.subagentModel.mode === 'workspace' &&
+            incomingConfig.subagentModel.allowAgentSelectModel === undefined &&
+            incomingConfig.subagentModel.overrideForkModel === undefined &&
+            incomingConfig.mcp.mode === 'workspace' &&
+            incomingConfig.skills.mode === 'workspace'
+
+          if (isPureWorkspaceInherit) {
+            delete sessionSettingsStore.sessions[sessionId]
+          } else {
+            sessionSettingsStore.sessions[sessionId] = incomingConfig
+          }
+        }
+        break
+      }
+    }
+
+    saveSessionSettingsStore(sessionSettingsStore)
+    setSessionSettingsStore(sessionSettingsStore)
+
+    mcpManager?.syncAll()
+    invalidatePolicies?.()
+
+    ctx.emit('skills/change')
+
+    const sessionEntry = targetSessionId
+      ? sessionSettingsStore.sessions[targetSessionId]
+      : undefined
+    const workspaceEntry = targetWorkspaceId
+      ? sessionSettingsStore.workspaces?.[targetWorkspaceId]
+      : undefined
+
+    const body: SettingsSnapshotResponse = {
+      ok: true,
+      scope,
+      sessionId: targetSessionId,
+      workspaceId: targetWorkspaceId,
+      sessionConfig: sessionEntry ?? incomingConfig,
+      workspaceConfig: workspaceEntry ?? emptyWorkspaceConfig(),
+      globalConfig: sessionSettingsStore.globalConfig,
+    }
+    return jsonResponse(body)
+  }
+
+  return async () => {
+    await unregisterGetSettings()
+    await unregisterSaveSettings()
   }
 }

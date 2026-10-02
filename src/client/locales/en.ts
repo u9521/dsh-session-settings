@@ -2,6 +2,11 @@ export const en = {
   // Session Settings view page (tab in conversation.view after 轨迹)
   sessionSettings: {
     title: 'Session Settings',
+    titles: {
+      session: 'Session Settings',
+      workspace: 'Workspace Settings',
+      global: 'Global Settings',
+    },
     heroChipHint:
       'Configure subagent model, MCP servers, and skills for this session',
     idCopied: 'Copied',
@@ -36,6 +41,10 @@ export const en = {
         desc: 'Disabled by default. DSH natively prevents forked subagents (subagent_fork) from changing models to preserve KV Cache reuse from the parent session. Enabling this forces replacing the model for forked subagents, but invalidates parent KV Cache reuse and triggers full prompt recomputation.',
         summaryEnabled: 'Replace Fork Model',
       },
+      specifySubagentModel: {
+        title: 'Specify Subagent Model',
+        desc: 'When enabled, specify a dedicated execution model and reasoning effort for subagents; when disabled, subagents inherit the model from the parent session.',
+      },
     },
     scope: {
       sessionCustom: 'Configured for this session',
@@ -59,16 +68,23 @@ export const en = {
       workspace: 'Workspace',
       none: 'None',
     },
-    clone: {
-      toolbarTitle: 'Clone Preset:',
-      inputPlaceholder: 'Paste source session ID (e.g. session-xxxx)',
-      applyBtn: 'Clone',
-      loading: 'Loading...',
-      success:
-        'Successfully cloned preset from session "{name}"! Click "Save" below to apply.',
-      error:
-        'Clone failed: Session ID not found or config could not be loaded.',
-      cannotCloneSelf: 'Cannot clone preset from current session',
+    scopeTabs: {
+      session: 'Session',
+      workspace: 'Workspace',
+      global: 'Global',
+      noWorkspace: 'No workspace attached',
+      sessionDisabledHint:
+        'No session yet: open or start a session to configure it individually',
+      workspaceDisabledHint:
+        'No workspace attached: this page cannot tell which workspace it belongs to, so its defaults cannot be edited here',
+    },
+    sourceTabs: {
+      label: 'Configuration Source:',
+      workspace: 'Workspace Default',
+      global: 'Global Default',
+      custom: 'Session Custom',
+      workspaceCustom: 'Workspace Custom',
+      readonlyViewOnly: 'View Only',
     },
     mode: {
       workspace: {
@@ -87,6 +103,14 @@ export const en = {
         title: 'Custom Model for this Session',
         desc: 'Specify a dedicated subagent execution model for this session.',
       },
+      workspaceCustom: {
+        title: 'Custom Model for this Workspace',
+        desc: 'Specify default subagent model settings for this workspace.',
+      },
+      globalCustom: {
+        title: 'Specify Global Default Model',
+        desc: 'Specify a uniform subagent execution model across all sessions.',
+      },
     },
     mcpMode: {
       workspace: {
@@ -98,7 +122,7 @@ export const en = {
       default: {
         title: 'Use Global Default',
         badge: '{count} servers',
-        desc: 'Enable all MCP servers configured as "Default On" in global settings.',
+        desc: 'Use the MCP servers selected in global settings.',
       },
       custom: {
         title: 'Custom for this Session',
@@ -167,7 +191,7 @@ export const en = {
         'No MCP servers configured yet. Add servers in "Settings -> Plugins -> MCP Servers".',
       selectAll: 'Select All',
       deselectAll: 'Deselect All',
-      toolsBtn: 'Configure Tools',
+      toolsBtn: 'Server Info',
       toolsModeDefaultBadge: 'Tools: Inherit Default',
       toolsModeCustomBadge: 'Tools: Custom ({count} disabled)',
       toolsAllActiveBadge: 'Tools: All Enabled',
@@ -181,7 +205,9 @@ export const en = {
       },
       notices: {
         refreshSuccess: 'Remounted the MCP client for "{name}"',
-        refreshFailed: 'Failed to remount the MCP client: {message}',
+        refreshProbeOnly:
+          '"{name}" is reachable and needed no remount; its status was refreshed',
+        refreshFailed: 'The MCP client could not connect: {message}',
       },
     },
     toolsModal: {
@@ -198,7 +224,6 @@ export const en = {
       resetToDefault: 'Reset to Global Default',
       noToolsAvailable:
         'No tools discovered for this server, or not connected yet.',
-      loading: 'Fetching tools list...',
       toolEnabled: 'Enabled',
       toolGlobalDisabledBadge: 'Disabled Globally',
       toolCustomDisabledBadge: 'Disabled in Session',
@@ -219,8 +244,6 @@ export const en = {
       defaultVal: 'Default: ',
       enumVal: 'Enum: ',
       fetchToolsBtn: 'Fetch Tools',
-      fetchingTools: 'Fetching tools list...',
-      refreshBtn: 'Refresh Tools',
       fetchFailed: 'Failed to fetch tools: ',
       retry: 'Retry',
     },
@@ -244,13 +267,17 @@ export const en = {
     },
     action: {
       save: 'Save',
-      saveSession: 'Save',
-      setDefault: 'Set as Default',
+      saveSession: 'Save Session',
+      saveWorkspace: 'Save Workspace Default',
+      saveGlobal: 'Save Global Default',
       applyWorkspaceDefault: 'Apply',
       restoreWorkspaceToGlobal: 'Restore Default',
       saving: 'Saving...',
       savingDefault: 'Saving...',
       reset: 'Restore Default',
+      resetSession: 'Restore Default',
+      resetWorkspace: 'Restore Global Default',
+      resetGlobal: 'Restore Initial Default',
       copyId: 'Copy Session ID',
       close: 'Close',
       restoreDefault: 'Restore Default',
@@ -258,38 +285,55 @@ export const en = {
       confirmApply: 'Apply',
       cancel: 'Cancel',
     },
-    setDefaultModal: {
-      title: 'Set as Default',
-      desc: 'Set current configuration as the default template for workspace or global scope. New sessions will inherit automatically.',
-      targetScope: 'Target Scope:',
-      scopeWorkspace: 'Workspace Default',
-      scopeGlobal: 'Global Default',
-      diffBeforeWorkspace: 'Before',
-      diffAfterWorkspace: 'After',
-      diffBeforeGlobal: 'Before',
-      diffAfterGlobal: 'After',
-      unchanged: '(Unchanged)',
-      changed: 'Changed',
-      modelSection: 'Subagent Model',
-      mcpSection: 'MCP Servers',
-      skillsSection: 'Skills',
-      mcpCustom: '{count} servers enabled',
-      skillsCustom: '{count} skills disabled',
-      skillsAll: 'All enabled (no disabled skills)',
-      restoreDefaultNotice:
-        'Switched to standard default template comparison. Click "Apply" below to save.',
-    },
     notice: {
       saved: 'Session settings saved!',
       savedDefault: 'Global default settings saved!',
       savedWorkspace:
         'Successfully updated default settings for workspace "{name}"!',
+      resetSuccess: 'Settings reset to default!',
       error: 'Save failed: ',
     },
   },
 
   // MCP Servers management tab in Settings -> Plugins
   mcpServers: {
+    primitives: {
+      tabTools: 'Tools',
+      tabResources: 'Resources',
+      tabPrompts: 'Prompts',
+      titleResources: 'Resources',
+      titlePrompts: 'Prompts',
+      close: 'Close',
+      searchPlaceholder: 'Search resource name, URI, or description…',
+      searchPromptPlaceholder: 'Search prompt name or description…',
+      fetchBtn: 'Fetch lists',
+      notFetched:
+        'Not fetched yet. Click "Fetch lists" to read them from the server.',
+      resourcesUnsupported: 'This server does not advertise MCP resources.',
+      promptsUnsupported: 'This server does not advertise MCP prompts.',
+      resourcesEmpty: 'This server advertises resources but provides none.',
+      promptsEmpty: 'This server advertises prompts but provides none.',
+      resourcesTitle: 'Resources ({count})',
+      templatesTitle: 'Resource templates ({count})',
+      templateBadge: 'template',
+      readBtn: 'Read',
+      refreshRead: 'Read again',
+      refreshPrompt: 'Get again',
+      reading: 'Reading…',
+      readFailed: 'Resource read failed: ',
+      missingVars: 'Missing variables: {names}',
+      copy: 'Copy',
+      copied: 'Copied',
+      copyUri: 'Copy URI',
+      copyTemplate: 'Copy template',
+      copyFullText: 'Copy full text',
+      getPromptBtn: 'Get prompt',
+      gettingPrompt: 'Fetching prompt…',
+      getFailed: 'Prompt fetch failed: ',
+      fetchFailed: 'Fetch failed: ',
+      viewBlocks: 'Blocks',
+      argCount: '{count} arguments',
+    },
     tabLabel: 'MCP Servers',
     title: 'MCP Servers',
     desc: 'Centrally configure and manage Model Context Protocol (MCP) servers for per-session selection and isolation.',
@@ -299,7 +343,7 @@ export const en = {
       export: 'Export Config',
       test: 'Test Connection',
       testing: 'Testing...',
-      toolsList: 'Tools List',
+      toolsList: 'Server Info',
       toolsFetching: 'Fetching...',
       edit: 'Edit',
       delete: 'Delete',
@@ -309,7 +353,6 @@ export const en = {
       refresh: 'Refresh',
     },
     table: {
-      enabledDefault: 'Default On',
       website: 'Website',
       empty:
         'No MCP servers added yet. Click "Add Server" or "Import Config" above to get started.',
@@ -335,7 +378,7 @@ export const en = {
       commandPlaceholder: 'e.g. npx, python, uvx, node',
       args: 'Arguments',
       argsPlaceholder:
-        'One argument per line or space-separated. E.g.:\n-y\n@modelcontextprotocol/server-github',
+        'One argument per line; spaces inside a line are kept. E.g.:\n-y\n@modelcontextprotocol/server-github',
       cwd: 'Working Directory (CWD, Optional)',
       cwdPlaceholder:
         'Subprocess working directory. Leave blank to use current project directory',
@@ -349,9 +392,6 @@ export const en = {
       headerKey: 'Header Name',
       headerValue: 'Header Value',
       addHeader: 'Add Header',
-      enabledByDefault: 'Enabled by Default',
-      enabledByDefaultDesc:
-        'When enabled, sessions in default mode will automatically load this MCP server',
       advancedTitle: 'Advanced Settings',
       toolCallTimeoutMs: 'Call / Test Timeout (ms)',
       toolCallTimeoutMsPlaceholder: 'Default 60000 ms (60s)',
@@ -400,9 +440,7 @@ export const en = {
       empty: 'No matching tools found',
       serverNoTools:
         'This MCP server currently does not declare any available tools',
-      loading: 'Fetching tools list...',
       fetchFailed: 'Failed to fetch tools: ',
-      retry: 'Retry',
       statusEnabled: 'Enabled',
       statusDisabled: 'Disabled',
       disabledBadge: '{count} tools disabled',
@@ -424,27 +462,6 @@ export const en = {
       saved: 'MCP server saved!',
       deleted: 'MCP server deleted!',
       error: 'Operation failed: ',
-    },
-  },
-
-  // Skills management tab in Settings
-  skillsSettings: {
-    tabLabel: 'Skills',
-    title: 'Skills',
-    desc: 'Centrally manage and configure global Skill defaults and rules for per-session inheritance and customization.',
-    skillsStats: '({total} skills total, {enabled} enabled)',
-    actions: {
-      saveSettings: 'Save',
-      saving: 'Saving...',
-      refresh: 'Refresh',
-    },
-    searchPlaceholder: 'Search skill name or description...',
-    empty:
-      'No available skills found in the current workspace. Add skills in the workspace root or ~/.dsh/skills.',
-    noMatch: 'No matching skills found.',
-    notices: {
-      saved: 'Skills default configuration saved!',
-      saveError: 'Save failed: ',
     },
   },
 }

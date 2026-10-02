@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { IconCloseOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCloseOutlineMedium } from '@deepseek-ai/dsh-client-ui-primitives'
 
 const e = React.createElement
 
@@ -100,7 +100,7 @@ export function ModalDialog({
             onClick: onClose,
             title: closeTitle,
           },
-          e(IconCloseOutline16, { size: 16 }),
+          e(IconCloseOutlineMedium, { size: 16 }),
         ),
       ),
       subtitle

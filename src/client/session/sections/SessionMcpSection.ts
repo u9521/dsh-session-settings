@@ -1,42 +1,19 @@
 import * as React from 'react'
-import { IconChecklistOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconChecklistOutlineMedium } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {
   SessionMcpConfig,
   SessionMcpMode,
-  SettingsMode,
   GlobalMcpServerConfig,
   SessionSettingsConfig,
 } from '../../types/index.ts'
-import {
-  ModeSelector,
-  EmptyState,
-  Badge,
-  ServerIcon,
-} from '../../components/index.ts'
+import { EmptyState, Badge, ServerIcon } from '../../components/index.ts'
 import { formatProtocolTitle } from '../../utils/string.ts'
+import { isMcpClientUnavailable } from '../../utils/mcpRuntime.ts'
 
 const e = React.createElement
 
-/**
- * A server is "unavailable" when the official @deepseek-ai/dsh-mcp-client failed
- * to activate (`lastError`), or when we attempted a mount but no
- * `mcp__<serverId>__*` tool ended up registered on ctx.tools.
- *
- * The second condition is the important one: once the bridge exhausts its
- * reconnect budget it unregisters every tool but keeps its fiber alive, so the
- * server stays silently broken until the client is remounted by hand.
- *
- * `mountAttempted` keeps "never mounted yet" (unknown) from being reported as a
- * failure — a server this session has not tried to use shows no badge.
- */
-export function isMcpClientUnavailable(server: GlobalMcpServerConfig): boolean {
-  const runtime = server.runtime
-  if (!runtime) return false
-  if (runtime.lastError) return true
-  return runtime.mountAttempted && runtime.registeredToolCount === 0
-}
-
 export interface SessionMcpSectionProps {
+  scope?: 'session' | 'workspace' | 'global'
   sessionId?: string
   mcpConfig: SessionMcpConfig
   availableMcpServers: GlobalMcpServerConfig[]
@@ -48,12 +25,16 @@ export interface SessionMcpSectionProps {
   onMcpModeChange: (mode: SessionMcpMode) => void
   onToggleMcpServer: (serverId: string) => void
   onToggleSelectAllMcp: () => void
-  onOpenSessionToolsModal: (server: GlobalMcpServerConfig) => void
+  onOpenSessionToolsModal: (
+    server: GlobalMcpServerConfig,
+    isReadonly?: boolean,
+  ) => void
   onRefreshClient?: (server: GlobalMcpServerConfig) => void
   t: (key: string, vars?: Record<string, string | number>) => string
 }
 
 export function SessionMcpSection({
+  scope = 'session',
   sessionId,
   mcpConfig,
   availableMcpServers,
@@ -69,86 +50,115 @@ export function SessionMcpSection({
   onRefreshClient,
   t,
 }: SessionMcpSectionProps) {
+  const defaultMode = currentWorkspaceId ? 'workspace' : 'global'
+
+  const activeSourceMode: 'workspace' | 'global' | 'custom' =
+    scope === 'global'
+      ? 'custom'
+      : scope === 'workspace'
+        ? mcpConfig?.mode === 'custom'
+          ? 'custom'
+          : 'global'
+        : mcpConfig?.mode === 'custom'
+          ? 'custom'
+          : (mcpConfig?.mode ?? defaultMode)
+
+  const isReadonly =
+    scope === 'session'
+      ? activeSourceMode !== 'custom'
+      : scope === 'workspace'
+        ? activeSourceMode !== 'custom'
+        : false
+
   const isAllMcpSelected =
     availableMcpServers.length > 0 &&
     availableMcpServers.every((s) =>
-      (mcpConfig.enabledServerIds ?? []).includes(s.id),
+      (mcpConfig?.enabledServerIds ?? []).includes(s.id),
     )
 
-  const defaultMode = currentWorkspaceId ? 'workspace' : 'global'
+  const sourceTabs =
+    scope === 'session'
+      ? [
+          ...(currentWorkspaceId
+            ? [
+                {
+                  key: 'workspace',
+                  label: t('sessionSettings.sourceTabs.workspace'),
+                  active: activeSourceMode === 'workspace',
+                  onClick: () => onMcpModeChange('workspace'),
+                },
+              ]
+            : []),
+          {
+            key: 'global',
+            label: t('sessionSettings.sourceTabs.global'),
+            active: activeSourceMode === 'global',
+            onClick: () => onMcpModeChange('global'),
+          },
+          {
+            key: 'custom',
+            label: t('sessionSettings.sourceTabs.custom'),
+            active: activeSourceMode === 'custom',
+            onClick: () => onMcpModeChange('custom'),
+          },
+        ]
+      : scope === 'workspace'
+        ? [
+            {
+              key: 'global',
+              label: t('sessionSettings.sourceTabs.global'),
+              active: activeSourceMode === 'global',
+              onClick: () => onMcpModeChange('global'),
+            },
+            {
+              key: 'custom',
+              label: t('sessionSettings.sourceTabs.workspaceCustom'),
+              active: activeSourceMode === 'custom',
+              onClick: () => onMcpModeChange('custom'),
+            },
+          ]
+        : []
 
   return e(
     'div',
     { className: 'dsh-view-content-inner' },
-    // Section Header
-    e(
-      'div',
-      { className: 'dsh-section-header' },
-      e(
-        'h3',
-        { className: 'dsh-section-title' },
-        t('sessionSettings.section.mcpTitle'),
-      ),
-      e(
-        'p',
-        { className: 'dsh-section-desc' },
-        t('sessionSettings.section.mcpDesc'),
-      ),
-    ),
-
-    // Mode Selector
-    e(ModeSelector, {
-      name: 'sessionMcpMode',
-      value: mcpConfig.mode ?? defaultMode,
-      onChange: (val) => onMcpModeChange(val as SettingsMode),
-      options: [
-        {
-          value: 'workspace',
-          visible: Boolean(currentWorkspaceId),
-          title: t('sessionSettings.mcpMode.workspace.title'),
-          badges: [
-            workspaceSettings?.mcp?.mode === 'custom'
-              ? {
-                  label: t('sessionSettings.mcpMode.workspace.badgeCustom', {
-                    count: (workspaceSettings?.mcp?.enabledServerIds || [])
-                      .length,
-                  }),
-                  variant: 'custom',
-                }
-              : {
-                  label: t('sessionSettings.mcpMode.workspace.badgeInherit'),
-                  variant: 'inherit',
+    // Source Tabs (Segmented control for workspace / global / custom)
+    sourceTabs.length > 0
+      ? e(
+          'div',
+          { className: 'dsh-source-tabs-wrap' },
+          e(
+            'div',
+            { className: 'dsh-source-tabs-label' },
+            t('sessionSettings.sourceTabs.label'),
+          ),
+          e(
+            'div',
+            { className: 'dsh-source-tabs-nav', role: 'tablist' },
+            sourceTabs.map((tab) =>
+              e(
+                'button',
+                {
+                  key: tab.key,
+                  type: 'button',
+                  role: 'tab',
+                  'aria-selected': tab.active,
+                  className: `dsh-source-tab-btn ${tab.active ? 'active' : ''}`,
+                  onClick: tab.onClick,
                 },
-          ],
-          desc: t('sessionSettings.mcpMode.workspace.desc'),
-        },
-        {
-          value: 'global',
-          title: t('sessionSettings.mcpMode.default.title'),
-          badges: [
-            {
-              label: t('sessionSettings.mcpMode.default.badge', {
-                count: (globalConfig?.mcp?.enabledServerIds || []).length,
-              }),
-              variant: 'custom',
-            },
-          ],
-          desc: t('sessionSettings.mcpMode.default.desc'),
-        },
-        {
-          value: 'custom',
-          title: t('sessionSettings.mcpMode.custom.title'),
-          desc: t('sessionSettings.mcpMode.custom.desc'),
-        },
-      ],
-    }),
+                tab.label,
+              ),
+            ),
+          ),
+        )
+      : null,
 
     availableMcpServers.length === 0
       ? e(EmptyState, { message: t('sessionSettings.mcp.empty') })
       : e(
           'div',
           { className: 'dsh-session-mcp-box' },
-          mcpConfig.mode === 'custom' || !sessionId
+          !isReadonly
             ? e(
                 'div',
                 { className: 'dsh-mcp-quick-bar' },
@@ -170,26 +180,22 @@ export function SessionMcpSection({
             'div',
             { className: 'dsh-session-mcp-list' },
             availableMcpServers.map((server) => {
-              const isGlobalCustom = Array.isArray(
-                globalConfig?.mcp?.enabledServerIds,
-              )
-              const globalActive = isGlobalCustom
-                ? (globalConfig.mcp.enabledServerIds ?? []).includes(server.id)
-                : Boolean(server.enabledByDefault)
+              const globalActive = (
+                globalConfig?.mcp?.enabledServerIds ?? []
+              ).includes(server.id)
 
               const isChecked =
-                mcpConfig.mode === 'custom' || !sessionId
-                  ? (mcpConfig.enabledServerIds ?? []).includes(server.id)
-                  : mcpConfig.mode === 'workspace' &&
-                      workspaceSettings?.mcp?.mode === 'custom'
-                    ? (workspaceSettings.mcp.enabledServerIds ?? []).includes(
-                        server.id,
-                      )
-                    : globalActive
+                scope === 'global'
+                  ? (mcpConfig?.enabledServerIds ?? []).includes(server.id)
+                  : activeSourceMode === 'custom' || !sessionId
+                    ? (mcpConfig?.enabledServerIds ?? []).includes(server.id)
+                    : activeSourceMode === 'workspace' &&
+                        workspaceSettings?.mcp?.mode === 'custom'
+                      ? (workspaceSettings.mcp.enabledServerIds ?? []).includes(
+                          server.id,
+                        )
+                      : globalActive
 
-              const isReadonly = Boolean(
-                sessionId && mcpConfig.mode !== 'custom',
-              )
               const protoLabel =
                 server.transport === 'stdio'
                   ? 'STDIO'
@@ -208,14 +214,11 @@ export function SessionMcpSection({
                       : 'streamable-http'
 
               const isCustomTools =
-                mcpConfig.toolsMode?.[server.id] === 'custom'
+                mcpConfig?.toolsMode?.[server.id] === 'custom'
               const customDisabledCount = (
-                mcpConfig.disabledTools?.[server.id] || []
+                mcpConfig?.disabledTools?.[server.id] || []
               ).length
 
-              // Official mcp-client recovery affordance: only for servers this
-              // session actually intends to use (checked here, or inherited via
-              // workspace/global mode).
               const clientUnavailable =
                 isChecked && isMcpClientUnavailable(server)
               const isRefreshingClient = refreshingClientId === server.id
@@ -393,7 +396,7 @@ export function SessionMcpSection({
                     )
                   : null,
 
-                // Client failure detail (probe outcome / activation error)
+                // Client failure detail
                 clientUnavailable && clientMessage
                   ? e(
                       'p',
@@ -439,11 +442,13 @@ export function SessionMcpSection({
                           className: 'dsh-mcp-mini-btn dsh-session-tools-btn',
                           onClick: (evt: React.MouseEvent) => {
                             evt.stopPropagation()
-                            onOpenSessionToolsModal(server)
+                            onOpenSessionToolsModal(server, isReadonly)
                           },
                         },
-                        e(IconChecklistOutline14, { size: 14 }),
-                        t('sessionSettings.mcp.toolsBtn'),
+                        e(IconChecklistOutlineMedium, { size: 14 }),
+                        isReadonly
+                          ? `${t('sessionSettings.mcp.toolsBtn')} (${t('sessionSettings.sourceTabs.readonlyViewOnly')})`
+                          : t('sessionSettings.mcp.toolsBtn'),
                       ),
                     )
                   : null,

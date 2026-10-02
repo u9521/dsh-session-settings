@@ -1,7 +1,7 @@
 import * as React from 'react'
 import {
-  IconCodeOutline16,
-  IconLinkOutline16,
+  IconCodeOutlineMedium,
+  IconLinkOutlineMedium,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {
   GlobalMcpServerConfig,
@@ -67,8 +67,8 @@ export function ServerIcon({
   }
 
   const fallbackIcon = isStdio
-    ? e(IconCodeOutline16, { size, className })
-    : e(IconLinkOutline16, { size, className })
+    ? e(IconCodeOutlineMedium, { size, className })
+    : e(IconLinkOutlineMedium, { size, className })
 
   if (style) {
     return e(

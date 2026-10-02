@@ -33,8 +33,8 @@ export const HERO_CHIP_CSS = `
   color: var(--dsw-alias-label-primary, #ffffff);
 }
 .dsh-hero-session-settings-chip.customized {
-  border-color: var(--dsw-color-brand, #1383fe);
-  color: var(--dsw-color-brand, #1383fe);
+  border-color: var(--dsw-alias-brand-primary, #1383fe);
+  color: var(--dsw-alias-brand-primary, #1383fe);
 }
 .dsh-hero-session-settings-icon {
   color: var(--dsw-alias-label-tertiary);
@@ -63,9 +63,13 @@ export const HERO_CHIP_CSS = `
   padding: 1px 6px;
 }
 .dsh-hero-session-settings-badge.highlight {
-  background: var(--dsw-color-brand-transparent, rgba(19, 131, 254, 0.1));
-  border-color: var(--dsw-color-brand, #1383fe);
-  color: var(--dsw-color-brand, #1383fe);
+  background: color-mix(
+    in srgb,
+    var(--dsw-alias-brand-primary, #1383fe) 10%,
+    transparent
+  );
+  border-color: var(--dsw-alias-brand-primary, #1383fe);
+  color: var(--dsw-alias-brand-primary, #1383fe);
 }
 
 /* Modal panel in Hero dialog */

@@ -1,90 +1,63 @@
 import * as React from 'react'
-import {
-  type ClientPageProps,
-  type ModelProviderGroup,
-  type GlobalMcpServerConfig,
-  type SkillItem,
-  type SubagentModelConfig,
-  type SessionMcpConfig,
-  type SessionSkillsConfig,
-  type SessionSettingsConfig,
-  type NavSection,
-  type SessionsState,
-  type WorkspacesState,
-  type WorkspaceInfo,
-  type SessionInfo,
-  API_ENDPOINTS,
+import type {
+  ClientPageProps,
+  NavSection,
+  SubagentModelConfig,
+  SessionMcpConfig,
+  SessionSkillsConfig,
+  SessionSettingsConfig,
+  GlobalMcpServerConfig,
+  McpProbeResult,
+  SkillItem,
+  ModelProviderGroup,
+  SessionInfo,
+  SessionsState,
+  WorkspacesState,
 } from '../../types/index.ts'
+import type { SettingsScope } from '../sections/HeaderBar.ts'
+import { API_ENDPOINTS, API_METHODS } from '../../types/index.ts'
 import { isSessionCustomized } from '../../utils/config.ts'
+import { resolvePageWorkspace } from '../../utils/sessionScope.ts'
 
-export function useSessionData({
-  api,
-  remote,
-  t,
-  sessionId,
-  workspaceId: propWorkspaceId,
-  workspaceTitle: propWorkspaceTitle,
-  useSessions,
-  useWorkspaces,
-}: ClientPageProps) {
-  const sessionsState = React.useMemo<SessionsState | null>(() => {
-    if (!useSessions) return null
-    try {
-      if (typeof useSessions === 'function') {
-        const val = (useSessions((s) => s) ?? useSessions()) as
-          SessionsState | undefined
-        return val ?? null
-      }
-      return (useSessions as SessionsState) ?? null
-    } catch {
-      return null
-    }
-  }, [useSessions])
+const identitySelector = <T>(state: T): T => state
 
-  const currentSession: SessionInfo | null =
-    (Array.isArray(sessionsState?.items) && sessionId
-      ? sessionsState.items.find((s) => s?.id === sessionId)
-      : undefined) ??
-    (sessionsState?.byId && sessionId ? sessionsState.byId[sessionId] : null) ??
-    null
+export function useSessionData(props: ClientPageProps) {
+  const {
+    remote,
+    t,
+    sessionId,
+    workspaceId: propWorkspaceId,
+    workspaceTitle: propWorkspaceTitle,
+    useSessions,
+    useWorkspaces,
+  } = props
 
-  const workspacesState = React.useMemo<WorkspacesState | null>(() => {
-    if (!useWorkspaces) return null
-    try {
-      if (typeof useWorkspaces === 'function') {
-        const val = (useWorkspaces((w) => w) ?? useWorkspaces()) as
-          WorkspacesState | undefined
-        return val ?? null
-      }
-      return (useWorkspaces as WorkspacesState) ?? null
-    } catch {
-      return null
-    }
-  }, [useWorkspaces])
+  const sessionsState = useSessions
+    ? (useSessions(identitySelector) as SessionsState | undefined)
+    : undefined
+  const workspacesState = useWorkspaces
+    ? (useWorkspaces(identitySelector) as WorkspacesState | undefined)
+    : undefined
 
-  const currentWorkspace: WorkspaceInfo | null = Array.isArray(
-    workspacesState?.items,
+  const currentSession = sessionId
+    ? sessionsState?.byId?.[sessionId]
+    : undefined
+
+  // Identity resolution lives in `utils/sessionScope.ts`: DSH 0.2.0 carries
+  // neither `sessions.current` nor `workspaces.recentWorkspaceId`, so the
+  // main-view session and workspace recency have to be derived. There is no
+  // "first workspace" fallback — an unresolvable page says so instead of
+  // naming an arbitrary workspace.
+  const currentWorkspace = React.useMemo(
+    () =>
+      resolvePageWorkspace({
+        sessions: sessionsState,
+        workspaces: workspacesState,
+        sessionId,
+        workspaceId: propWorkspaceId,
+      }),
+    [workspacesState, sessionsState, propWorkspaceId, sessionId],
   )
-    ? (workspacesState.items.find(
-        (w) =>
-          (sessionId &&
-            Array.isArray(w?.sessionIds) &&
-            w.sessionIds.includes(sessionId)) ||
-          (currentSession?.cwd &&
-            (w?.path === currentSession.cwd ||
-              w?.cwd === currentSession.cwd)) ||
-          (propWorkspaceId &&
-            (w?.workspaceId === propWorkspaceId || w?.id === propWorkspaceId)),
-      ) ??
-      (!sessionId && workspacesState?.recentWorkspaceId
-        ? (workspacesState.items.find(
-            (w) =>
-              w.workspaceId === workspacesState.recentWorkspaceId ||
-              w.id === workspacesState.recentWorkspaceId,
-          ) ?? workspacesState.items[0])
-        : null) ??
-      null)
-    : null
 
   const currentWorkspaceId =
     propWorkspaceId ?? currentWorkspace?.workspaceId ?? currentWorkspace?.id
@@ -94,15 +67,63 @@ export function useSessionData({
     currentWorkspace?.name ??
     currentWorkspace?.path
 
+  // Scope availability. The session tab needs a live session to write to;
+  // without one there is no session scope at all, so it disables itself and the
+  // page says why. Global is always available.
+  const sessionScopeAvailable = Boolean(sessionId)
+  const workspaceScopeAvailable = Boolean(currentWorkspaceId)
+
+  /**
+   * The first enabled tab, in preference order.
+   *
+   * Both the state initializer and the reconciliation effect below call this
+   * one function: duplicating the preference order is how the default and the
+   * enabled-tab condition drifted apart before.
+   */
+  const defaultScope = React.useCallback(
+    (): SettingsScope =>
+      sessionScopeAvailable
+        ? 'session'
+        : workspaceScopeAvailable
+          ? 'workspace'
+          : 'global',
+    [sessionScopeAvailable, workspaceScopeAvailable],
+  )
+
+  const [activeScope, setActiveScope] =
+    React.useState<SettingsScope>(defaultScope)
+
+  // Identity arrives a frame late, and can also go away entirely (the session
+  // was archived). The selected tab must never be left disabled, so this
+  // re-applies the default whenever the current selection is unusable — and
+  // respects the user's own choice for as long as that choice stays valid.
+  const scopeChosenByUser = React.useRef(false)
+  React.useEffect(() => {
+    const enabled =
+      activeScope === 'session'
+        ? sessionScopeAvailable
+        : activeScope === 'workspace'
+          ? workspaceScopeAvailable
+          : true
+    if (scopeChosenByUser.current && enabled) return
+    setActiveScope(defaultScope())
+  }, [
+    activeScope,
+    defaultScope,
+    sessionScopeAvailable,
+    workspaceScopeAvailable,
+  ])
+
+  /** Tab selection: records that the choice was the user's, not the default. */
+  const chooseScope = React.useCallback((scope: SettingsScope) => {
+    scopeChosenByUser.current = true
+    setActiveScope(scope)
+  }, [])
+
   const [activeNav, setActiveNav] = React.useState<NavSection>('model')
   const [copiedId, setCopiedId] = React.useState<boolean>(false)
   const [error, setError] = React.useState<string>('')
   const [saveSuccessMsg, setSaveSuccessMsg] = React.useState<string>('')
-
-  // Clone Preset toolbar state
-  const [cloneSourceId, setCloneSourceId] = React.useState<string>('')
-  const [cloning, setCloning] = React.useState<boolean>(false)
-  const [cloneError, setCloneError] = React.useState<string>('')
 
   const [providers, setProviders] = React.useState<ModelProviderGroup[]>([])
   const [loadingModels, setLoadingModels] = React.useState<boolean>(false)
@@ -119,7 +140,7 @@ export function useSessionData({
 
   const defaultMode = currentWorkspaceId ? 'workspace' : 'global'
 
-  // Form state
+  // Session Form state
   const [modelConfig, setModelConfig] = React.useState<SubagentModelConfig>({
     mode: defaultMode,
   })
@@ -129,6 +150,25 @@ export function useSessionData({
   const [skillsConfig, setSkillsConfig] = React.useState<SessionSkillsConfig>({
     mode: defaultMode,
   })
+
+  // Workspace Draft Form state
+  const [workspaceModelConfig, setWorkspaceModelConfig] =
+    React.useState<SubagentModelConfig>({ mode: 'global' })
+  const [workspaceMcpConfig, setWorkspaceMcpConfig] =
+    React.useState<SessionMcpConfig>({ mode: 'global' })
+  const [workspaceSkillsConfig, setWorkspaceSkillsConfig] =
+    React.useState<SessionSkillsConfig>({ mode: 'global' })
+
+  // Global Draft Form state
+  const [globalModelConfig, setGlobalModelConfig] =
+    React.useState<SubagentModelConfig>({ inherit: true })
+  const [globalMcpConfig, setGlobalMcpConfig] =
+    React.useState<SessionMcpConfig>({ enabledServerIds: [] })
+  const [globalSkillsConfig, setGlobalSkillsConfig] =
+    React.useState<SessionSkillsConfig>({
+      disabledModelSkills: [],
+      disabledUserSkills: [],
+    })
 
   // Skills UI state
   const [skillsSearch, setSkillsSearch] = React.useState<string>('')
@@ -151,13 +191,6 @@ export function useSessionData({
   const [sessionDisabledToolsSet, setSessionDisabledToolsSet] = React.useState<
     Set<string>
   >(new Set())
-  const [sessionToolsFetching, setSessionToolsFetching] =
-    React.useState<boolean>(false)
-  const [sessionToolsError, setSessionToolsError] = React.useState<string>('')
-  const [sessionToolsList, setSessionToolsList] = React.useState<
-    Array<{ name?: string; id?: string; description?: string }>
-  >([])
-
   const [globalConfig, setGlobalConfig] = React.useState<SessionSettingsConfig>(
     {
       subagentModel: {},
@@ -174,91 +207,59 @@ export function useSessionData({
   const [hasSessionOverride, setHasSessionOverride] =
     React.useState<boolean>(false)
 
-  // Set as default modal states
-  const [setDefaultModalOpen, setSetDefaultModalOpen] =
-    React.useState<boolean>(false)
-  const [setDefaultTargetScope, setSetDefaultTargetScope] = React.useState<
-    'workspace' | 'global'
-  >(currentWorkspaceId ? 'workspace' : 'global')
-  const [isRestoringDefault, setIsRestoringDefault] =
-    React.useState<boolean>(false)
-
-  const apiRef = React.useRef(api)
-  apiRef.current = api
   const remoteRef = React.useRef(remote)
   remoteRef.current = remote
 
-  const sessionsMap: Record<string, SessionInfo> = React.useMemo(() => {
-    const map: Record<string, SessionInfo> = {}
-    if (sessionsState?.byId) {
-      Object.assign(map, sessionsState.byId)
-    }
-    if (Array.isArray(sessionsState?.items)) {
-      for (const s of sessionsState.items) {
-        if (s?.id) {
-          map[s.id] = s
-        }
-      }
-    }
-    return map
-  }, [sessionsState])
+  const sessionsMap: Record<string, SessionInfo> = React.useMemo(
+    () => ({ ...(sessionsState?.byId ?? {}) }),
+    [sessionsState],
+  )
 
-  /**
-   * Fetch the global MCP server list, including the response-only `runtime`
-   * status of each official mcp-client fork.
-   *
-   * Returned as `reloadMcpServers` so the view can re-read runtime status after
-   * saving settings (the server runs `syncAll()` then) or when the MCP tab is
-   * opened — runtime state does not change on its own otherwise.
-   */
   const loadMcpServers = React.useCallback(async () => {
     try {
       const res = await fetch(API_ENDPOINTS.mcpServersList)
-      if (!res.ok) return
-      const data = (await res.json()) as {
-        ok?: boolean
-        servers?: GlobalMcpServerConfig[]
-      }
-      if (data && data.ok && Array.isArray(data.servers)) {
-        setAvailableMcpServers(data.servers)
+      if (res.ok) {
+        const data = (await res.json()) as {
+          ok?: boolean
+          servers?: GlobalMcpServerConfig[]
+        }
+        if (data && data.ok && Array.isArray(data.servers)) {
+          setAvailableMcpServers(data.servers)
+        }
       }
     } catch {}
   }, [])
 
-  /**
-   * Re-mount the official mcp-client for one server and refresh its status.
-   *
-   * Remounting is the only recovery path once the official bridge has exhausted
-   * its reconnect budget: it unregisters every tool but keeps the fiber alive,
-   * so the lazy mount path never retries it. `force` also mounts servers whose
-   * toggle has been flipped in the UI but not saved yet.
-   */
   const handleRefreshClient = React.useCallback(
-    async (server: GlobalMcpServerConfig): Promise<void> => {
-      if (!server?.id) return
+    async (server: GlobalMcpServerConfig) => {
       setRefreshingClientId(server.id)
       setError('')
-      setSaveSuccessMsg('')
-
       try {
-        const res = await fetch(API_ENDPOINTS.mcpServersRefresh, {
-          method: 'POST',
+        // One probe with `remount` folds the former /refresh call into the
+        // single discovery entry point; the remount outcome arrives as a field.
+        const res = await fetch(API_ENDPOINTS.mcpServersProbe, {
+          method: API_METHODS.mcpServersProbe,
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: server.id, force: true }),
+          body: JSON.stringify({
+            server: { id: server.id },
+            remount: true,
+          }),
         })
-        const data = (await res.json().catch(() => null)) as {
-          ok?: boolean
+        const data = (await res.json()) as McpProbeResult & {
           error?: string
-          result?: { ok: boolean; message: string; toolCount: number }
-          server?: GlobalMcpServerConfig
-        } | null
-
-        if (!res.ok || !data || !data.ok) {
-          setError(
+        }
+        if (!res.ok || !data.ok) {
+          const msg =
+            data.error ||
+            data.remount?.message ||
             t('sessionSettings.mcp.notices.refreshFailed', {
-              message: data?.error || `HTTP ${res.status}`,
-            }),
-          )
+              message: 'Unknown error',
+            })
+          setError(msg)
+          setClientRefreshResults((prev) => ({
+            ...prev,
+            [server.id]: { ok: false, message: msg },
+          }))
           return
         }
 
@@ -269,7 +270,7 @@ export function useSessionData({
           )
         }
 
-        const result = data.result
+        const result = data.remount
         if (!result) return
 
         setClientRefreshResults((prev) => ({
@@ -277,9 +278,18 @@ export function useSessionData({
           [server.id]: { ok: result.ok, message: result.message },
         }))
 
-        if (result.ok) {
+        if (result.remounted) {
           setSaveSuccessMsg(
             t('sessionSettings.mcp.notices.refreshSuccess', {
+              name: server.name,
+            }),
+          )
+        } else if (result.ok) {
+          // The probe succeeded but no remount happened (the server is not
+          // currently wanted, or the official plugin is unavailable). Claiming
+          // a remount here is what made the action look unreliable.
+          setSaveSuccessMsg(
+            t('sessionSettings.mcp.notices.refreshProbeOnly', {
               name: server.name,
             }),
           )
@@ -303,7 +313,6 @@ export function useSessionData({
     [t],
   )
 
-  // Fetch models, mcp servers, and server-side config on mount or sessionId/workspaceId change
   React.useEffect(() => {
     let mounted = true
 
@@ -321,7 +330,6 @@ export function useSessionData({
           setProviders(catalogRes.value.groups)
         }
       } catch {
-        // ignore fetch failure
       } finally {
         if (mounted) {
           setLoadingModels(false)
@@ -349,10 +357,14 @@ export function useSessionData({
 
     async function loadSessionSettings() {
       try {
-        const qs = sessionId
-          ? `?sessionId=${encodeURIComponent(sessionId)}`
-          : ''
-        const url = `${API_ENDPOINTS.getSettings}${qs}`
+        const params = new URLSearchParams()
+        if (sessionId) {
+          params.set('sessionId', sessionId)
+        } else if (currentWorkspaceId) {
+          params.set('workspaceId', currentWorkspaceId)
+        }
+        const query = params.toString()
+        const url = `${API_ENDPOINTS.getSettings}${query ? `?${query}` : ''}`
         const res = await fetch(url)
         if (res.ok && mounted) {
           const data = (await res.json()) as {
@@ -365,49 +377,45 @@ export function useSessionData({
           if (data && data.ok) {
             if (data.globalConfig) {
               setGlobalConfig(data.globalConfig)
+              setGlobalModelConfig(
+                data.globalConfig.subagentModel ?? { inherit: true },
+              )
+              setGlobalMcpConfig(
+                data.globalConfig.mcp ?? { enabledServerIds: [] },
+              )
+              setGlobalSkillsConfig(
+                data.globalConfig.skills ?? {
+                  disabledModelSkills: [],
+                  disabledUserSkills: [],
+                },
+              )
             }
             if (
               data.workspaceConfig &&
               (data.workspaceId || currentWorkspaceId)
             ) {
               setWorkspaceSettings(data.workspaceConfig)
+              setWorkspaceModelConfig(
+                data.workspaceConfig.subagentModel ?? { mode: 'global' },
+              )
+              setWorkspaceMcpConfig(
+                data.workspaceConfig.mcp ?? { mode: 'global' },
+              )
+              setWorkspaceSkillsConfig(
+                data.workspaceConfig.skills ?? { mode: 'global' },
+              )
             } else {
               setWorkspaceSettings(undefined)
             }
 
+            // The session form is only ever rendered when a session exists (the
+            // tab disables itself otherwise), so there is nothing to seed when
+            // there is no session.
             if (data.sessionConfig && sessionId) {
               setModelConfig(data.sessionConfig.subagentModel)
               setMcpConfig(data.sessionConfig.mcp)
               setSkillsConfig(data.sessionConfig.skills)
               setHasSessionOverride(isSessionCustomized(data.sessionConfig))
-            } else if (!sessionId && data.globalConfig) {
-              setModelConfig({
-                mode: 'global',
-                ...(data.globalConfig.subagentModel?.inherit === false &&
-                data.globalConfig.subagentModel.model
-                  ? {
-                      inherit: false,
-                      model: data.globalConfig.subagentModel.model,
-                    }
-                  : { inherit: true }),
-                allowAgentSelectModel:
-                  data.globalConfig.subagentModel?.allowAgentSelectModel !==
-                  false,
-                overrideForkModel:
-                  data.globalConfig.subagentModel?.overrideForkModel === true,
-              })
-              setMcpConfig({
-                mode: 'global',
-                enabledServerIds: data.globalConfig.mcp?.enabledServerIds || [],
-              })
-              setSkillsConfig({
-                mode: 'global',
-                disabledModelSkills:
-                  data.globalConfig.skills?.disabledModelSkills || [],
-                disabledUserSkills:
-                  data.globalConfig.skills?.disabledUserSkills || [],
-              })
-              setHasSessionOverride(false)
             }
           }
         }
@@ -435,6 +443,8 @@ export function useSessionData({
     currentWorkspace,
     currentWorkspaceId,
     currentWorkspaceTitle,
+    activeScope,
+    setActiveScope: chooseScope,
     activeNav,
     setActiveNav,
     copiedId,
@@ -443,12 +453,6 @@ export function useSessionData({
     setError,
     saveSuccessMsg,
     setSaveSuccessMsg,
-    cloneSourceId,
-    setCloneSourceId,
-    cloning,
-    setCloning,
-    cloneError,
-    setCloneError,
     providers,
     setProviders,
     loadingModels,
@@ -466,6 +470,18 @@ export function useSessionData({
     setMcpConfig,
     skillsConfig,
     setSkillsConfig,
+    workspaceModelConfig,
+    setWorkspaceModelConfig,
+    workspaceMcpConfig,
+    setWorkspaceMcpConfig,
+    workspaceSkillsConfig,
+    setWorkspaceSkillsConfig,
+    globalModelConfig,
+    setGlobalModelConfig,
+    globalMcpConfig,
+    setGlobalMcpConfig,
+    globalSkillsConfig,
+    setGlobalSkillsConfig,
     skillsSearch,
     setSkillsSearch,
     sessionSkillModalTarget,
@@ -482,24 +498,14 @@ export function useSessionData({
     setSessionToolsMode,
     sessionDisabledToolsSet,
     setSessionDisabledToolsSet,
-    sessionToolsFetching,
-    setSessionToolsFetching,
-    sessionToolsError,
-    setSessionToolsError,
-    sessionToolsList,
-    setSessionToolsList,
     globalConfig,
     setGlobalConfig,
     workspaceSettings,
     setWorkspaceSettings,
     hasSessionOverride,
+    sessionScopeAvailable,
+    workspaceScopeAvailable,
     setHasSessionOverride,
-    setDefaultModalOpen,
-    setSetDefaultModalOpen,
-    setDefaultTargetScope,
-    setSetDefaultTargetScope,
-    isRestoringDefault,
-    setIsRestoringDefault,
     sessionsMap,
   }
 }

@@ -7,11 +7,14 @@ import { registerMcpRoutes } from './mcp/routes.ts'
 import { registerSessionSettingsRoutes } from './session/routes.ts'
 import { registerSkillsRoutes } from './skills/routes.ts'
 import { registerSubagentModelInterceptor } from './subagent-model/interceptor.ts'
-import { registerMcpInterceptors } from './mcp/interceptor.ts'
+import { registerMcpPolicyProjection } from './mcp/interceptor.ts'
 import { registerSkillsInterceptors } from './skills/interceptor.ts'
-
 export const name = 'session-settings'
-export const inject = ['webServer', 'loader']
+// `connection` is required rather than optional: it is the only carrier that
+// applies the Host/Origin fence and browser authentication. Registering these
+// routes on `webServer` directly would bypass that gate, so a profile without
+// the carrier must fail to load this plugin instead of serving them unguarded.
+export const inject = ['connection', 'loader']
 
 export function apply(ctx: Context): void {
   let mcpStore: McpServerStore | null = null
@@ -42,32 +45,47 @@ export function apply(ctx: Context): void {
   // MCP Manager to handle tool discovery, registration on ctx.tools, and execution
   const mcpManager = new McpManager(ctx, getMcpStore, getSessionSettingsStore)
 
-  const webServer = ctx.get('webServer')
-  if (webServer) {
+  const mcpPolicyProjection = registerMcpPolicyProjection(
+    ctx,
+    getSessionSettingsStore,
+    getMcpStore,
+    mcpManager,
+  )
+  const invalidatePolicies = () => mcpPolicyProjection.notifyPolicyChanged()
+
+  const connection = ctx.get('connection')
+  if (connection) {
     const unregisterMcp = registerMcpRoutes(
-      webServer,
+      connection,
       getMcpStore,
       setMcpStore,
       mcpManager,
       getSessionSettingsStore,
       setSessionSettingsStore,
+      invalidatePolicies,
     )
     const unregisterSessionSettings = registerSessionSettingsRoutes(
       ctx,
-      webServer,
+      connection,
       getSessionSettingsStore,
       setSessionSettingsStore,
       mcpManager,
+      invalidatePolicies,
     )
-    const unregisterSkills = registerSkillsRoutes(ctx, webServer)
+    const unregisterSkills = registerSkillsRoutes(
+      ctx,
+      connection,
+      getSessionSettingsStore,
+    )
 
     ctx.effect(() => {
-      return () => {
-        unregisterMcp()
-        unregisterSessionSettings()
-        unregisterSkills()
+      // The carrier returns async disposers; Cordis effects accept a promise.
+      return async () => {
+        await unregisterMcp()
+        await unregisterSessionSettings()
+        await unregisterSkills()
       }
-    }, 'session-settings: webServer routes')
+    }, 'session-settings: authenticated api routes')
   }
 
   ctx.effect(() => {
@@ -76,10 +94,8 @@ export function apply(ctx: Context): void {
 
   // Register domain interceptors
   registerSubagentModelInterceptor(ctx, getSessionSettingsStore)
-  registerMcpInterceptors(ctx, getSessionSettingsStore, getMcpStore, mcpManager)
   registerSkillsInterceptors(ctx, getSessionSettingsStore)
 }
-
 // Domain Exports
 export * from '../types.ts'
 export * from './common/paths.ts'

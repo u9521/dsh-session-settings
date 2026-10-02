@@ -1,12 +1,14 @@
 import * as React from 'react'
 import {
-  IconRefreshOutline16,
-  IconLoadingOutline16,
+  IconRefreshOutlineMedium,
+  IconLoadingOutlineMedium,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {
   GlobalMcpServerConfig,
   McpDiscoveredTool,
 } from '../../types/index.ts'
+import { McpPrimitivesTabs } from '../../mcp/components/McpPrimitivesTabs.ts'
+import type { McpPrimitiveTab } from '../../mcp/components/McpPrimitivesTabs.ts'
 import {
   ModalDialog,
   SearchToolbar,
@@ -25,6 +27,14 @@ export interface SessionMcpToolsModalProps {
   fetching: boolean
   error?: string
   toolsList: McpDiscoveredTool[]
+  isReadonly?: boolean
+  /** Which primitive tab is showing; the modal owns the strip, not the states. */
+  activeTab: McpPrimitiveTab
+  onTabChange: (tab: McpPrimitiveTab) => void
+  tabCounts: { tools: number; resources: number; prompts: number }
+  /** Prebuilt bodies for the read-only tabs. */
+  resourcePanel?: React.ReactNode
+  promptPanel?: React.ReactNode
   onToolsModeChange: (mode: 'global' | 'custom') => void
   onToggleTool: (toolName: string) => void
   onToggleAllTools: (enableAll: boolean) => void
@@ -42,6 +52,12 @@ export function SessionMcpToolsModal({
   fetching,
   error,
   toolsList,
+  isReadonly = false,
+  activeTab,
+  onTabChange,
+  tabCounts,
+  resourcePanel,
+  promptPanel,
   onToolsModeChange,
   onToggleTool,
   onToggleAllTools,
@@ -104,7 +120,13 @@ export function SessionMcpToolsModal({
     {
       open: Boolean(server),
       onClose,
-      title: `${server.name} - ${t('sessionSettings.toolsModal.title')}`,
+      title: `${server.name} - ${
+        activeTab === 'tools'
+          ? t('sessionSettings.toolsModal.title')
+          : activeTab === 'resources'
+            ? t('mcpServers.primitives.titleResources')
+            : t('mcpServers.primitives.titlePrompts')
+      }`,
       panelClassName: 'dsh-sam-modal-panel dsh-mcp-tools-modal',
       headerExtra: [
         e(ServerIcon, {
@@ -135,322 +157,394 @@ export function SessionMcpToolsModal({
         e(
           'div',
           { key: 'left', className: 'dsh-mcp-modal-footer-left' },
-          toolsMode === 'custom'
-            ? disabledToolsSet.size > 0
-              ? e(Badge, {
-                  label: t('sessionSettings.toolsModal.disabledCount', {
-                    count: disabledToolsSet.size,
-                  }),
-                  variant: 'disabled-tools',
-                })
+          // The read-only tabs have no session-scoped state to summarise, so
+          // they leave this slot empty rather than restating that they are
+          // read-only.
+          activeTab !== 'tools'
+            ? null
+            : toolsMode === 'custom'
+              ? disabledToolsSet.size > 0
+                ? e(Badge, {
+                    label: t('sessionSettings.toolsModal.disabledCount', {
+                      count: disabledToolsSet.size,
+                    }),
+                    variant: 'disabled-tools',
+                  })
+                : e(Badge, {
+                    label: t('sessionSettings.toolsModal.allEnabledCount', {
+                      total: toolsList.length,
+                    }),
+                    variant: 'stdio',
+                  })
               : e(Badge, {
-                  label: t('sessionSettings.toolsModal.allEnabledCount', {
-                    total: toolsList.length,
-                  }),
+                  label: t('sessionSettings.toolsModal.modeDefaultTitle'),
                   variant: 'stdio',
-                })
-            : e(Badge, {
-                label: t('sessionSettings.toolsModal.modeDefaultTitle'),
-                variant: 'stdio',
-              }),
+                }),
         ),
         e(
           'div',
           { key: 'right', className: 'dsh-mcp-modal-footer-right' },
-          e(
-            'button',
-            {
-              type: 'button',
-              className: 'dsh-sam-btn secondary',
-              onClick: onClose,
-            },
-            t('sessionSettings.toolsModal.cancel'),
-          ),
-          e(
-            'button',
-            {
-              type: 'button',
-              className: 'dsh-sam-btn primary',
-              onClick: onApply,
-            },
-            t('sessionSettings.toolsModal.save'),
-          ),
-        ),
-      ],
-    },
-    // Mode Switch Tabs
-    e(
-      'div',
-      { className: 'dsh-session-tools-mode-tabs' },
-      e(
-        'button',
-        {
-          type: 'button',
-          className: `dsh-session-tools-mode-tab ${toolsMode === 'global' ? 'active' : ''}`,
-          onClick: () => onToolsModeChange('global'),
-        },
-        t('sessionSettings.toolsModal.modeDefaultTitle'),
-      ),
-      e(
-        'button',
-        {
-          type: 'button',
-          className: `dsh-session-tools-mode-tab ${toolsMode === 'custom' ? 'active' : ''}`,
-          onClick: () => onToolsModeChange('custom'),
-        },
-        t('sessionSettings.toolsModal.modeCustomTitle'),
-      ),
-    ),
-
-    // Toolbar
-    e(SearchToolbar, {
-      value: search,
-      onChange: setSearch,
-      placeholder: t('sessionSettings.toolsModal.searchPlaceholder'),
-      className: 'dsh-mcp-tools-toolbar',
-      actions: [
-        toolsMode === 'custom'
-          ? e(
-              'button',
-              {
-                key: 'enableAll',
-                type: 'button',
-                className: 'dsh-sam-btn secondary',
-                disabled: fetching || toolsList.length === 0,
-                onClick: () => onToggleAllTools(true),
-              },
-              t('sessionSettings.toolsModal.enableAll'),
-            )
-          : null,
-        toolsMode === 'custom'
-          ? e(
-              'button',
-              {
-                key: 'disableAll',
-                type: 'button',
-                className: 'dsh-sam-btn secondary',
-                disabled: fetching || toolsList.length === 0,
-                onClick: () => onToggleAllTools(false),
-              },
-              t('sessionSettings.toolsModal.disableAll'),
-            )
-          : null,
-        toolsMode === 'custom'
-          ? e(
-              'button',
-              {
-                key: 'reset',
-                type: 'button',
-                className: 'dsh-sam-btn secondary',
-                disabled: fetching,
-                onClick: onResetToDefault,
-              },
-              t('sessionSettings.toolsModal.resetToDefault'),
-            )
-          : null,
-        e(
-          'button',
-          {
-            key: 'refresh',
-            type: 'button',
-            className: 'dsh-sam-btn secondary',
-            disabled: fetching,
-            onClick: onFetchTools,
-            title: t('sessionSettings.toolsModal.refreshBtn'),
-          },
-          fetching
-            ? e(IconLoadingOutline16, { size: 14, className: 'dsh-spin' })
-            : e(IconRefreshOutline16, { size: 14 }),
-          fetching
-            ? t('sessionSettings.toolsModal.fetchingTools')
-            : t('sessionSettings.toolsModal.refreshBtn'),
-        ),
-      ].filter(Boolean),
-    }),
-
-    // Tools list
-    fetching
-      ? e(
-          'div',
-          { className: 'dsh-sam-loading', style: { padding: 24 } },
-          t('sessionSettings.toolsModal.fetchingTools'),
-        )
-      : error
-        ? e(
-            'div',
-            {
-              className: 'dsh-sam-notice error',
-              style: {
-                margin: '14px 0',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                gap: 12,
-              },
-            },
-            e(
-              'span',
-              null,
-              t('sessionSettings.toolsModal.fetchFailed') + error,
-            ),
-            e(
-              'button',
-              {
-                type: 'button',
-                className: 'dsh-sam-btn secondary',
-                onClick: onFetchTools,
-              },
-              e(IconRefreshOutline16, { size: 14 }),
-              t('sessionSettings.toolsModal.retry'),
-            ),
-          )
-        : toolsList.length === 0
-          ? e(EmptyState, {
-              style: { padding: '24px 16px' },
-              message: t('sessionSettings.toolsModal.noToolsAvailable'),
-              action: e(
+          isReadonly || activeTab !== 'tools'
+            ? e(
                 'button',
                 {
                   type: 'button',
-                  className: 'dsh-sam-btn secondary',
-                  onClick: onFetchTools,
+                  className: 'dsh-sam-btn primary',
+                  onClick: onClose,
                 },
-                e(IconRefreshOutline16, { size: 14 }),
-                t('sessionSettings.toolsModal.fetchToolsBtn'),
+                t('sessionSettings.skills.modalDoneBtn'),
+              )
+            : [
+                e(
+                  'button',
+                  {
+                    key: 'cancel',
+                    type: 'button',
+                    className: 'dsh-sam-btn secondary',
+                    onClick: onClose,
+                  },
+                  t('sessionSettings.toolsModal.cancel'),
+                ),
+                e(
+                  'button',
+                  {
+                    key: 'apply',
+                    type: 'button',
+                    className: 'dsh-sam-btn primary',
+                    onClick: onApply,
+                  },
+                  t('sessionSettings.toolsModal.save'),
+                ),
+              ],
+        ),
+      ],
+    },
+    // Primitive tabs: the tools body (with its own global/custom switch) or a
+    // read-only resource/prompt viewer.
+    e(McpPrimitivesTabs, {
+      active: activeTab,
+      onChange: onTabChange,
+      items: [
+        {
+          key: 'tools',
+          label: t('mcpServers.primitives.tabTools'),
+          count: tabCounts.tools,
+        },
+        {
+          key: 'resources',
+          label: t('mcpServers.primitives.tabResources'),
+          count: tabCounts.resources,
+        },
+        {
+          key: 'prompts',
+          label: t('mcpServers.primitives.tabPrompts'),
+          count: tabCounts.prompts,
+        },
+      ],
+    }),
+    activeTab === 'tools'
+      ? e(
+          React.Fragment,
+          null,
+          // Mode Switch Tabs (hidden in readonly mode)
+          !isReadonly
+            ? e(
+                'div',
+                { className: 'dsh-session-tools-mode-tabs' },
+                e(
+                  'button',
+                  {
+                    type: 'button',
+                    className: `dsh-session-tools-mode-tab ${toolsMode === 'global' ? 'active' : ''}`,
+                    onClick: () => onToolsModeChange('global'),
+                  },
+                  t('sessionSettings.toolsModal.modeDefaultTitle'),
+                ),
+                e(
+                  'button',
+                  {
+                    type: 'button',
+                    className: `dsh-session-tools-mode-tab ${toolsMode === 'custom' ? 'active' : ''}`,
+                    onClick: () => onToolsModeChange('custom'),
+                  },
+                  t('sessionSettings.toolsModal.modeCustomTitle'),
+                ),
+              )
+            : null,
+
+          // Toolbar
+          e(SearchToolbar, {
+            value: search,
+            onChange: setSearch,
+            placeholder: t('sessionSettings.toolsModal.searchPlaceholder'),
+            className: 'dsh-mcp-tools-toolbar',
+            actions: [
+              !isReadonly && toolsMode === 'custom'
+                ? e(
+                    'button',
+                    {
+                      key: 'enableAll',
+                      type: 'button',
+                      className: 'dsh-sam-btn secondary',
+                      disabled: fetching || toolsList.length === 0,
+                      onClick: () => onToggleAllTools(true),
+                    },
+                    t('sessionSettings.toolsModal.enableAll'),
+                  )
+                : null,
+              !isReadonly && toolsMode === 'custom'
+                ? e(
+                    'button',
+                    {
+                      key: 'disableAll',
+                      type: 'button',
+                      className: 'dsh-sam-btn secondary',
+                      disabled: fetching || toolsList.length === 0,
+                      onClick: () => onToggleAllTools(false),
+                    },
+                    t('sessionSettings.toolsModal.disableAll'),
+                  )
+                : null,
+              !isReadonly && toolsMode === 'custom'
+                ? e(
+                    'button',
+                    {
+                      key: 'reset',
+                      type: 'button',
+                      className: 'dsh-sam-btn secondary',
+                      disabled: fetching,
+                      onClick: onResetToDefault,
+                    },
+                    t('sessionSettings.toolsModal.resetToDefault'),
+                  )
+                : null,
+              e(
+                'button',
+                {
+                  key: 'refresh',
+                  type: 'button',
+                  className: 'dsh-sam-btn secondary',
+                  disabled: fetching,
+                  onClick: onFetchTools,
+                  title: t('mcpServers.actions.refresh'),
+                },
+                fetching
+                  ? e(IconLoadingOutlineMedium, {
+                      size: 14,
+                      className: 'dsh-spin',
+                    })
+                  : e(IconRefreshOutlineMedium, { size: 14 }),
+                fetching
+                  ? t('mcpServers.actions.toolsFetching')
+                  : t('mcpServers.actions.refresh'),
               ),
-            })
-          : filteredTools.length === 0
+            ].filter(Boolean),
+          }),
+
+          // Tools list
+          fetching
             ? e(
                 'div',
                 {
                   className: 'dsh-sam-desc',
                   style: { padding: '32px 0', textAlign: 'center' },
                 },
-                t('sessionSettings.skills.noMatch'),
+                t('mcpServers.actions.toolsFetching'),
               )
-            : e(
-                'div',
-                { className: 'dsh-mcp-tools-list' },
-                filteredTools.map((tool) => {
-                  const isGloballyDisabled = Boolean(
-                    Array.isArray(server.disabledTools) &&
-                    server.disabledTools.includes(tool.name),
-                  )
-                  const isCustomDisabled = disabledToolsSet.has(tool.name)
-                  const isDisabled =
-                    toolsMode === 'custom'
-                      ? isCustomDisabled
-                      : isGloballyDisabled
-
-                  const isSchemaExpanded = expandedSchemas.has(tool.name)
-                  const hasSchema = Boolean(
-                    tool.inputSchema &&
-                    typeof tool.inputSchema === 'object' &&
-                    tool.inputSchema.properties &&
-                    Object.keys(tool.inputSchema.properties).length > 0,
-                  )
-
-                  const isEnabled = !isDisabled
-                  const statusBadge = isDisabled
-                    ? {
-                        label: t(
-                          toolsMode === 'custom'
-                            ? 'sessionSettings.toolsModal.toolCustomDisabledBadge'
-                            : 'sessionSettings.toolsModal.toolGlobalDisabledBadge',
-                        ),
-                        variant: 'tool-disabled',
-                      }
-                    : {
-                        label: t('sessionSettings.toolsModal.toolEnabled'),
-                        variant: 'tool-active',
-                      }
-
-                  return e(
-                    'div',
-                    {
-                      key: tool.name,
-                      className: `dsh-mcp-tool-card ${isDisabled ? 'disabled' : ''}`,
+            : error
+              ? e(
+                  'div',
+                  {
+                    className: 'dsh-sam-notice error',
+                    style: {
+                      margin: '14px 0',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: 12,
                     },
-                    e(
+                  },
+                  e(
+                    'span',
+                    null,
+                    t('sessionSettings.toolsModal.fetchFailed') + error,
+                  ),
+                  e(
+                    'button',
+                    {
+                      type: 'button',
+                      className: 'dsh-sam-btn secondary',
+                      onClick: onFetchTools,
+                    },
+                    e(IconRefreshOutlineMedium, { size: 14 }),
+                    t('sessionSettings.toolsModal.retry'),
+                  ),
+                )
+              : toolsList.length === 0
+                ? e(EmptyState, {
+                    style: { padding: '24px 16px' },
+                    message: t('sessionSettings.toolsModal.noToolsAvailable'),
+                    action: e(
+                      'button',
+                      {
+                        type: 'button',
+                        className: 'dsh-sam-btn secondary',
+                        onClick: onFetchTools,
+                      },
+                      e(IconRefreshOutlineMedium, { size: 14 }),
+                      t('sessionSettings.toolsModal.fetchToolsBtn'),
+                    ),
+                  })
+                : filteredTools.length === 0
+                  ? e(
                       'div',
-                      { className: 'dsh-mcp-tool-card-main' },
-                      e(
-                        'div',
-                        { className: 'dsh-mcp-tool-card-left' },
-                        e(
-                          'button',
-                          {
-                            type: 'button',
-                            role: 'switch',
-                            'aria-checked': isEnabled,
-                            className: `dsh-mcp-switch-btn ${isEnabled ? 'active' : ''}`,
-                            disabled: toolsMode !== 'custom',
-                            style: {
-                              marginTop: 2,
-                              cursor:
-                                toolsMode === 'custom' ? 'pointer' : 'default',
-                            },
-                            onClick: () => onToggleTool(tool.name),
-                          },
-                          e('span', { className: 'dsh-mcp-switch-thumb' }),
-                        ),
-                        e(
+                      {
+                        className: 'dsh-sam-desc',
+                        style: { padding: '32px 0', textAlign: 'center' },
+                      },
+                      t('sessionSettings.skills.noMatch'),
+                    )
+                  : e(
+                      'div',
+                      { className: 'dsh-mcp-tools-list' },
+                      filteredTools.map((tool) => {
+                        const isGloballyDisabled = Boolean(
+                          Array.isArray(server.disabledTools) &&
+                          server.disabledTools.includes(tool.name),
+                        )
+                        const isCustomDisabled = disabledToolsSet.has(tool.name)
+                        const isDisabled =
+                          toolsMode === 'custom'
+                            ? isCustomDisabled
+                            : isGloballyDisabled
+
+                        const isSchemaExpanded = expandedSchemas.has(tool.name)
+                        const hasSchema = Boolean(
+                          tool.inputSchema &&
+                          typeof tool.inputSchema === 'object' &&
+                          tool.inputSchema.properties &&
+                          Object.keys(tool.inputSchema.properties).length > 0,
+                        )
+
+                        const isEnabled = !isDisabled
+                        const statusBadge = isDisabled
+                          ? {
+                              label: t(
+                                toolsMode === 'custom'
+                                  ? 'sessionSettings.toolsModal.toolCustomDisabledBadge'
+                                  : 'sessionSettings.toolsModal.toolGlobalDisabledBadge',
+                              ),
+                              variant: 'tool-disabled',
+                            }
+                          : {
+                              label: t(
+                                'sessionSettings.toolsModal.toolEnabled',
+                              ),
+                              variant: 'tool-active',
+                            }
+
+                        return e(
                           'div',
-                          { className: 'dsh-mcp-tool-info' },
+                          {
+                            key: tool.name,
+                            className: `dsh-mcp-tool-card ${isDisabled ? 'disabled' : ''}`,
+                          },
                           e(
                             'div',
-                            { className: 'dsh-mcp-tool-title-row' },
+                            { className: 'dsh-mcp-tool-card-main' },
                             e(
-                              'span',
-                              { className: 'dsh-mcp-tool-name' },
-                              tool.name,
+                              'div',
+                              { className: 'dsh-mcp-tool-card-left' },
+                              e(
+                                'button',
+                                {
+                                  type: 'button',
+                                  role: 'switch',
+                                  'aria-checked': isEnabled,
+                                  className: `dsh-mcp-switch-btn ${isEnabled ? 'active' : ''}`,
+                                  disabled:
+                                    isReadonly || toolsMode !== 'custom',
+                                  style: {
+                                    marginTop: 2,
+                                    cursor:
+                                      !isReadonly && toolsMode === 'custom'
+                                        ? 'pointer'
+                                        : 'default',
+                                  },
+                                  onClick: () => {
+                                    if (!isReadonly) onToggleTool(tool.name)
+                                  },
+                                },
+                                e('span', {
+                                  className: 'dsh-mcp-switch-thumb',
+                                }),
+                              ),
+                              e(
+                                'div',
+                                { className: 'dsh-mcp-tool-info' },
+                                e(
+                                  'div',
+                                  { className: 'dsh-mcp-tool-title-row' },
+                                  e(
+                                    'span',
+                                    { className: 'dsh-mcp-tool-name' },
+                                    tool.name,
+                                  ),
+                                  e(
+                                    'span',
+                                    {
+                                      className: `dsh-mcp-tool-status-pill ${
+                                        statusBadge.variant === 'tool-active'
+                                          ? 'active'
+                                          : 'disabled'
+                                      }`,
+                                    },
+                                    statusBadge.label,
+                                  ),
+                                ),
+                                tool.description
+                                  ? e(
+                                      'p',
+                                      { className: 'dsh-mcp-tool-desc' },
+                                      tool.description,
+                                    )
+                                  : null,
+                              ),
                             ),
-                            e(
-                              'span',
-                              {
-                                className: `dsh-mcp-tool-status-pill ${
-                                  statusBadge.variant === 'tool-active'
-                                    ? 'active'
-                                    : 'disabled'
-                                }`,
-                              },
-                              statusBadge.label,
-                            ),
+                            hasSchema
+                              ? e(
+                                  'button',
+                                  {
+                                    type: 'button',
+                                    className: `dsh-mcp-tool-schema-btn ${isSchemaExpanded ? 'active' : ''}`,
+                                    onClick: () =>
+                                      handleToggleSchema(tool.name),
+                                  },
+                                  isSchemaExpanded
+                                    ? t(
+                                        'sessionSettings.toolsModal.hideParameters',
+                                      )
+                                    : t(
+                                        'sessionSettings.toolsModal.parameters',
+                                      ),
+                                )
+                              : null,
                           ),
-                          tool.description
-                            ? e(
-                                'p',
-                                { className: 'dsh-mcp-tool-desc' },
-                                tool.description,
-                              )
+                          isSchemaExpanded && hasSchema
+                            ? e(SchemaViewer, {
+                                schema: tool.inputSchema,
+                                mode: schemaModes[tool.name] || 'list',
+                                onModeChange: (m) =>
+                                  handleSchemaModeChange(tool.name, m),
+                                t,
+                              })
                             : null,
-                        ),
-                      ),
-                      hasSchema
-                        ? e(
-                            'button',
-                            {
-                              type: 'button',
-                              className: `dsh-mcp-tool-schema-btn ${isSchemaExpanded ? 'active' : ''}`,
-                              onClick: () => handleToggleSchema(tool.name),
-                            },
-                            isSchemaExpanded
-                              ? t('sessionSettings.toolsModal.hideParameters')
-                              : t('sessionSettings.toolsModal.parameters'),
-                          )
-                        : null,
+                        )
+                      }),
                     ),
-                    isSchemaExpanded && hasSchema
-                      ? e(SchemaViewer, {
-                          schema: tool.inputSchema,
-                          mode: schemaModes[tool.name] || 'list',
-                          onModeChange: (m) =>
-                            handleSchemaModeChange(tool.name, m),
-                          t,
-                        })
-                      : null,
-                  )
-                }),
-              ),
+        )
+      : activeTab === 'resources'
+        ? resourcePanel
+        : promptPanel,
   )
 }

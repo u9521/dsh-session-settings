@@ -1,7 +1,7 @@
 import * as React from 'react'
 import {
-  IconRefreshOutline16,
-  IconLoadingOutline16,
+  IconRefreshOutlineMedium,
+  IconLoadingOutlineMedium,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {
   GlobalMcpServerConfig,
@@ -15,6 +15,7 @@ import {
   SearchToolbar,
 } from '../../components/index.ts'
 import { formatProtocolTitle } from '../../utils/string.ts'
+import { McpPrimitivesTabs, type McpPrimitiveTab } from './McpPrimitivesTabs.ts'
 
 const e = React.createElement
 
@@ -28,6 +29,17 @@ export interface McpToolsModalProps {
   serverInfo?: McpServerInfo | null
   detectedTransport?: string | null
   saving: boolean
+  /**
+   * Which of the three primitive tabs is showing. The modal owns the strip while
+   * the resource and prompt bodies are injected, so this component stays free of
+   * their fetch and read state.
+   */
+  activeTab: McpPrimitiveTab
+  onTabChange: (tab: McpPrimitiveTab) => void
+  tabCounts: { tools: number; resources: number; prompts: number }
+  /** Prebuilt bodies for the non-tools tabs. */
+  resourcePanel?: React.ReactNode
+  promptPanel?: React.ReactNode
   onToggleTool: (toolName: string) => void
   onToggleAllTools: (enableAll: boolean) => void
   onRefresh: () => void
@@ -46,6 +58,11 @@ export function McpToolsModal({
   serverInfo,
   detectedTransport,
   saving,
+  activeTab,
+  onTabChange,
+  tabCounts,
+  resourcePanel,
+  promptPanel,
   onToggleTool,
   onToggleAllTools,
   onRefresh,
@@ -152,244 +169,306 @@ export function McpToolsModal({
     {
       open: Boolean(server),
       onClose,
-      title: t('mcpServers.toolsModal.title'),
+      // The title states what the panel is showing, so it tracks the active
+      // tab instead of always naming the tools list.
+      title: t(
+        activeTab === 'tools'
+          ? 'mcpServers.toolsModal.title'
+          : activeTab === 'resources'
+            ? 'mcpServers.primitives.titleResources'
+            : 'mcpServers.primitives.titlePrompts',
+      ),
       headerExtra: headerMeta,
       panelClassName: 'dsh-mcp-tools-modal',
       footer: [
         e(
           'div',
           { key: 'left', className: 'dsh-mcp-modal-footer-left' },
-          e(
-            'span',
-            {
-              style: {
-                fontSize: 12,
-                color: 'var(--dsw-alias-label-secondary)',
-              },
-            },
-            t('sessionSettings.mcp.toolsEnabledCount', {
-              enabled: toolsList.length - disabledToolsSet.size,
-              total: toolsList.length,
-            }),
-          ),
+          // Only the tools tab has a counter worth showing; the read-only tabs
+          // deliberately contribute nothing here.
+          activeTab === 'tools'
+            ? e(
+                'span',
+                {
+                  style: {
+                    fontSize: 12,
+                    color: 'var(--dsw-alias-label-secondary)',
+                  },
+                },
+                t('sessionSettings.mcp.toolsEnabledCount', {
+                  enabled: toolsList.length - disabledToolsSet.size,
+                  total: toolsList.length,
+                }),
+              )
+            : null,
         ),
         e(
           'div',
           { key: 'right', className: 'dsh-mcp-modal-footer-right' },
-          e(
-            'button',
-            {
-              type: 'button',
-              className: 'dsh-sam-btn secondary',
-              onClick: onClose,
-            },
-            t('mcpServers.actions.cancel'),
-          ),
-          e(
-            'button',
-            {
-              type: 'button',
-              className: 'dsh-sam-btn primary',
-              disabled: saving,
-              onClick: onSave,
-            },
-            saving
-              ? t('mcpServers.toolsModal.saving')
-              : t('mcpServers.toolsModal.save'),
-          ),
+          activeTab === 'tools'
+            ? e(
+                React.Fragment,
+                null,
+                e(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'dsh-sam-btn secondary',
+                    onClick: onClose,
+                  },
+                  t('mcpServers.actions.cancel'),
+                ),
+                e(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'dsh-sam-btn primary',
+                    disabled: saving,
+                    onClick: onSave,
+                  },
+                  saving
+                    ? t('mcpServers.toolsModal.saving')
+                    : t('mcpServers.toolsModal.save'),
+                ),
+              )
+            : e(
+                'button',
+                {
+                  type: 'button',
+                  className: 'dsh-sam-btn primary',
+                  onClick: onClose,
+                },
+                t('mcpServers.primitives.close'),
+              ),
         ),
       ],
     },
-    // Toolbar
-    e(SearchToolbar, {
-      value: search,
-      onChange: setSearch,
-      placeholder: t('mcpServers.toolsModal.searchPlaceholder'),
-      actions: [
-        e(
-          'button',
-          {
-            key: 'enableAll',
-            type: 'button',
-            className: 'dsh-sam-btn secondary',
-            disabled: loading || toolsList.length === 0,
-            onClick: () => onToggleAllTools(true),
-          },
-          t('mcpServers.toolsModal.enableAll'),
-        ),
-        e(
-          'button',
-          {
-            key: 'disableAll',
-            type: 'button',
-            className: 'dsh-sam-btn secondary',
-            disabled: loading || toolsList.length === 0,
-            onClick: () => onToggleAllTools(false),
-          },
-          t('mcpServers.toolsModal.disableAll'),
-        ),
-        e(
-          'button',
-          {
-            key: 'retry',
-            type: 'button',
-            className: 'dsh-sam-btn secondary',
-            disabled: loading,
-            onClick: onRefresh,
-            title: t('mcpServers.toolsModal.retry'),
-          },
-          loading
-            ? e(IconLoadingOutline16, { size: 14, className: 'dsh-spin' })
-            : e(IconRefreshOutline16, { size: 14 }),
-          loading
-            ? t('mcpServers.actions.toolsFetching')
-            : t('mcpServers.toolsModal.retry'),
-        ),
+    e(McpPrimitivesTabs, {
+      active: activeTab,
+      onChange: onTabChange,
+      items: [
+        {
+          key: 'tools',
+          label: t('mcpServers.primitives.tabTools'),
+          count: tabCounts.tools,
+        },
+        {
+          key: 'resources',
+          label: t('mcpServers.primitives.tabResources'),
+          count: tabCounts.resources,
+        },
+        {
+          key: 'prompts',
+          label: t('mcpServers.primitives.tabPrompts'),
+          count: tabCounts.prompts,
+        },
       ],
     }),
-    // Tools list / States
-    loading
+    activeTab === 'tools'
       ? e(
-          'div',
-          {
-            className: 'dsh-sam-desc',
-            style: {
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 8,
-              padding: '32px 0',
-            },
-          },
-          e(IconLoadingOutline16, { size: 16, className: 'dsh-spin' }),
-          t('mcpServers.toolsModal.loading'),
-        )
-      : error
-        ? e(
-            'div',
-            {
-              className: 'dsh-sam-notice error',
-              style: { margin: '14px 0' },
-            },
-            t('mcpServers.toolsModal.fetchFailed') + error,
-          )
-        : toolsList.length === 0
-          ? e(
-              'div',
-              {
-                className: 'dsh-sam-desc',
-                style: { padding: '32px 0', textAlign: 'center' },
-              },
-              t('mcpServers.toolsModal.serverNoTools'),
-            )
-          : filteredTools.length === 0
+          React.Fragment,
+          null,
+          // Toolbar
+          e(SearchToolbar, {
+            value: search,
+            onChange: setSearch,
+            placeholder: t('mcpServers.toolsModal.searchPlaceholder'),
+            actions: [
+              e(
+                'button',
+                {
+                  key: 'enableAll',
+                  type: 'button',
+                  className: 'dsh-sam-btn secondary',
+                  disabled: loading || toolsList.length === 0,
+                  onClick: () => onToggleAllTools(true),
+                },
+                t('mcpServers.toolsModal.enableAll'),
+              ),
+              e(
+                'button',
+                {
+                  key: 'disableAll',
+                  type: 'button',
+                  className: 'dsh-sam-btn secondary',
+                  disabled: loading || toolsList.length === 0,
+                  onClick: () => onToggleAllTools(false),
+                },
+                t('mcpServers.toolsModal.disableAll'),
+              ),
+              e(
+                'button',
+                {
+                  key: 'retry',
+                  type: 'button',
+                  className: 'dsh-sam-btn secondary',
+                  disabled: loading,
+                  onClick: onRefresh,
+                  // One shared label for all three tabs: the probe refreshes
+                  // every primitive at once, so no tab should name only its own.
+                  title: t('mcpServers.actions.refresh'),
+                },
+                loading
+                  ? e(IconLoadingOutlineMedium, {
+                      size: 14,
+                      className: 'dsh-spin',
+                    })
+                  : e(IconRefreshOutlineMedium, { size: 14 }),
+                loading
+                  ? t('mcpServers.actions.toolsFetching')
+                  : t('mcpServers.actions.refresh'),
+              ),
+            ],
+          }),
+          // Tools list / States
+          loading
             ? e(
                 'div',
                 {
                   className: 'dsh-sam-desc',
                   style: { padding: '32px 0', textAlign: 'center' },
                 },
-                t('mcpServers.toolsModal.empty'),
+                t('mcpServers.actions.toolsFetching'),
               )
-            : e(
-                'div',
-                { className: 'dsh-mcp-tools-list' },
-                filteredTools.map((tool) => {
-                  const isDisabled = disabledToolsSet.has(tool.name)
-                  const isSchemaExpanded = expandedSchemas.has(tool.name)
-                  const hasSchema =
-                    tool.inputSchema && Object.keys(tool.inputSchema).length > 0
-
-                  return e(
+            : error
+              ? e(
+                  'div',
+                  {
+                    className: 'dsh-sam-notice error',
+                    style: { margin: '14px 0' },
+                  },
+                  t('mcpServers.toolsModal.fetchFailed') + error,
+                )
+              : toolsList.length === 0
+                ? e(
                     'div',
                     {
-                      key: tool.name,
-                      className: `dsh-mcp-tool-card ${isDisabled ? 'disabled' : ''}`,
+                      className: 'dsh-sam-desc',
+                      style: { padding: '32px 0', textAlign: 'center' },
                     },
-                    e(
+                    t('mcpServers.toolsModal.serverNoTools'),
+                  )
+                : filteredTools.length === 0
+                  ? e(
                       'div',
-                      { className: 'dsh-mcp-tool-card-main' },
-                      e(
-                        'div',
-                        { className: 'dsh-mcp-tool-card-left' },
-                        e(
+                      {
+                        className: 'dsh-sam-desc',
+                        style: { padding: '32px 0', textAlign: 'center' },
+                      },
+                      t('mcpServers.toolsModal.empty'),
+                    )
+                  : e(
+                      'div',
+                      { className: 'dsh-mcp-tools-list' },
+                      filteredTools.map((tool) => {
+                        const isDisabled = disabledToolsSet.has(tool.name)
+                        const isSchemaExpanded = expandedSchemas.has(tool.name)
+                        const hasSchema =
+                          tool.inputSchema &&
+                          Object.keys(tool.inputSchema).length > 0
+
+                        return e(
                           'div',
                           {
-                            className: `dsh-mcp-switch-btn ${!isDisabled ? 'active' : ''}`,
-                            role: 'button',
-                            tabIndex: 0,
-                            style: { marginTop: 2, cursor: 'pointer' },
-                            onClick: () => onToggleTool(tool.name),
-                            onKeyDown: (evt: React.KeyboardEvent) => {
-                              if (evt.key === 'Enter' || evt.key === ' ') {
-                                evt.preventDefault()
-                                onToggleTool(tool.name)
-                              }
-                            },
-                            title: !isDisabled
-                              ? t('mcpServers.toolsModal.statusEnabled')
-                              : t('mcpServers.toolsModal.statusDisabled'),
+                            key: tool.name,
+                            className: `dsh-mcp-tool-card ${isDisabled ? 'disabled' : ''}`,
                           },
-                          e('span', { className: 'dsh-mcp-switch-thumb' }),
-                        ),
-                        e(
-                          'div',
-                          { className: 'dsh-mcp-tool-info' },
                           e(
                             'div',
-                            { className: 'dsh-mcp-tool-title-row' },
+                            { className: 'dsh-mcp-tool-card-main' },
                             e(
-                              'span',
-                              { className: 'dsh-mcp-tool-name' },
-                              tool.name,
-                            ),
-                            e(
-                              'span',
-                              {
-                                className: `dsh-mcp-tool-status-pill ${!isDisabled ? 'active' : 'disabled'}`,
-                              },
-                              !isDisabled
-                                ? t('mcpServers.toolsModal.statusEnabled')
-                                : t('mcpServers.toolsModal.statusDisabled'),
-                            ),
-                          ),
-                          tool.description
-                            ? e(
+                              'div',
+                              { className: 'dsh-mcp-tool-card-left' },
+                              e(
                                 'div',
-                                { className: 'dsh-mcp-tool-desc' },
-                                tool.description,
-                              )
+                                {
+                                  className: `dsh-mcp-switch-btn ${!isDisabled ? 'active' : ''}`,
+                                  role: 'button',
+                                  tabIndex: 0,
+                                  style: { marginTop: 2, cursor: 'pointer' },
+                                  onClick: () => onToggleTool(tool.name),
+                                  onKeyDown: (evt: React.KeyboardEvent) => {
+                                    if (
+                                      evt.key === 'Enter' ||
+                                      evt.key === ' '
+                                    ) {
+                                      evt.preventDefault()
+                                      onToggleTool(tool.name)
+                                    }
+                                  },
+                                  title: !isDisabled
+                                    ? t('mcpServers.toolsModal.statusEnabled')
+                                    : t('mcpServers.toolsModal.statusDisabled'),
+                                },
+                                e('span', {
+                                  className: 'dsh-mcp-switch-thumb',
+                                }),
+                              ),
+                              e(
+                                'div',
+                                { className: 'dsh-mcp-tool-info' },
+                                e(
+                                  'div',
+                                  { className: 'dsh-mcp-tool-title-row' },
+                                  e(
+                                    'span',
+                                    { className: 'dsh-mcp-tool-name' },
+                                    tool.name,
+                                  ),
+                                  e(
+                                    'span',
+                                    {
+                                      className: `dsh-mcp-tool-status-pill ${!isDisabled ? 'active' : 'disabled'}`,
+                                    },
+                                    !isDisabled
+                                      ? t('mcpServers.toolsModal.statusEnabled')
+                                      : t(
+                                          'mcpServers.toolsModal.statusDisabled',
+                                        ),
+                                  ),
+                                ),
+                                tool.description
+                                  ? e(
+                                      'div',
+                                      { className: 'dsh-mcp-tool-desc' },
+                                      tool.description,
+                                    )
+                                  : null,
+                              ),
+                            ),
+                            hasSchema
+                              ? e(
+                                  'button',
+                                  {
+                                    type: 'button',
+                                    className: `dsh-mcp-tool-schema-btn ${isSchemaExpanded ? 'active' : ''}`,
+                                    onClick: () =>
+                                      handleToggleSchema(tool.name),
+                                  },
+                                  isSchemaExpanded
+                                    ? t('mcpServers.toolsModal.hideParameters')
+                                    : t('mcpServers.toolsModal.parameters'),
+                                )
+                              : null,
+                          ),
+                          isSchemaExpanded && hasSchema
+                            ? e(SchemaViewer, {
+                                schema: tool.inputSchema,
+                                mode: schemaModes[tool.name] || 'list',
+                                onModeChange: (m) =>
+                                  setSchemaModes((prev) => ({
+                                    ...prev,
+                                    [tool.name]: m,
+                                  })),
+                                t,
+                              })
                             : null,
-                        ),
-                      ),
-                      hasSchema
-                        ? e(
-                            'button',
-                            {
-                              type: 'button',
-                              className: `dsh-mcp-tool-schema-btn ${isSchemaExpanded ? 'active' : ''}`,
-                              onClick: () => handleToggleSchema(tool.name),
-                            },
-                            isSchemaExpanded
-                              ? t('mcpServers.toolsModal.hideParameters')
-                              : t('mcpServers.toolsModal.parameters'),
-                          )
-                        : null,
+                        )
+                      }),
                     ),
-                    isSchemaExpanded && hasSchema
-                      ? e(SchemaViewer, {
-                          schema: tool.inputSchema,
-                          mode: schemaModes[tool.name] || 'list',
-                          onModeChange: (m) =>
-                            setSchemaModes((prev) => ({
-                              ...prev,
-                              [tool.name]: m,
-                            })),
-                          t,
-                        })
-                      : null,
-                  )
-                }),
-              ),
+        )
+      : activeTab === 'resources'
+        ? resourcePanel
+        : promptPanel,
   )
 }

@@ -1,15 +1,12 @@
 #!/usr/bin/env node
 /**
- * Build script — DSH official tsdown pipeline, vendored into this repository.
- *
- * The official client-bundle preset lives at
- * external/deepseek-harness/packages/client/tsdown.client.ts (a copy of
- * deepseek-ai/deepseek-harness packages/client/tsdown.client.ts), so no
- * external DSH source checkout or soft-linking is needed — every build
- * dependency (tsdown, lightningcss, @deepseek-ai/cordis, typescript) comes
- * from local devDependencies:
+ * Build script:
  *   1. `tsc -p tsconfig.json` (type check + emit lib/types)
  *   2. `tsdown -c tsdown.config.mjs` (lib/index.js + lib/client.js)
+ *
+ * Both halves are built by this repository's own tsdown config; every build
+ * dependency (tsdown, typescript, @deepseek-ai/cordis,
+ * @deepseek-ai/dsh-client-ui-primitives) comes from local devDependencies.
  *
  * `--check` runs tsc --noEmit instead of emitting and bundling.
  */
@@ -38,8 +35,5 @@ run(process.execPath, [
   ...args,
 ])
 if (!CHECK_ONLY) {
-  // Default log level on purpose: the vendored preset still emits deprecation
-  // warnings (external/noExternal) worth keeping visible — they disappear
-  // once upstream modernizes and `pnpm run sync` pulls the new preset.
   run(join(root, 'node_modules', '.bin', 'tsdown'), ['-c', 'tsdown.config.mjs'])
 }

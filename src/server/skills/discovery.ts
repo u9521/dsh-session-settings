@@ -1,172 +1,158 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type {
   Agent,
-  SessionHeader,
+  SessionSettingsStore,
   SkillDefinition,
   SkillItem,
   SkillsService,
 } from '../../types.ts'
 import { resolveSessionCwd } from '../session/resolution.ts'
+import { resolveEffectiveSkills } from '../session/storage.ts'
+import { resolveWorkspaceForSession } from '../session/resolution.ts'
 
-function classifySkillSource(skill: {
-  provider?: string
-  source?: string
-  metadata?: Readonly<Record<string, unknown>>
-}): { isRuntime: boolean; source: string } {
-  if (!skill) return { isRuntime: false, source: 'user-dsh' }
+/** The preset registry slice this plugin consumes. */
+interface AgentPresetsService {
+  acquireScope?: (
+    id?: string,
+  ) => Promise<{ key?: unknown; [Symbol.asyncDispose]?: () => Promise<void> }>
+  serviceFor?: (agent: { ctx: Context }, name: string) => unknown
+}
 
-  // 1. Explicit metadata override (if declared in YAML frontmatter)
-  const metaType =
-    typeof skill.metadata?.type === 'string'
-      ? (skill.metadata.type as string).toLowerCase()
-      : typeof skill.metadata?.scope === 'string'
-        ? (skill.metadata.scope as string).toLowerCase()
-        : undefined
-
-  if (
-    metaType === 'user' ||
-    metaType === 'user-dsh' ||
-    metaType === 'user-agents'
-  ) {
-    return { isRuntime: false, source: 'user-dsh' }
-  }
-  if (
-    metaType === 'project' ||
-    metaType === 'project-dsh' ||
-    metaType === 'project-agents'
-  ) {
-    return { isRuntime: false, source: 'project-dsh' }
-  }
-  if (
-    metaType === 'preset' ||
-    metaType === 'runtime' ||
-    metaType === 'bundled'
-  ) {
-    return { isRuntime: true, source: 'runtime' }
-  }
-
-  // 2. Official SkillSource enumeration contract from DSH (@deepseek-ai/dsh-skill)
-  const src = (skill.source || '').toLowerCase()
-
-  switch (src) {
-    case 'user-dsh':
-    case 'user-agents':
-      return { isRuntime: false, source: src }
-
-    case 'project-dsh':
-    case 'project-agents':
-      return { isRuntime: false, source: src }
-
-    case 'custom':
-    case 'custom-preset':
-    case 'bundled-preset':
-    case 'preset':
-    case 'runtime':
-    case 'bundled':
-      return { isRuntime: true, source: src }
-
-    default:
-      if (src.includes('user')) {
-        return { isRuntime: false, source: 'user-dsh' }
-      }
-      if (src.includes('project')) {
-        return { isRuntime: false, source: 'project-dsh' }
-      }
-      return { isRuntime: true, source: src || 'runtime' }
-  }
+/**
+ * Bucket a skill by its provider-declared {@link SkillSource}: `user-*` and
+ * `project-*` are filesystem-backed, everything else (bundled, runtime, custom)
+ * ships with the composition and is listed after them.
+ */
+function classifySkillSource(skill: { source?: string }): {
+  isRuntime: boolean
+  source: string
+} {
+  const source = (skill.source ?? '').toLowerCase()
+  if (source.includes('user')) return { isRuntime: false, source }
+  if (source.includes('project')) return { isRuntime: false, source }
+  return { isRuntime: true, source: source || 'runtime' }
 }
 
 function compareSkills(a: SkillItem, b: SkillItem): number {
-  const aRuntime = Boolean(a.isRuntime)
-  const bRuntime = Boolean(b.isRuntime)
-  // Non-runtime skills first, runtime skills last (置底)
-  if (aRuntime !== bRuntime) {
-    return aRuntime ? 1 : -1
+  if (Boolean(a.isRuntime) !== Boolean(b.isRuntime)) {
+    return a.isRuntime ? 1 : -1
   }
   return a.name.localeCompare(b.name)
 }
 
-function resolveSessionPreset(session?: {
-  header?: SessionHeader
-  snapshotEvents?: () => readonly unknown[]
-}): string | undefined {
-  if (!session) return undefined
-  if (typeof session.snapshotEvents === 'function') {
-    const events = session.snapshotEvents()
-    for (let index = events.length - 1; index >= 0; index -= 1) {
-      const event = events[index] as
-        { type?: string; data?: { agentPreset?: string } } | undefined
-      if (event?.type === 'agent-preset/selected') {
-        return event.data?.agentPreset
-      }
+/** Durable preset id of a session, read from the header (live, then stored). */
+async function resolvePresetId(
+  ctx: Context,
+  sessionId?: string,
+): Promise<string | undefined> {
+  if (!sessionId) return undefined
+
+  const live = ctx.get('sessions')?.get?.(sessionId)
+  if (live?.header?.agentPreset) return live.header.agentPreset
+
+  const persistence = ctx.get('sessionPersistence')
+  if (typeof persistence?.stat === 'function') {
+    try {
+      return (await persistence.stat(sessionId))?.header?.agentPreset
+    } catch {
+      // Ignore persistence faults; fall back to the default preset.
     }
   }
-  return session.header?.agentPreset
+  return undefined
 }
 
+/**
+ * Resolve the skill-registry view scopes for a session's DISPLAY read.
+ *
+ * Enforcement lives in each agent's own scope layer, but a scoped read only
+ * traverses from its key UPWARD — so reading from a preset's generation scope
+ * can never observe an agent-layer shadow. Display therefore reads the base
+ * composition and applies the disable flags itself, keeping the GUI independent
+ * of the mechanism that enforces the policy.
+ *
+ * A live agent is used when present because its scope chain includes the
+ * composition; otherwise the preset registry lends a standing scope lease
+ * (preset providers register into that layer), which the caller must release.
+ */
 async function resolveScopes(
   ctx: Context,
   sessionId?: string,
-): Promise<unknown[]> {
-  const sessionsService = ctx.get('sessions')
-  const agentsService = ctx.get('agents')
-  const presets = ctx.get('agentPresets')
+): Promise<{ scopes: unknown[]; release: () => Promise<void> }> {
+  const liveAgent = sessionId
+    ? (ctx.get('agents')?.get?.(sessionId) as Agent | undefined)
+    : undefined
+  if (liveAgent) return { scopes: [liveAgent], release: async () => {} }
 
-  if (sessionId) {
-    const session = sessionsService?.get?.(sessionId)
-    const liveAgent = agentsService?.get?.(sessionId)
-    if (liveAgent) {
-      return [liveAgent]
-    }
-    if (presets && typeof presets.standingKeyFor === 'function') {
-      try {
-        let presetId = resolveSessionPreset(session)
-        if (!presetId) {
-          const persistence = ctx.get('sessionPersistence')
-          if (persistence && typeof persistence.stat === 'function') {
-            try {
-              const stated = await persistence.stat(sessionId)
-              presetId = stated?.header?.agentPreset
-            } catch {}
-          }
-        }
-        const standingKey = await presets.standingKeyFor(presetId)
-        if (standingKey) return [standingKey]
-      } catch {}
-    }
-    return [undefined]
-  }
-
-  // Global context (no sessionId specified, e.g. Settings modal)
-  if (presets && typeof presets.standingKeyFor === 'function') {
+  const presets = ctx.get('agentPresets') as AgentPresetsService | undefined
+  if (typeof presets?.acquireScope === 'function') {
     try {
-      const defaultKey = await presets.standingKeyFor()
-      if (defaultKey) return [defaultKey]
-    } catch {}
+      const lease = await presets.acquireScope(
+        await resolvePresetId(ctx, sessionId),
+      )
+      if (lease?.key) {
+        return {
+          scopes: [lease.key],
+          release: async () => {
+            try {
+              await lease[Symbol.asyncDispose]?.()
+            } catch {
+              // The lease is best-effort; a failed release must not fail a read.
+            }
+          },
+        }
+      }
+    } catch {
+      // Unknown preset or unusable composition: fall back to the global layer.
+    }
   }
-
-  return [undefined]
+  return { scopes: [undefined], release: async () => {} }
 }
 
-function resolveSkillRegistryService(
+/**
+ * Per-session invocation policy to overlay onto a DISPLAY read.
+ *
+ * The registry read is invocation-neutral by design; consumers apply policy at
+ * their own boundary. Display does the same, so the flags shown in the GUI match
+ * what enforcement will do without the GUI reaching into a scope layer (a scoped
+ * read can never see a nearer scope's shadow).
+ */
+async function resolveDisplayPolicy(
+  ctx: Context,
+  store: SessionSettingsStore | undefined,
+  sessionId?: string,
+): Promise<{ disabledModel: Set<string>; disabledUser: Set<string> }> {
+  if (!store) {
+    return { disabledModel: new Set(), disabledUser: new Set() }
+  }
+  const workspaceId = await resolveWorkspaceForSession(ctx, sessionId)
+  const effective = resolveEffectiveSkills(store, sessionId, workspaceId)
+  return {
+    disabledModel: new Set(effective.effectiveDisabledModelSkills ?? []),
+    disabledUser: new Set(effective.effectiveDisabledUserSkills ?? []),
+  }
+}
+
+/** The registry instance to read for one scope (agent-scoped when available). */
+function skillRegistryFor(
   ctx: Context,
   scope: unknown,
 ): SkillsService | undefined {
-  const presets = ctx.get('agentPresets')
+  const presets = ctx.get('agentPresets') as AgentPresetsService | undefined
   if (
     scope &&
     typeof scope === 'object' &&
     'ctx' in scope &&
-    presets &&
-    typeof presets.serviceFor === 'function'
+    typeof presets?.serviceFor === 'function'
   ) {
     try {
-      const service = presets.serviceFor<SkillsService>(
-        scope as Agent,
+      const service = presets.serviceFor(
+        scope as { ctx: Context },
         'skills',
-      )
+      ) as SkillsService | undefined
       if (service) return service
-    } catch {}
+    } catch {
+      // Fall through to the global registry.
+    }
   }
   return ctx.get('skills')
 }
@@ -174,43 +160,45 @@ function resolveSkillRegistryService(
 export async function getAvailableSkills(
   ctx: Context,
   sessionId?: string,
+  store?: SessionSettingsStore,
 ): Promise<SkillItem[]> {
+  const cwd = await resolveSessionCwd(ctx, sessionId)
+  const { scopes, release } = await resolveScopes(ctx, sessionId)
+  const policy = await resolveDisplayPolicy(ctx, store, sessionId)
   const map = new Map<string, SkillItem>()
 
-  // 1. Try resolving session cwd if session exists. For global scope, keep cwd undefined so project scanning is skipped.
-  const targetCwd = await resolveSessionCwd(ctx, sessionId)
-
-  // 2. Query official Cordis Skill Registry across resolved scopes
-  const scopes = await resolveScopes(ctx, sessionId)
-
-  for (const scope of scopes) {
-    const skillsService = resolveSkillRegistryService(ctx, scope)
-
-    if (skillsService && typeof skillsService.list === 'function') {
+  try {
+    for (const scope of scopes) {
+      const registry = skillRegistryFor(ctx, scope)
+      if (typeof registry?.list !== 'function') continue
       try {
-        const list = await skillsService.list({
-          cwd: targetCwd,
-          scope,
-        })
-        if (Array.isArray(list)) {
-          for (const s of list) {
-            if (!map.has(s.name)) {
-              const { isRuntime, source } = classifySkillSource(s)
-              map.set(s.name, {
-                name: s.name,
-                description: s.description || '',
-                whenToUse: s.whenToUse,
-                provider: s.provider || 'skills-registry',
-                source,
-                modelInvocable: s.invocation?.modelInvocable ?? true,
-                userInvocable: s.invocation?.userInvocable ?? true,
-                isRuntime,
-              })
-            }
-          }
+        const list = await registry.list({ cwd, scope })
+        for (const skill of list ?? []) {
+          if (map.has(skill.name)) continue
+          const { isRuntime, source } = classifySkillSource(skill)
+          const modelInvocable =
+            (skill.invocation?.modelInvocable ?? true) &&
+            !policy.disabledModel.has(skill.name)
+          const userInvocable =
+            (skill.invocation?.userInvocable ?? true) &&
+            !policy.disabledUser.has(skill.name)
+          map.set(skill.name, {
+            name: skill.name,
+            description: skill.description ?? '',
+            whenToUse: skill.whenToUse,
+            provider: skill.provider || 'skills-registry',
+            source,
+            modelInvocable,
+            userInvocable,
+            isRuntime,
+          })
         }
-      } catch {}
+      } catch {
+        // A failing provider must not hide the others.
+      }
     }
+  } finally {
+    await release()
   }
 
   return Array.from(map.values()).sort(compareSkills)
@@ -220,47 +208,45 @@ export async function getSkillDetail(
   ctx: Context,
   name: string,
   sessionId?: string,
+  store?: SessionSettingsStore,
 ): Promise<SkillItem | null> {
-  const targetCwd = await resolveSessionCwd(ctx, sessionId)
+  const cwd = await resolveSessionCwd(ctx, sessionId)
+  const { scopes, release } = await resolveScopes(ctx, sessionId)
+  const policy = await resolveDisplayPolicy(ctx, store, sessionId)
 
-  // Query official Cordis Skill Registry across resolved scopes
-  const scopes = await resolveScopes(ctx, sessionId)
-
-  for (const scope of scopes) {
-    const skillsService = resolveSkillRegistryService(ctx, scope)
-
-    if (skillsService && typeof skillsService.get === 'function') {
+  try {
+    for (const scope of scopes) {
+      const registry = skillRegistryFor(ctx, scope)
+      if (typeof registry?.get !== 'function') continue
       try {
-        const s:
-          | (SkillDefinition & {
-              resourceBase?: { kind?: string; path?: string }
-            })
-          | undefined = await skillsService.get(name, {
-          cwd: targetCwd,
+        const skill: SkillDefinition | undefined = await registry.get(name, {
+          cwd,
           scope,
         })
-        if (s) {
-          const { isRuntime, source } = classifySkillSource(s)
-          const resolvedPath =
-            s.path ||
-            (s.resourceBase?.kind === 'directory'
-              ? s.resourceBase.path
-              : undefined)
-          return {
-            name: s.name,
-            description: s.description || '',
-            whenToUse: s.whenToUse,
-            provider: s.provider || 'skills-registry',
-            source,
-            path: resolvedPath,
-            content: s.content,
-            modelInvocable: s.invocation?.modelInvocable ?? true,
-            userInvocable: s.invocation?.userInvocable ?? true,
-            isRuntime,
-          }
+        if (!skill) continue
+        const { isRuntime, source } = classifySkillSource(skill)
+        return {
+          name: skill.name,
+          description: skill.description ?? '',
+          whenToUse: skill.whenToUse,
+          provider: skill.provider || 'skills-registry',
+          source,
+          path: skill.path ?? skill.resourceBase?.path,
+          content: skill.content,
+          modelInvocable:
+            (skill.invocation?.modelInvocable ?? true) &&
+            !policy.disabledModel.has(skill.name),
+          userInvocable:
+            (skill.invocation?.userInvocable ?? true) &&
+            !policy.disabledUser.has(skill.name),
+          isRuntime,
         }
-      } catch {}
+      } catch {
+        // Try the next scope.
+      }
     }
+  } finally {
+    await release()
   }
 
   return null

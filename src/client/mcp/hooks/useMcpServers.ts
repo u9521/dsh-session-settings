@@ -1,5 +1,9 @@
 import * as React from 'react'
-import { type GlobalMcpServerConfig, API_ENDPOINTS } from '../../types/index.ts'
+import {
+  type GlobalMcpServerConfig,
+  API_ENDPOINTS,
+  API_METHODS,
+} from '../../types/index.ts'
 
 export function useMcpServers(
   t: (key: string, vars?: Record<string, string | number>) => string,
@@ -51,7 +55,7 @@ export function useMcpServers(
 
     try {
       const res = await fetch(API_ENDPOINTS.mcpServersRm, {
-        method: 'POST',
+        method: API_METHODS.mcpServersRm,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id: server.id }),
       })
@@ -76,8 +80,8 @@ export function useMcpServers(
     const id = server.id || 'form_test'
     setTestingId(id)
     try {
-      const res = await fetch(API_ENDPOINTS.mcpServersTest, {
-        method: 'POST',
+      const res = await fetch(API_ENDPOINTS.mcpServersProbe, {
+        method: API_METHODS.mcpServersProbe,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ server }),
       })
@@ -142,7 +146,7 @@ export function useMcpServers(
         : API_ENDPOINTS.mcpServersAdd
 
       const res = await fetch(endpoint, {
-        method: 'POST',
+        method: isEdit ? API_METHODS.mcpServersEdit : API_METHODS.mcpServersAdd,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ server: payload, originalId }),
       })

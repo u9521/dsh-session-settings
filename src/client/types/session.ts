@@ -24,17 +24,6 @@ export interface ModelProviderGroup {
   models: ModelCatalogItem[]
 }
 
-export interface ClientRemoteApi {
-  get?: <T = unknown>(
-    path: string,
-    params?: Record<string, string | number | boolean>,
-  ) => Promise<T>
-  post?: <T = unknown>(path: string, body?: unknown) => Promise<T>
-  delete?: <T = unknown>(path: string, body?: unknown) => Promise<T>
-  invoke?: <T = unknown>(path: string, options?: RequestInit) => Promise<T>
-  [key: string]: unknown
-}
-
 export interface ClientRemoteSessionService {
   modelCatalog?: () => Promise<{
     ok?: boolean
@@ -63,24 +52,42 @@ export interface WorkspaceInfo {
   path?: string
   cwd?: string
   sessionIds?: string[]
+  /** Host record timestamps; `createdAt` seeds the recency ranking for an empty workspace. */
+  createdAt?: string
+  updatedAt?: string
 }
 
 export interface SessionInfo {
   id?: string
   title?: string
   cwd?: string
-  parentSession?: string
+  parentId?: string
+  /** List ordering key; the workspace recency ranking reads it. */
+  updatedAt?: number
+  /**
+   * Local retention counts by consumer source. DSH 0.2.0 expresses "the session
+   * the main view is showing" here (`mainView`), not as a `current` id.
+   */
+  retainedBy?: { mainView?: number }
 }
 
 export interface SessionsState {
-  items?: SessionInfo[]
   byId?: Record<string, SessionInfo>
+  /**
+   * Pre-0.2.0 session selection. DSH 0.2.0's `SessionListState` has no such
+   * field — its equivalent fact is `byId[id].retainedBy.mainView`. Kept only as
+   * a graceful fallback for an older host; never the primary read.
+   */
   current?: string
 }
 
 export interface WorkspacesState {
   items?: WorkspaceInfo[]
-  byId?: Record<string, WorkspaceInfo>
+  /**
+   * Pre-0.2.0 "most recently active workspace". DSH 0.2.0's workspace snapshot
+   * has no such field — recency is derived from member-session `updatedAt` (see
+   * `resolveRecentWorkspaceId`). Kept only as a graceful fallback.
+   */
   recentWorkspaceId?: string
 }
 
@@ -92,7 +99,6 @@ export type UseWorkspacesHook = (
 ) => unknown
 
 export interface ClientPageProps {
-  api?: ClientRemoteApi
   remote?: ClientRemoteServiceRef
   t: (key: string, vars?: Record<string, string | number>) => string
   sessionId?: string
@@ -101,10 +107,6 @@ export interface ClientPageProps {
   workspaceTitle?: string
   useSessions?: UseSessionsHook
   useWorkspaces?: UseWorkspacesHook
-  workspaces?: {
-    list?: () => WorkspaceInfo[]
-    resolveByPath?: (path: string) => Promise<WorkspaceInfo | undefined>
-  }
   onClose?: () => void
   onSave?: (config: SessionSettingsConfig) => void
 }
