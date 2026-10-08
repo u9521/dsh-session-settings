@@ -111,4 +111,4 @@ export interface ClientPageProps {
   onSave?: (config: SessionSettingsConfig) => void
 }
 
-export type NavSection = 'model' | 'mcp' | 'skills'
+export type NavSection = 'model' | 'mcp' | 'skills' | 'sandbox'

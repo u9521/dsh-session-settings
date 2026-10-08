@@ -14,6 +14,7 @@ export const en = {
       modelTitle: 'Subagent Model',
       mcpTitle: 'MCP Servers',
       skillsTitle: 'Skills',
+      sandboxTitle: 'Sandbox Dirs',
     },
     section: {
       modelTitle: 'Subagent Model',
@@ -185,6 +186,40 @@ export const en = {
       noContent: '(Skill instructions content not found)',
       loadError: '(Failed to load skill instructions)',
       loadErrorWithReason: '(Load error: {reason})',
+    },
+    sandbox: {
+      title: 'Additional writable directories',
+      subtitle:
+        'Extra directories this session may write outside the workspace. The description is shown to the model beside the path.',
+      empty: 'No extra directories configured; only the workspace is writable.',
+      emptyInherited: 'The inherited source grants no extra directories.',
+      add: 'Add',
+      remove: 'Remove',
+      pathPlaceholder: 'Path, e.g. ~/.cache/uv or ./vendor',
+      descPlaceholder: 'Purpose, e.g. uv package cache',
+      pathHint:
+        'Relative paths resolve against the workspace, where "." is the workspace root; a leading ~ is supported. A directory must already exist or it is skipped.',
+      skippedTitle: 'Saved but not in effect',
+      unsupportedBadge: 'Unsupported by this backend',
+      unsupportedHint:
+        'The active sandbox backend cannot accept extra directories, so this configuration has no effect.',
+      modeHint:
+        'Extra directories apply only under workspace-write; the current mode does not widen writes.',
+      noWorkspaceHint:
+        'No workspace is resolved yet, so relative paths have no base.',
+      templatesLabel: 'Quick fill',
+      templatesHint:
+        'Fill common directories for a toolchain in one click. This only fills the current draft; press Save to apply, and edit or remove any row afterwards.',
+      templatesApplied: 'Added',
+      templates: {
+        android: 'Android',
+        rust: 'Rust',
+        python: 'Python',
+        node: 'Node / frontend',
+        go: 'Go',
+        java: 'Java / Kotlin',
+        generic: 'Shared caches',
+      },
     },
     mcp: {
       empty:

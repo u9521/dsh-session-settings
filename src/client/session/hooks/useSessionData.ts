@@ -4,8 +4,11 @@ import type {
   NavSection,
   SubagentModelConfig,
   SessionMcpConfig,
+  SessionSandboxConfig,
   SessionSkillsConfig,
   SessionSettingsConfig,
+  SandboxCapabilityInfo,
+  SandboxSkippedEntry,
   GlobalMcpServerConfig,
   McpProbeResult,
   SkillItem,
@@ -150,6 +153,8 @@ export function useSessionData(props: ClientPageProps) {
   const [skillsConfig, setSkillsConfig] = React.useState<SessionSkillsConfig>({
     mode: defaultMode,
   })
+  const [sandboxConfig, setSandboxConfig] =
+    React.useState<SessionSandboxConfig>({ mode: defaultMode })
 
   // Workspace Draft Form state
   const [workspaceModelConfig, setWorkspaceModelConfig] =
@@ -158,12 +163,16 @@ export function useSessionData(props: ClientPageProps) {
     React.useState<SessionMcpConfig>({ mode: 'global' })
   const [workspaceSkillsConfig, setWorkspaceSkillsConfig] =
     React.useState<SessionSkillsConfig>({ mode: 'global' })
+  const [workspaceSandboxConfig, setWorkspaceSandboxConfig] =
+    React.useState<SessionSandboxConfig>({ mode: 'global' })
 
   // Global Draft Form state
   const [globalModelConfig, setGlobalModelConfig] =
     React.useState<SubagentModelConfig>({ inherit: true })
   const [globalMcpConfig, setGlobalMcpConfig] =
     React.useState<SessionMcpConfig>({ enabledServerIds: [] })
+  const [globalSandboxConfig, setGlobalSandboxConfig] =
+    React.useState<SessionSandboxConfig>({ allow: [] })
   const [globalSkillsConfig, setGlobalSkillsConfig] =
     React.useState<SessionSkillsConfig>({
       disabledModelSkills: [],
@@ -199,6 +208,7 @@ export function useSessionData(props: ClientPageProps) {
         disabledModelSkills: [],
         disabledUserSkills: [],
       },
+      sandbox: { allow: [] },
     },
   )
   const [workspaceSettings, setWorkspaceSettings] = React.useState<
@@ -206,6 +216,17 @@ export function useSessionData(props: ClientPageProps) {
   >(undefined)
   const [hasSessionOverride, setHasSessionOverride] =
     React.useState<boolean>(false)
+  /**
+   * What the host-sandbox backend can do, and which configured directories it
+   * skipped. Both come from the settings response so the panel reports the
+   * deployment's real behavior instead of a platform guess.
+   */
+  const [sandboxCapability, setSandboxCapability] = React.useState<
+    SandboxCapabilityInfo | undefined
+  >(undefined)
+  const [sandboxSkipped, setSandboxSkipped] = React.useState<
+    SandboxSkippedEntry[]
+  >([])
 
   const remoteRef = React.useRef(remote)
   remoteRef.current = remote
@@ -373,8 +394,14 @@ export function useSessionData(props: ClientPageProps) {
             workspaceConfig?: SessionSettingsConfig
             workspaceId?: string
             sessionConfig?: SessionSettingsConfig
+            sandboxCapability?: SandboxCapabilityInfo
+            sandboxSkipped?: SandboxSkippedEntry[]
           }
           if (data && data.ok) {
+            setSandboxCapability(data.sandboxCapability ?? undefined)
+            setSandboxSkipped(
+              Array.isArray(data.sandboxSkipped) ? data.sandboxSkipped : [],
+            )
             if (data.globalConfig) {
               setGlobalConfig(data.globalConfig)
               setGlobalModelConfig(
@@ -389,6 +416,7 @@ export function useSessionData(props: ClientPageProps) {
                   disabledUserSkills: [],
                 },
               )
+              setGlobalSandboxConfig(data.globalConfig.sandbox ?? { allow: [] })
             }
             if (
               data.workspaceConfig &&
@@ -404,6 +432,9 @@ export function useSessionData(props: ClientPageProps) {
               setWorkspaceSkillsConfig(
                 data.workspaceConfig.skills ?? { mode: 'global' },
               )
+              setWorkspaceSandboxConfig(
+                data.workspaceConfig.sandbox ?? { mode: 'global' },
+              )
             } else {
               setWorkspaceSettings(undefined)
             }
@@ -415,6 +446,7 @@ export function useSessionData(props: ClientPageProps) {
               setModelConfig(data.sessionConfig.subagentModel)
               setMcpConfig(data.sessionConfig.mcp)
               setSkillsConfig(data.sessionConfig.skills)
+              setSandboxConfig(data.sessionConfig.sandbox ?? { mode: 'global' })
               setHasSessionOverride(isSessionCustomized(data.sessionConfig))
             }
           }
@@ -470,18 +502,26 @@ export function useSessionData(props: ClientPageProps) {
     setMcpConfig,
     skillsConfig,
     setSkillsConfig,
+    sandboxConfig,
+    setSandboxConfig,
     workspaceModelConfig,
     setWorkspaceModelConfig,
     workspaceMcpConfig,
     setWorkspaceMcpConfig,
     workspaceSkillsConfig,
     setWorkspaceSkillsConfig,
+    workspaceSandboxConfig,
+    setWorkspaceSandboxConfig,
     globalModelConfig,
     setGlobalModelConfig,
     globalMcpConfig,
     setGlobalMcpConfig,
     globalSkillsConfig,
     setGlobalSkillsConfig,
+    globalSandboxConfig,
+    setGlobalSandboxConfig,
+    sandboxCapability,
+    sandboxSkipped,
     skillsSearch,
     setSkillsSearch,
     sessionSkillModalTarget,

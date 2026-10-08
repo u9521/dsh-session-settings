@@ -13,6 +13,7 @@ export const zh = {
       modelTitle: '子代理模型',
       mcpTitle: 'MCP 服务器',
       skillsTitle: '技能',
+      sandboxTitle: '沙箱目录',
     },
     section: {
       modelTitle: '子代理模型',
@@ -183,6 +184,38 @@ export const zh = {
       noContent: '（暂未获取到该技能的详细指令内容）',
       loadError: '（加载技能详细指令失败）',
       loadErrorWithReason: '（加载出错: {reason}）',
+    },
+    sandbox: {
+      title: '额外可写目录',
+      subtitle:
+        '在工作区之外额外允许写入的目录。填写描述后，模型会在上下文中看到「路径 + 用途」。',
+      empty: '尚未配置额外目录，当前仅工作区可写。',
+      emptyInherited: '上级配置未提供任何额外目录。',
+      add: '添加',
+      remove: '删除',
+      pathPlaceholder: '路径，例如 ~/.cache/uv 或 ./vendor',
+      descPlaceholder: '用途描述，例如 uv 包缓存',
+      pathHint:
+        '相对路径以工作区为基准，「.」表示工作区根；支持 ~ 前缀。目录必须已存在，否则会被跳过。',
+      skippedTitle: '以下目录已保存但未生效',
+      unsupportedBadge: '当前后端不支持',
+      unsupportedHint: '当前沙箱后端无法接受额外目录，配置不会生效。',
+      modeHint:
+        '额外目录仅在 workspace-write 模式下生效；当前模式下不会放宽写入范围。',
+      noWorkspaceHint: '当前未解析到工作区，相对路径暂无法确定基准。',
+      templatesLabel: '快速填充',
+      templatesHint:
+        '按技术栈一键填入常用目录。仅填充到当前草稿，需点「保存」才会生效；填入后可自由修改或删除。',
+      templatesApplied: '已添加',
+      templates: {
+        android: 'Android 开发',
+        rust: 'Rust',
+        python: 'Python',
+        node: 'Node / 前端',
+        go: 'Go',
+        java: 'Java / Kotlin',
+        generic: '通用缓存',
+      },
     },
     mcp: {
       empty:

@@ -1,6 +1,8 @@
 import type { Context } from '@deepseek-ai/cordis'
 import {
   type ConnectionService,
+  type SandboxCapabilityInfo,
+  type SandboxSkippedEntry,
   type SessionSettingsConfig,
   type SessionSettingsStore,
   type SettingsScopeId,
@@ -56,6 +58,7 @@ function emptyWorkspaceConfig(): SessionSettingsConfig {
     subagentModel: { mode: 'global' },
     mcp: { mode: 'global' },
     skills: { mode: 'global' },
+    sandbox: { mode: 'global' },
   }
 }
 
@@ -66,6 +69,8 @@ export function registerSessionSettingsRoutes(
   setSessionSettingsStore: (s: SessionSettingsStore) => void,
   mcpManager?: McpManager,
   invalidatePolicies?: () => void,
+  sandboxCapability?: (sessionId?: string) => SandboxCapabilityInfo,
+  sandboxSkipped?: (sessionId?: string) => SandboxSkippedEntry[],
 ): () => Promise<void> {
   const unregisterGetSettings = connection.fetch.register(
     toFetchRoute({
@@ -99,9 +104,19 @@ export function registerSessionSettingsRoutes(
               subagentModel: { mode: 'workspace' },
               mcp: { mode: 'workspace' },
               skills: { mode: 'workspace' },
+              sandbox: { mode: 'workspace' },
             },
             workspaceConfig: workspaceEntry ?? emptyWorkspaceConfig(),
             globalConfig: sessionSettingsStore.globalConfig,
+            // The panel disables itself from this rather than from a platform
+            // guess: whether appended roots work is a runtime fact of the
+            // backend the provider selected.
+            ...(sandboxCapability
+              ? { sandboxCapability: sandboxCapability(querySessionId) }
+              : {}),
+            ...(sandboxSkipped
+              ? { sandboxSkipped: sandboxSkipped(querySessionId) }
+              : {}),
           }
           return jsonResponse(body)
         } catch (err: unknown) {
@@ -234,6 +249,7 @@ export function registerSessionSettingsRoutes(
             },
             mcp: { enabledServerIds: [] },
             skills: { disabledModelSkills: [], disabledUserSkills: [] },
+            sandbox: { allow: [] },
           }
         } else if (incomingConfig) {
           sessionSettingsStore.globalConfig =
@@ -258,12 +274,23 @@ export function registerSessionSettingsRoutes(
         if (isRestoringDefault) {
           delete sessionSettingsStore.sessions[sessionId]
         } else if (incomingConfig) {
+          // Every config domain must appear here. A domain left out of this
+          // predicate makes a save that changes ONLY that domain look like a
+          // pure inherit, and the whole session entry is then deleted — the
+          // write reports success while the value is silently discarded.
+          //
+          // `sandbox` was added to the config later than the other three and
+          // was missed, which is exactly that failure. `normalizeSandboxConfig`
+          // falls back to `{ mode: 'workspace' }` for anything absent or
+          // malformed, so an absent field and a `workspace` one are the same
+          // statement here.
           const isPureWorkspaceInherit =
             incomingConfig.subagentModel.mode === 'workspace' &&
             incomingConfig.subagentModel.allowAgentSelectModel === undefined &&
             incomingConfig.subagentModel.overrideForkModel === undefined &&
             incomingConfig.mcp.mode === 'workspace' &&
-            incomingConfig.skills.mode === 'workspace'
+            incomingConfig.skills.mode === 'workspace' &&
+            incomingConfig.sandbox.mode === 'workspace'
 
           if (isPureWorkspaceInherit) {
             delete sessionSettingsStore.sessions[sessionId]

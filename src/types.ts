@@ -81,6 +81,7 @@ export type SettingsMode = 'global' | 'workspace' | 'custom'
 export type SubagentModelMode = SettingsMode | 'inherit'
 export type SessionMcpMode = SettingsMode
 export type SessionSkillsMode = SettingsMode
+export type SessionSandboxMode = SettingsMode
 
 /**
  * The explicit write target of a settings save.
@@ -172,6 +173,13 @@ export interface SettingsSnapshotResponse {
   sessionConfig?: SessionSettingsConfig
   workspaceConfig?: SessionSettingsConfig
   globalConfig?: SessionSettingsConfig
+  /**
+   * What the mounted sandbox backend can do, so the sandbox panel can disable
+   * itself with a reason instead of saving a grant nothing will honor.
+   */
+  sandboxCapability?: SandboxCapabilityInfo
+  /** Configured allow entries skipped at the last enforcement, with reasons. */
+  sandboxSkipped?: SandboxSkippedEntry[]
   error?: string
 }
 
@@ -187,6 +195,90 @@ export interface SubagentModelConfig {
   model?: SubagentModelTarget
   allowAgentSelectModel?: boolean
   overrideForkModel?: boolean
+}
+
+/**
+ * One directory a session may additionally WRITE to, with the sentence the
+ * model reads about it.
+ *
+ * The description travels into the runtime-context prompt next to the path
+ * rather than living only in this plugin's UI: the model is the party that
+ * decides where a toolchain writes its cache, and a bare path with no stated
+ * purpose invites it to treat the grant as general licence.
+ */
+export interface SandboxAllowEntry {
+  /**
+   * A directory to grant, spelled the way a user thinks about it.
+   *
+   * `.` means the session workspace itself, any other relative path resolves
+   * against it, and a leading `~` expands to the host home directory. An
+   * absolute path is taken as written. The value is normalized to an absolute
+   * path before it reaches any enforcement layer.
+   */
+  path: string
+  /** One short line on what the directory is for; omitted renders the path alone. */
+  description?: string
+}
+
+export interface SessionSandboxConfig {
+  mode?: SettingsMode
+  /**
+   * Extra writable directories beyond the mode's own derivation, unioned into
+   * the provider's grant list.
+   *
+   * Only `custom` consumes this list, and only `workspace-write` acts on it:
+   * `danger-full-access` needs no widening, and granting under `read-only`
+   * would be a silent end-run around the wider mode's approval prompt.
+   */
+  allow?: SandboxAllowEntry[]
+}
+
+/**
+ * Whether the mounted sandbox backend can accept extra writable roots at all.
+ *
+ * Reported by the host half because the answer is a runtime fact of the
+ * provider that is only known after it selects and probes a runner — a client
+ * guessing from `process.platform` would enable a control that silently does
+ * nothing on some hosts and not others.
+ */
+export interface SandboxCapabilityInfo {
+  /** A provider is mounted and its backend accepts appended writable roots. */
+  readonly canAllowExtraRoots: boolean
+  /**
+   * Why it cannot, for display. `undefined` when {@link canAllowExtraRoots}.
+   * Either no `ctx.sandbox` provider is composed, or the selected backend
+   * expresses its policy in a form that cannot be extended argument-wise
+   * (macOS Seatbelt's single SBPL profile string).
+   */
+  readonly reason?: string
+  /**
+   * The backend the provider selected, when it is knowable without forcing a
+   * probe. Present for diagnostics and for the client's own wording.
+   */
+  readonly backend?: string
+  /**
+   * The file-effect mode the target session actually runs under, when the
+   * policy service could resolve it.
+   *
+   * Carried here rather than derived client-side because only the host can read
+   * the session's `sandbox/mode` projection; the panel needs it to say that an
+   * allow list does nothing outside `workspace-write`.
+   */
+  readonly effectiveMode?: string
+}
+
+/**
+ * Directories that were configured but skipped at enforcement time, with why.
+ *
+ * A path that does not exist is the realistic case: granting a nonexistent
+ * root is not merely useless under every backend, it is fatal under `bwrap`,
+ * whose `--bind` refuses to build the profile at all and would fail every
+ * command in the session. Surfacing the skip keeps "saved" from reading as
+ * "in effect".
+ */
+export interface SandboxSkippedEntry {
+  readonly path: string
+  readonly reason: string
 }
 
 export type McpTransportType = 'stdio' | 'streamable-http'
@@ -547,6 +639,7 @@ export interface SessionSettingsConfig {
   subagentModel: SubagentModelConfig
   mcp: SessionMcpConfig
   skills: SessionSkillsConfig
+  sandbox: SessionSandboxConfig
 }
 
 export interface SessionSettingsStore {
@@ -805,10 +898,130 @@ export interface PromptSectionInput {
   interpolate?: boolean
 }
 
-/** Minimal view of `ctx.systemPrompt` needed for per-agent section shadowing. */
+/**
+ * One `ctx.systemPrompt.context()` contribution's input shape.
+ *
+ * `order` is optional because this plugin derives it from the host's own
+ * `getContextOrder('SANDBOX_POLICY')` when that helper exists and otherwise
+ * omits it, letting the host place the entry by its own default.
+ */
+export interface PromptContextInput {
+  name: string
+  order?: number
+  text: string | ((context: AssembleContext) => string)
+}
+
+/**
+ * Minimal view of `ctx.systemPrompt`.
+ *
+ * Carries both faces this plugin uses: per-agent `section()` shadowing (skills
+ * and MCP policy) and runtime-context `context()` contributions (the sandbox
+ * grant paragraph). `context` and `getContextOrder` are optional because the
+ * service is reached structurally — a DSH release that stops offering context
+ * entries must make this plugin skip its paragraph, not fail to load.
+ */
 export interface SystemPromptService {
   section(section: PromptSectionInput): () => void
   getSectionOrder(name: string): number
+  context?(context: PromptContextInput): () => void
+  getContextOrder?(name: string): number
+}
+
+/**
+ * The confined-execution policy a consumer stamps onto one capability call.
+ *
+ * Only the fields this plugin reads are declared; the provider treats the value
+ * as fully specified, so the wrapper passes it through untouched.
+ */
+export interface SandboxPolicyLike {
+  readonly mode: 'read-only' | 'workspace-write' | 'danger-full-access'
+  readonly workspaceRoot: string
+  readonly sessionId?: string
+}
+
+/**
+ * What a provider's `confine()` resolves to.
+ *
+ * `argv` is the only field this plugin rewrites; the classification facts
+ * (enforcement, denial signatures, runner-failure rules) describe the runner
+ * that produced them and stay exactly as returned.
+ */
+export interface ConfinedArgvLike {
+  readonly argv: string[]
+  readonly enforcement: 'full' | 'partial'
+  readonly denialSignatures: readonly string[]
+  readonly runnerFailureRules: readonly unknown[]
+}
+
+/** Minimal view of `ctx.sandboxPolicy`: only the session-mode read. */
+export interface SandboxPolicyServiceLike {
+  /** The deployment default, the fallback beneath a session override. */
+  readonly defaultMode: string
+  /**
+   * The session's last logged `sandbox/mode` override, or `undefined` without
+   * one — i.e. before the deployment default is applied.
+   */
+  overrideOf(session: unknown): string | undefined
+}
+
+/**
+ * Minimal view of the `ctx.sandbox` provider seam.
+ *
+ * `confine` is the single method this plugin wraps. It is a service method
+ * rather than a declared extension point, so the wrapper is installed on the
+ * instance and the original restored on unload.
+ */
+export interface SandboxProviderLike {
+  confine(
+    argv: readonly string[],
+    policy: SandboxPolicyLike,
+    signal?: AbortSignal,
+  ): Promise<ConfinedArgvLike>
+}
+
+/** The `sandboxPolicy` argument the fs seam receives on every mutation. */
+export interface FsSandboxPolicyLike extends SandboxPolicyLike {
+  /** Opaque session identity; the branded SessionId in the host's own types. */
+  readonly sessionId?: string
+}
+
+/**
+ * Minimal view of one resolved filesystem target.
+ *
+ * `targetKey` is deliberately opaque and never parsed: containment is answered
+ * by {@link FileSystemLike.contains}, which the provider owns.
+ */
+export interface FsTargetLike {
+  readonly targetKey: string
+  readonly displayPath: string
+}
+
+/** Minimal view of `ctx.fs`: only the two mutations this plugin re-fences. */
+export interface FileSystemLike {
+  resolve(
+    path: string,
+    opts?: { cwd?: string; signal?: AbortSignal },
+  ): Promise<FsTargetLike>
+  /**
+   * Canonical containment between two targets from THIS provider. Used instead
+   * of comparing paths, so the check stays correct for any backend rather than
+   * only host-backed ones.
+   */
+  contains(parent: FsTargetLike, child: FsTargetLike): boolean
+  writeText(
+    target: FsTargetLike,
+    content: string,
+    expected?: unknown,
+    signal?: AbortSignal,
+    sandboxPolicy?: FsSandboxPolicyLike,
+  ): Promise<unknown>
+  editText(
+    target: FsTargetLike,
+    edit: unknown,
+    expected?: unknown,
+    signal?: AbortSignal,
+    sandboxPolicy?: FsSandboxPolicyLike,
+  ): Promise<unknown>
 }
 
 export interface ToolExecution {
@@ -876,6 +1089,14 @@ declare module '@deepseek-ai/cordis' {
     tools?: ToolsService
     systemPrompt?: SystemPromptService
     agent?: Agent
+    /**
+     * The mounted filesystem provider. The sandbox allow-list re-fences its two
+     * mutations so extra directories apply to the `write` / `edit` tools as
+     * well as to confined subprocesses.
+     */
+    fs?: FileSystemLike
+    /** The sandbox policy owner, read for the session's effective mode. */
+    sandboxPolicy?: SandboxPolicyServiceLike
   }
 
   interface Events {

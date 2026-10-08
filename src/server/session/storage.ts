@@ -3,10 +3,12 @@ import type {
   SubagentModelConfig,
   SubagentModelTarget,
   McpServerStore,
+  SandboxAllowEntry,
   SessionSettingsConfig,
   SessionSettingsStore,
   SessionSkillsConfig,
   SessionMcpConfig,
+  SessionSandboxConfig,
 } from '../../types.ts'
 import { getSessionSettingsStoragePath } from '../common/paths.ts'
 
@@ -23,6 +25,9 @@ const DEFAULT_GLOBAL_SETTINGS: SessionSettingsConfig = {
     disabledModelSkills: [],
     disabledUserSkills: [],
   },
+  sandbox: {
+    allow: [],
+  },
 }
 
 const DEFAULT_SESSION_SETTINGS: SessionSettingsConfig = {
@@ -33,6 +38,64 @@ const DEFAULT_SESSION_SETTINGS: SessionSettingsConfig = {
   skills: {
     mode: 'workspace',
   },
+  sandbox: {
+    mode: 'workspace',
+  },
+}
+
+/** Longest description that survives normalization; keeps prompt text bounded. */
+const MAX_ALLOW_DESCRIPTION_CHARS = 200
+
+/**
+ * Normalize one allow entry, or drop it.
+ *
+ * A path is the entire payload, so an entry without a usable one carries no
+ * meaning and is discarded rather than persisted as a grant that resolves to
+ * nothing. The description is optional and truncated: it is prompt text, and an
+ * unbounded value here would let a settings document inflate every request.
+ */
+function normalizeSandboxAllowEntry(
+  raw: unknown,
+): SandboxAllowEntry | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const entry = raw as Partial<SandboxAllowEntry>
+  const path = typeof entry.path === 'string' ? entry.path.trim() : ''
+  if (!path) return undefined
+  const description =
+    typeof entry.description === 'string' ? entry.description.trim() : ''
+  return {
+    path,
+    ...(description
+      ? { description: description.slice(0, MAX_ALLOW_DESCRIPTION_CHARS) }
+      : {}),
+  }
+}
+
+function normalizeSandboxAllow(raw: unknown): SandboxAllowEntry[] {
+  if (!Array.isArray(raw)) return []
+  const entries: SandboxAllowEntry[] = []
+  for (const item of raw) {
+    const entry = normalizeSandboxAllowEntry(item)
+    if (entry) entries.push(entry)
+  }
+  return entries
+}
+
+function normalizeSandboxConfig(
+  raw?: Partial<SessionSandboxConfig>,
+): SessionSandboxConfig {
+  if (!raw || typeof raw !== 'object') return { mode: 'workspace' }
+  const mode =
+    raw.mode === 'custom'
+      ? 'custom'
+      : raw.mode === 'global'
+        ? 'global'
+        : 'workspace'
+
+  if (mode === 'custom') {
+    return { mode: 'custom', allow: normalizeSandboxAllow(raw.allow) }
+  }
+  return { mode }
 }
 
 function normalizeSubagentModelTarget(
@@ -127,10 +190,15 @@ export function normalizeGlobalSettings(
     disabledUserSkills,
   }
 
+  const sandbox: SessionSandboxConfig = {
+    allow: normalizeSandboxAllow(raw.sandbox?.allow),
+  }
+
   return {
     subagentModel,
     mcp,
     skills,
+    sandbox,
   }
 }
 
@@ -280,11 +348,13 @@ export function normalizeSessionSettings(
   const subagentModel = normalizeSubagentModelConfig(raw.subagentModel)
   const mcp = normalizeMcpConfig(raw.mcp)
   const skills = normalizeSkillsConfig(raw.skills)
+  const sandbox = normalizeSandboxConfig(raw.sandbox)
 
   return {
     subagentModel,
     mcp,
     skills,
+    sandbox,
   }
 }
 
@@ -706,4 +776,81 @@ export function resolveEffectiveSkills(
     effectiveDisabledModelSkills: disabledModelSkills,
     effectiveDisabledUserSkills: disabledUserSkills,
   }
+}
+
+/**
+ * The effective extra-writable-directory list for one session.
+ *
+ * Scope resolution is deliberately identical to {@link resolveEffectiveMcp}:
+ * a session naming `custom` owns the answer outright, `workspace` defers to the
+ * workspace's own `custom` entry and otherwise falls through, and `global`
+ * takes the deployment list. Two panels offering the same three scopes must not
+ * disagree about which one wins, so the ladder lives here once rather than
+ * being re-derived per domain.
+ *
+ * The global list is the explicit `allow` array, never a per-entry flag, for the
+ * same reason MCP's global scope is its explicit id list: an absent field must
+ * read as "nothing granted", not as "granted by some other entry's default".
+ *
+ * @param store - the loaded settings store.
+ * @param sessionId - the root session whose overrides apply, when known.
+ * @param workspaceId - the session's workspace, when resolvable.
+ * @returns the winning `allow` list and the scope that produced it.
+ */
+export function resolveEffectiveSandbox(
+  store: SessionSettingsStore,
+  sessionId?: string,
+  workspaceId?: string,
+): { mode: 'global' | 'custom'; allow: SandboxAllowEntry[] } {
+  const globalAllow = Array.isArray(store.globalConfig?.sandbox?.allow)
+    ? store.globalConfig.sandbox.allow
+    : []
+
+  let mode: 'global' | 'custom' = 'global'
+  let allow: SandboxAllowEntry[] = []
+  let resolved = false
+
+  // 1. Session level
+  if (sessionId && store.sessions?.[sessionId]?.sandbox) {
+    const sSandbox = store.sessions[sessionId].sandbox
+    if (sSandbox.mode === 'custom') {
+      mode = 'custom'
+      allow = sSandbox.allow || []
+      resolved = true
+    } else if (sSandbox.mode === 'workspace') {
+      if (
+        workspaceId &&
+        store.workspaces?.[workspaceId]?.sandbox?.mode === 'custom'
+      ) {
+        const wsSandbox = store.workspaces[workspaceId].sandbox
+        mode = 'custom'
+        allow = wsSandbox.allow || []
+        resolved = true
+      }
+    } else if (sSandbox.mode === 'global') {
+      mode = 'global'
+      allow = globalAllow
+      resolved = true
+    }
+  }
+
+  // 2. Workspace level
+  if (
+    !resolved &&
+    workspaceId &&
+    store.workspaces?.[workspaceId]?.sandbox?.mode === 'custom'
+  ) {
+    const wsSandbox = store.workspaces[workspaceId].sandbox
+    mode = 'custom'
+    allow = wsSandbox.allow || []
+    resolved = true
+  }
+
+  // 3. Global level
+  if (!resolved) {
+    mode = 'global'
+    allow = globalAllow
+  }
+
+  return { mode, allow }
 }

@@ -5,6 +5,7 @@ import { MODEL_SECTION_CSS } from './modelSection.ts'
 import { SESSION_MCP_CSS } from './sessionMcp.ts'
 import { GLOBAL_MCP_TAB_CSS } from './globalMcpTab.ts'
 import { SESSION_SKILLS_CSS } from './sessionSkills.ts'
+import { SANDBOX_SECTION_CSS } from './sandboxSection.ts'
 
 export * from './base.ts'
 export * from './heroChip.ts'
@@ -13,6 +14,7 @@ export * from './modelSection.ts'
 export * from './sessionMcp.ts'
 export * from './globalMcpTab.ts'
 export * from './sessionSkills.ts'
+export * from './sandboxSection.ts'
 
 const CORE_CSS = [
   BASE_CSS,
@@ -25,5 +27,7 @@ const MCP_CSS = [SESSION_MCP_CSS, GLOBAL_MCP_TAB_CSS].join('\n\n')
 
 const SKILLS_CSS = SESSION_SKILLS_CSS
 
-export const CSS = [CORE_CSS, MCP_CSS, SKILLS_CSS].join('\n\n')
+const SANDBOX_CSS = SANDBOX_SECTION_CSS
+
+export const CSS = [CORE_CSS, MCP_CSS, SKILLS_CSS, SANDBOX_CSS].join('\n\n')
 export default CSS

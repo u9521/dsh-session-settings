@@ -9,15 +9,20 @@ import {
   type SessionSkillsMode,
   type SubagentModelConfig,
   type SessionMcpConfig,
+  type SessionSandboxConfig,
+  type SessionSandboxMode,
+  type SessionSettingsConfig,
   type SessionSkillsConfig,
   API_ENDPOINTS,
 } from '../types/index.ts'
 import { useSessionData } from './hooks/useSessionData.ts'
 import { useSessionActions } from './hooks/useSessionActions.ts'
+import { resolveEffectiveSandbox } from '../utils/config.ts'
 import { HeaderBar } from './sections/HeaderBar.ts'
 import { NavigationSidebar } from './sections/NavigationSidebar.ts'
 import { SubagentModelSection } from './sections/SubagentModelSection.ts'
 import { SessionMcpSection } from './sections/SessionMcpSection.ts'
+import { SessionSandboxSection } from './sections/SessionSandboxSection.ts'
 import { SessionSkillsSection } from './sections/SessionSkillsSection.ts'
 import { SessionMcpToolsModal } from './modals/SessionMcpToolsModal.ts'
 import { McpResourcePanel } from '../mcp/components/McpResourcePanel.ts'
@@ -32,6 +37,7 @@ export * from './sections/HeaderBar.ts'
 export * from './sections/NavigationSidebar.ts'
 export * from './sections/SubagentModelSection.ts'
 export * from './sections/SessionMcpSection.ts'
+export * from './sections/SessionSandboxSection.ts'
 export * from './sections/SessionSkillsSection.ts'
 export * from './modals/SessionMcpToolsModal.ts'
 
@@ -54,21 +60,27 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
     modelConfig: data.modelConfig,
     mcpConfig: data.mcpConfig,
     skillsConfig: data.skillsConfig,
+    sandboxConfig: data.sandboxConfig,
     workspaceModelConfig: data.workspaceModelConfig,
     workspaceMcpConfig: data.workspaceMcpConfig,
     workspaceSkillsConfig: data.workspaceSkillsConfig,
+    workspaceSandboxConfig: data.workspaceSandboxConfig,
     globalModelConfig: data.globalModelConfig,
     globalMcpConfig: data.globalMcpConfig,
     globalSkillsConfig: data.globalSkillsConfig,
+    globalSandboxConfig: data.globalSandboxConfig,
     setModelConfig: data.setModelConfig,
     setMcpConfig: data.setMcpConfig,
     setSkillsConfig: data.setSkillsConfig,
+    setSandboxConfig: data.setSandboxConfig,
     setWorkspaceModelConfig: data.setWorkspaceModelConfig,
     setWorkspaceMcpConfig: data.setWorkspaceMcpConfig,
     setWorkspaceSkillsConfig: data.setWorkspaceSkillsConfig,
+    setWorkspaceSandboxConfig: data.setWorkspaceSandboxConfig,
     setGlobalModelConfig: data.setGlobalModelConfig,
     setGlobalMcpConfig: data.setGlobalMcpConfig,
     setGlobalSkillsConfig: data.setGlobalSkillsConfig,
+    setGlobalSandboxConfig: data.setGlobalSandboxConfig,
     setGlobalConfig: data.setGlobalConfig,
     setWorkspaceSettings: data.setWorkspaceSettings,
     setHasSessionOverride: data.setHasSessionOverride,
@@ -136,6 +148,78 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
     } else {
       data.setSkillsConfig(cfg)
     }
+  }
+
+  const currentSandboxConfig: SessionSandboxConfig =
+    data.activeScope === 'global'
+      ? data.globalSandboxConfig
+      : data.activeScope === 'workspace'
+        ? data.workspaceSandboxConfig
+        : data.sandboxConfig
+
+  /**
+   * Write a sandbox edit into the active scope.
+   *
+   * The section always emits a complete config, so this is a plain scope
+   * dispatch with no merge: the value the user sees is the value saved.
+   */
+  const handleSandboxChange = (cfg: SessionSandboxConfig) => {
+    data.setSaveSuccessMsg('')
+    if (data.activeScope === 'global') {
+      data.setGlobalSandboxConfig(cfg)
+    } else if (data.activeScope === 'workspace') {
+      data.setWorkspaceSandboxConfig(cfg)
+    } else {
+      data.setSandboxConfig(cfg)
+    }
+  }
+
+  /**
+   * The layer the sandbox panel's rules currently come from.
+   *
+   * Derived with the same ladder the model / MCP / skills panels use, so all
+   * four agree about the current source.
+   */
+  const sandboxSourceMode: 'workspace' | 'global' | 'custom' =
+    data.activeScope === 'global'
+      ? 'custom'
+      : data.activeScope === 'workspace'
+        ? currentSandboxConfig?.mode === 'custom'
+          ? 'custom'
+          : 'global'
+        : currentSandboxConfig?.mode === 'custom'
+          ? 'custom'
+          : (currentSandboxConfig?.mode ??
+            (data.currentWorkspaceId ? 'workspace' : 'global'))
+
+  /**
+   * Switch the sandbox panel's source layer.
+   *
+   * Entering `custom` seeds the list from the rules that were in force, so the
+   * switch reads as taking over what was already being granted rather than
+   * silently clearing it. Leaving `custom` writes only `mode`, which discards
+   * this layer's list without touching any parent layer.
+   */
+  const handleSandboxSourceModeChange = (mode: SessionSandboxMode) => {
+    if (mode === 'custom') {
+      const effective = resolveEffectiveSandbox(
+        data.activeScope === 'session'
+          ? ({ sandbox: data.sandboxConfig } as SessionSettingsConfig)
+          : undefined,
+        data.activeScope === 'global'
+          ? undefined
+          : (data.workspaceSettings ??
+              ({
+                sandbox: data.workspaceSandboxConfig,
+              } as SessionSettingsConfig)),
+        data.activeScope === 'global'
+          ? ({ sandbox: data.globalSandboxConfig } as SessionSettingsConfig)
+          : data.globalConfig,
+      )
+      handleSandboxChange({ mode: 'custom', allow: effective.allow ?? [] })
+      return
+    }
+    handleSandboxChange({ mode })
   }
 
   // Runtime status of the official MCP clients does not change on its own —
@@ -722,6 +806,7 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
         effectiveActiveMcpCount,
         effectiveActiveSkillsCount,
         availableSkills: data.availableSkills,
+        sandboxAllowCount: (currentSandboxConfig?.allow ?? []).length,
         t,
       }),
 
@@ -784,6 +869,23 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
               onSkillsSearchChange: data.setSkillsSearch,
               onRefreshSkills: handleRefreshSkills,
               onOpenSessionSkillModal: handleOpenSessionSkillModal,
+              t,
+            })
+          : null,
+
+        data.activeNav === 'sandbox'
+          ? e(SessionSandboxSection, {
+              scope: data.activeScope,
+              sandboxConfig: currentSandboxConfig,
+              currentWorkspaceId: data.currentWorkspaceId,
+              workspaceSettings: data.workspaceSettings,
+              globalConfig: data.globalConfig,
+              capability: data.sandboxCapability,
+              skipped: data.sandboxSkipped,
+              effectiveMode: data.sandboxCapability?.effectiveMode,
+              activeSourceMode: sandboxSourceMode,
+              onChange: handleSandboxChange,
+              onSourceModeChange: handleSandboxSourceModeChange,
               t,
             })
           : null,

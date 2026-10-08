@@ -65,7 +65,7 @@ export function SubagentModelSection({
         : false
 
   const effectiveModelConfig = resolveEffectiveSubagentModel(
-    { subagentModel: modelConfig, mcp: {}, skills: {} },
+    { subagentModel: modelConfig, mcp: {}, skills: {}, sandbox: {} },
     workspaceSettings,
     globalConfig,
   )

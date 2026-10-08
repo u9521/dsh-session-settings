@@ -2,9 +2,21 @@ import type {
   SessionSettingsConfig,
   SubagentModelConfig,
   SessionMcpConfig,
+  SessionSandboxConfig,
   SessionSkillsConfig,
 } from '../types/index.ts'
 
+/**
+ * Whether a session entry states anything of its own.
+ *
+ * Every config domain must be tested. A domain omitted here reads as "not
+ * customized", so a session whose only override is that domain is reported as
+ * inheriting everything — the hero chip stays quiet and the reset button hides.
+ * `sandbox` was added later and was missed for exactly that reason.
+ *
+ * @param sessionConfig - the session scope entry, when one is loaded.
+ * @returns true when at least one domain overrides the inherited layer.
+ */
 export function isSessionCustomized(
   sessionConfig?: SessionSettingsConfig,
 ): boolean {
@@ -14,7 +26,8 @@ export function isSessionCustomized(
     sessionConfig.subagentModel?.allowAgentSelectModel !== undefined ||
     sessionConfig.subagentModel?.overrideForkModel !== undefined ||
     sessionConfig.mcp?.mode === 'custom' ||
-    sessionConfig.skills?.mode === 'custom',
+    sessionConfig.skills?.mode === 'custom' ||
+    sessionConfig.sandbox?.mode === 'custom',
   )
 }
 
@@ -254,6 +267,50 @@ export function resolveEffectiveSkills(
   }
 }
 
+/**
+ * Client-side mirror of the host's sandbox allow-list resolution.
+ *
+ * Deliberately the same three-scope ladder as {@link resolveEffectiveMcp}: the
+ * panel must render the list the host will actually enforce, and two ladders
+ * that disagree would show a saved rule as active while enforcement used
+ * another scope's.
+ *
+ * @param sessionConfig - the session scope entry, when one is loaded.
+ * @param workspaceConfig - the workspace scope entry, when one is loaded.
+ * @param globalConfig - the deployment-wide entry.
+ * @returns the winning mode and allow list.
+ */
+export function resolveEffectiveSandbox(
+  sessionConfig?: SessionSettingsConfig,
+  workspaceConfig?: SessionSettingsConfig,
+  globalConfig?: SessionSettingsConfig,
+): SessionSandboxConfig {
+  const globalAllow = globalConfig?.sandbox?.allow || []
+
+  const sSandbox = sessionConfig?.sandbox
+  if (sSandbox?.mode === 'custom') {
+    return { mode: 'custom', allow: [...(sSandbox.allow || [])] }
+  }
+  if (sSandbox?.mode === 'global') {
+    return { mode: 'global', allow: [...globalAllow] }
+  }
+  if (sSandbox?.mode === 'workspace') {
+    const wsSandbox = workspaceConfig?.sandbox
+    if (wsSandbox?.mode === 'custom') {
+      return { mode: 'custom', allow: [...(wsSandbox.allow || [])] }
+    }
+  }
+
+  if (workspaceConfig?.sandbox?.mode === 'custom') {
+    return {
+      mode: 'custom',
+      allow: [...(workspaceConfig.sandbox.allow || [])],
+    }
+  }
+
+  return { mode: 'global', allow: [...globalAllow] }
+}
+
 export function resolveEffectiveSessionConfig(
   sessionConfig?: SessionSettingsConfig,
   workspaceConfig?: SessionSettingsConfig,
@@ -267,6 +324,11 @@ export function resolveEffectiveSessionConfig(
     ),
     mcp: resolveEffectiveMcp(sessionConfig, workspaceConfig, globalConfig),
     skills: resolveEffectiveSkills(
+      sessionConfig,
+      workspaceConfig,
+      globalConfig,
+    ),
+    sandbox: resolveEffectiveSandbox(
       sessionConfig,
       workspaceConfig,
       globalConfig,

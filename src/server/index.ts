@@ -9,6 +9,7 @@ import { registerSkillsRoutes } from './skills/routes.ts'
 import { registerSubagentModelInterceptor } from './subagent-model/interceptor.ts'
 import { registerMcpPolicyProjection } from './mcp/interceptor.ts'
 import { registerSkillsInterceptors } from './skills/interceptor.ts'
+import { registerSandboxInterceptor } from './sandbox/interceptor.ts'
 export const name = 'session-settings'
 // `connection` is required rather than optional: it is the only carrier that
 // applies the Host/Origin fence and browser authentication. Registering these
@@ -51,7 +52,19 @@ export function apply(ctx: Context): void {
     getMcpStore,
     mcpManager,
   )
-  const invalidatePolicies = () => mcpPolicyProjection.notifyPolicyChanged()
+
+  // Sandbox allow-list: widens `ctx.sandbox.confine` with the session's extra
+  // writable directories and contributes them to the model's runtime context.
+  // Registered BEFORE the routes so a settings save can invalidate it.
+  const sandboxInterceptor = registerSandboxInterceptor(
+    ctx,
+    getSessionSettingsStore,
+  )
+
+  const invalidatePolicies = () => {
+    mcpPolicyProjection.notifyPolicyChanged()
+    sandboxInterceptor.notifyPolicyChanged()
+  }
 
   const connection = ctx.get('connection')
   if (connection) {
@@ -71,6 +84,8 @@ export function apply(ctx: Context): void {
       setSessionSettingsStore,
       mcpManager,
       invalidatePolicies,
+      (sessionId) => sandboxInterceptor.detectCapability(sessionId),
+      (sessionId) => sandboxInterceptor.skippedFor(sessionId),
     )
     const unregisterSkills = registerSkillsRoutes(
       ctx,
@@ -111,4 +126,7 @@ export * from './session/routes.ts'
 export * from './skills/discovery.ts'
 export * from './skills/interceptor.ts'
 export * from './skills/routes.ts'
+export * from './sandbox/paths.ts'
+export * from './sandbox/interceptor.ts'
+export * from './sandbox/fs-proxy.ts'
 export * from './subagent-model/interceptor.ts'

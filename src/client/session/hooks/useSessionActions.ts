@@ -3,6 +3,7 @@ import {
   type SessionSettingsConfig,
   type SubagentModelConfig,
   type SessionMcpConfig,
+  type SessionSandboxConfig,
   type SessionSkillsConfig,
   type SessionInfo,
   API_ENDPOINTS,
@@ -18,21 +19,27 @@ export interface UseSessionActionsProps {
   modelConfig: SubagentModelConfig
   mcpConfig: SessionMcpConfig
   skillsConfig: SessionSkillsConfig
+  sandboxConfig: SessionSandboxConfig
   workspaceModelConfig: SubagentModelConfig
   workspaceMcpConfig: SessionMcpConfig
   workspaceSkillsConfig: SessionSkillsConfig
+  workspaceSandboxConfig: SessionSandboxConfig
   globalModelConfig: SubagentModelConfig
   globalMcpConfig: SessionMcpConfig
   globalSkillsConfig: SessionSkillsConfig
+  globalSandboxConfig: SessionSandboxConfig
   setModelConfig: (config: SubagentModelConfig) => void
   setMcpConfig: (config: SessionMcpConfig) => void
   setSkillsConfig: (config: SessionSkillsConfig) => void
+  setSandboxConfig: (config: SessionSandboxConfig) => void
   setWorkspaceModelConfig: (config: SubagentModelConfig) => void
   setWorkspaceMcpConfig: (config: SessionMcpConfig) => void
   setWorkspaceSkillsConfig: (config: SessionSkillsConfig) => void
+  setWorkspaceSandboxConfig: (config: SessionSandboxConfig) => void
   setGlobalModelConfig: (config: SubagentModelConfig) => void
   setGlobalMcpConfig: (config: SessionMcpConfig) => void
   setGlobalSkillsConfig: (config: SessionSkillsConfig) => void
+  setGlobalSandboxConfig: (config: SessionSandboxConfig) => void
   setGlobalConfig: (config: SessionSettingsConfig) => void
   setWorkspaceSettings: (config: SessionSettingsConfig | undefined) => void
   setHasSessionOverride: (override: boolean) => void
@@ -52,21 +59,27 @@ export function useSessionActions({
   modelConfig,
   mcpConfig,
   skillsConfig,
+  sandboxConfig,
   workspaceModelConfig,
   workspaceMcpConfig,
   workspaceSkillsConfig,
+  workspaceSandboxConfig,
   globalModelConfig,
   globalMcpConfig,
   globalSkillsConfig,
+  globalSandboxConfig,
   setModelConfig,
   setMcpConfig,
   setSkillsConfig,
+  setSandboxConfig,
   setWorkspaceModelConfig,
   setWorkspaceMcpConfig,
   setWorkspaceSkillsConfig,
+  setWorkspaceSandboxConfig,
   setGlobalModelConfig,
   setGlobalMcpConfig,
   setGlobalSkillsConfig,
+  setGlobalSandboxConfig,
   setGlobalConfig,
   setWorkspaceSettings,
   setHasSessionOverride,
@@ -108,6 +121,7 @@ export function useSessionActions({
           subagentModel: globalModelConfig,
           mcp: globalMcpConfig,
           skills: globalSkillsConfig,
+          sandbox: globalSandboxConfig,
         }
 
         const res = await fetch(API_ENDPOINTS.saveSettings, {
@@ -145,6 +159,7 @@ export function useSessionActions({
           subagentModel: workspaceModelConfig,
           mcp: workspaceMcpConfig,
           skills: workspaceSkillsConfig,
+          sandbox: workspaceSandboxConfig,
         }
 
         const res = await fetch(API_ENDPOINTS.saveSettings, {
@@ -191,6 +206,7 @@ export function useSessionActions({
           subagentModel: modelConfig,
           mcp: mcpConfig,
           skills: skillsConfig,
+          sandbox: sandboxConfig,
         }
 
         const res = await fetch(API_ENDPOINTS.saveSettings, {
@@ -208,6 +224,11 @@ export function useSessionActions({
           error?: string
         }
         if (res.ok && data?.ok) {
+          // Write the accepted config back into page state. Without this the
+          // panel keeps rendering the pre-save draft until a reload, so a
+          // successful save looks like it did nothing — the same write-back the
+          // global and workspace branches already perform.
+          setSandboxConfig(payloadConfig.sandbox)
           setHasSessionOverride(isSessionCustomized(payloadConfig))
           setSaveSuccessMsg(t('sessionSettings.notice.saved'))
 
@@ -265,11 +286,13 @@ export function useSessionActions({
             },
             mcp: { enabledServerIds: [] },
             skills: { disabledModelSkills: [], disabledUserSkills: [] },
+            sandbox: { allow: [] },
           }
           setGlobalConfig(defaultGlobal)
           setGlobalModelConfig(defaultGlobal.subagentModel)
           setGlobalMcpConfig(defaultGlobal.mcp)
           setGlobalSkillsConfig(defaultGlobal.skills)
+          setGlobalSandboxConfig(defaultGlobal.sandbox)
           setSaveSuccessMsg(t('sessionSettings.notice.resetSuccess'))
           setTimeout(() => setSaveSuccessMsg(''), 3000)
         } else {
@@ -296,6 +319,7 @@ export function useSessionActions({
           setWorkspaceModelConfig({ mode: 'global' })
           setWorkspaceMcpConfig({ mode: 'global' })
           setWorkspaceSkillsConfig({ mode: 'global' })
+          setWorkspaceSandboxConfig({ mode: 'global' })
           setSaveSuccessMsg(t('sessionSettings.notice.resetSuccess'))
           setTimeout(() => setSaveSuccessMsg(''), 3000)
         } else {
@@ -333,6 +357,7 @@ export function useSessionActions({
           setModelConfig({ mode: defaultMode })
           setMcpConfig({ mode: defaultMode })
           setSkillsConfig({ mode: defaultMode })
+          setSandboxConfig({ mode: defaultMode })
           setHasSessionOverride(false)
           setSaveSuccessMsg(t('sessionSettings.notice.resetSuccess'))
           setTimeout(() => setSaveSuccessMsg(''), 3000)

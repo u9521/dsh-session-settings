@@ -2,6 +2,7 @@ import * as React from 'react'
 import {
   IconAgentPresetOutlineMedium,
   IconCodeOutlineMedium,
+  IconShieldOutlineMedium,
   IconSkillOutlineMedium,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {
@@ -19,6 +20,8 @@ export interface NavigationSidebarProps {
   effectiveActiveMcpCount: number
   effectiveActiveSkillsCount: number
   availableSkills: SkillItem[]
+  /** Extra writable directories at the effective scope; drives the tab badge. */
+  sandboxAllowCount?: number
   t: (key: string, vars?: Record<string, string | number>) => string
 }
 
@@ -29,6 +32,7 @@ export function NavigationSidebar({
   effectiveActiveMcpCount,
   effectiveActiveSkillsCount,
   availableSkills,
+  sandboxAllowCount = 0,
   t,
 }: NavigationSidebarProps) {
   return e(
@@ -117,6 +121,34 @@ export function NavigationSidebar({
         },
         (availableSkills || []).length > 0
           ? `${effectiveActiveSkillsCount}/${availableSkills.length}`
+          : t('sessionSettings.status.none'),
+      ),
+    ),
+    // 4. Sandbox Tab
+    e(
+      'button',
+      {
+        type: 'button',
+        className: `dsh-view-sidebar-item ${activeNav === 'sandbox' ? 'active' : ''}`,
+        onClick: () => onNavChange('sandbox'),
+      },
+      e(
+        'div',
+        { className: 'dsh-view-item-icon' },
+        e(IconShieldOutlineMedium, { size: 16 }),
+      ),
+      e(
+        'span',
+        { className: 'dsh-view-item-title' },
+        t('sessionSettings.nav.sandboxTitle'),
+      ),
+      e(
+        'span',
+        {
+          className: `dsh-view-item-badge ${sandboxAllowCount > 0 ? 'highlight' : ''}`,
+        },
+        sandboxAllowCount > 0
+          ? `${sandboxAllowCount}`
           : t('sessionSettings.status.none'),
       ),
     ),
