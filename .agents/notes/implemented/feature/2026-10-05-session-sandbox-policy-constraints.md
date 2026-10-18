@@ -4,9 +4,9 @@ Status: implemented
 
 ## Problem
 
-[会话沙箱路径策略](2026-10-05-session-sandbox-policy.md)决定了额外可写目录的注入点与规则模型。但能否落地、落地后有哪些不可忽略的副作用，取决于三件必须先查清的事实：各后端实际能表达什么、插件如何把规则喂给后端、以及宿主写死的部分会怎样限制能力边界。本篇是那些事实的唯一归属地。
+[会话沙箱路径策略](2026-10-05-session-sandbox-policy.md)决定了额外可写目录的注入点与规则模型。但能否落地、落地后有哪些不可忽略的副作用，取决于三件必须先查清的事实：各后端实际能表达什么、插件如何把规则喂给后端、以及宿主写死的部分会怎样限制能力边界。
 
-## Proposal
+## Decision
 
 ### 一、契约与实测数据（本机 Linux / kernel 6.18 / WSL2）
 
@@ -54,13 +54,7 @@ landlock-run --ro / --rw /dev/null --rw /tmp --rw <ws> -- bash -c <cmd>
 - **`confine` 不是扩展点**：它是原型方法，包装以自有属性遮蔽它，卸载时 `delete` 还原（赋值回原位会留下比插件生命周期更长的自有属性）。
 - **`ctx.fs` 的委托不能吞掉宿主的判决**：只有"是否放行"的判断被 try 包住；委托写入若抛错（`FS_STALE_VERSION`）必须原样上抛。
 
-## Alternatives considered
-
-- **用 `runnerCommand` 配置注入额外根**：配置期字段，改它需重载插件、跳过功能探测，且要求同时提供 `runnerFailureSignatures`；无法承载逐会话列表。
-- **取用 provider 的 `internals` 测试钩子拿 launcher 路径**：无稳定性承诺；从 argv[0] 判断后端已足够。
-- **把额外根塞进 `workspaceRoot`**：会让插件自己的相对路径解析与 `tool-bash` 的 `workdir` 默认值一起漂移，且放弃与其它工作区的隔离。
-
-## Acceptance criteria
+**落地约束：**
 
 - 上表四个场景的退出码与错误文本一致（实测）。
 - 配置不存在的绝对路径时不使命令失败，且该条目出现在 `sandboxSkipped` 中。
@@ -71,7 +65,13 @@ landlock-run --ro / --rw /dev/null --rw /tmp --rw <ws> -- bash -c <cmd>
 - 模型上下文出现 `session-settings:sandbox-allow` 段，逐条列出路径与描述；无规则时该段不产生文本。
 - `pnpm run verify` 全绿。
 
-## Risks
+## Alternatives considered
+
+- **用 `runnerCommand` 配置注入额外根**：配置期字段，改它需重载插件、跳过功能探测，且要求同时提供 `runnerFailureSignatures`；无法承载逐会话列表。
+- **取用 provider 的 `internals` 测试钩子拿 launcher 路径**：无稳定性承诺；从 argv[0] 判断后端已足够。
+- **把额外根塞进 `workspaceRoot`**：会让插件自己的相对路径解析与 `tool-bash` 的 `workdir` 默认值一起漂移，且放弃与其它工作区的隔离。
+
+## Consequences
 
 - **押注 provider 的 argv 形状**：上游重构 profile 生成会让追加静默失效；`--` 缺失时本模块原样返回，属保守方向。
 - **`landlock` 的 root 顺序**：`grantArgs` 先 `--ro` 后 `--rw`，顺序不影响授权集合，但依赖该顺序的假设不应扩散到其它后端。

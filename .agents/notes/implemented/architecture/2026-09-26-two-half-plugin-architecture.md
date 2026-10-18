@@ -6,7 +6,7 @@ Status: implemented
 
 DSH Web 的会话级配置能力（子代理模型、MCP 服务器、技能开关）横跨三个边界：宿主 cordis 服务的运行时、Web 服务器的 HTTP 层、以及浏览器 shell 的 React 渲染树。若把三者写在一个模块里，任何一侧的加载时序变化都会连带打断另外两侧；而浏览器侧无法直接 `import` 服务端代码，配置 UI 与配置生效路径必须各自存在。
 
-## Proposal
+## Decision
 
 插件以 DSH 标准的**双半结构**发布，两半共享同一份契约文件 `src/types.ts`（`API_ENDPOINTS`、store schema、模式枚举），这是唯一允许跨半共享的代码。
 
@@ -26,14 +26,7 @@ DSH Web 的会话级配置能力（子代理模型、MCP 服务器、技能开�
 
 第 3、4 项是**对宿主 DOM 的补充而非替换**：座位插槽能覆盖到的部分走插槽，覆盖不到的部分才做 DOM 装饰。
 
-## Alternatives considered
-
-- **单模块实现，服务端直接渲染配置页**：否决。浏览器侧必须走 client-plugin 装载协议，服务端无法向 shell 的 React 树注入组件。
-- **服务端自起 HTTP 服务承载配置 API**：否决。会绕开宿主 `webServer` 的端口、鉴权与生命周期，且多开监听端口与 DSH 单服务模型冲突；`inject: ['connection']` 已能复用现成能力。
-- **配置全部存在浏览器 localStorage**：否决。`tools.guard()` 与 `agent/request` 的求值发生在服务端，配置必须对服务端可见，否则无法强制生效。
-- **DOM 装饰完全不做，只依赖插槽**：否决。shell 未暴露导航图标与 hero 座位的插槽，缺少装饰则入口不可达。
-
-## Acceptance criteria
+**落地约束：**
 
 - `pnpm install && pnpm run build` 产出 `lib/index.js` 与 `lib/client.js`。
 - `pnpm run check` 通过，且 `src/types.ts` 是客户端与服务端唯一共享的契约文件。
@@ -41,7 +34,14 @@ DSH Web 的会话级配置能力（子代理模型、MCP 服务器、技能开�
 - `$DSH_HOME/storages/` 下的两个 JSON 文件是配置的唯一持久化位置；删除插件后宿主可正常启动。
 - 无会话时会话作用域不可写：页签禁用并给出可见说明，`scope:'session'` 缺 `sessionId` 返回 400，不静默改道。
 
-## Risks
+## Alternatives considered
+
+- **单模块实现，服务端直接渲染配置页**：否决。浏览器侧必须走 client-plugin 装载协议，服务端无法向 shell 的 React 树注入组件。
+- **服务端自起 HTTP 服务承载配置 API**：否决。会绕开宿主 `webServer` 的端口、鉴权与生命周期，且多开监听端口与 DSH 单服务模型冲突；`inject: ['connection']` 已能复用现成能力。
+- **配置全部存在浏览器 localStorage**：否决。`tools.guard()` 与 `agent/request` 的求值发生在服务端，配置必须对服务端可见，否则无法强制生效。
+- **DOM 装饰完全不做，只依赖插槽**：否决。shell 未暴露导航图标与 hero 座位的插槽，缺少装饰则入口不可达。
+
+## Consequences
 
 - **宿主 DOM 耦合**：第 4 项与 hero chip 依赖 shell 的类名（`navCell`、`navLabel`、`navIcon`、`heroWorkspaceRow`、`seat`）。DSH 主版本升级若改类名，装饰会静默失效（图标缺失、chip 不挂载），且不会有编译错误。缓解：`main` 分支锁定 DSH `>= 0.2.0-rc.1` 且不提供向后兼容垫片，升级时以 GUI 冒烟为准。
 - **`MutationObserver` 开销**：观察 `document.body` 的 subtree 变更，靠 rAF 合并。页面高频变更时仍需注意回调成本。

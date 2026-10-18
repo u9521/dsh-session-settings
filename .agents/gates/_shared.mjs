@@ -8,17 +8,16 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { HUMAN_MAP, IGNORE_DIRS, LOCAL_OVERLAY } from './config.mjs'
 
 /** Repository root, resolved from this file's location (`scripts/gates/`). */
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
 
-const SKIP_DIRS = new Set([
-  'node_modules',
-  '.git',
-  'lib',
-  'dist',
-  '.pnpm-store',
-])
+/**
+ * Directories every walk skips, taken from the project's config. `lib/` is not
+ * in the default set: it is a source directory in Dart, Elixir and Ruby.
+ */
+const SKIP_DIRS = new Set(IGNORE_DIRS)
 
 /** Repository-relative, POSIX-style path for display. */
 export function toRel(absPath) {
@@ -70,8 +69,6 @@ export function lines(relPath) {
   return readText(relPath).split('\n')
 }
 
-const CJK = /[\u2E80-\u9FFF\uF900-\uFAFF\uFF00-\uFFEF\u3000-\u303F]/
-
 /**
  * Count "units" for a prose budget: one unit per CJK character, one per
  * Latin/digit word. Fenced code blocks and link targets are excluded, because
@@ -118,6 +115,48 @@ export function headingAnchors(heading) {
   ]
 }
 
+/**
+ * Expand a `Covers:` pattern to the paths it matches.
+ *
+ * Patterns are repository-relative and may contain `*` in any segment, which is
+ * what lets a module document cover every package's source tree without listing each
+ * package. A trailing `/**` means "everything under this directory".
+ *
+ * Matching walks the tree once and tests each directory and file, so a pattern
+ * never needs the filesystem's own glob support.
+ */
+export function globMatches(pattern) {
+  const normalized = pattern.replace(/\/+$/, '').replace(/\/\*\*$/, '')
+  const segments = normalized.split('/').filter(Boolean)
+  const hasWildcard = segments.some((segment) => segment.includes('*'))
+
+  if (!hasWildcard) {
+    return isFile(normalized) || isDir(normalized) ? [normalized] : []
+  }
+
+  const matcher = new RegExp(
+    `^${segments
+      .map((segment) =>
+        segment === '**'
+          ? '.*'
+          : segment.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '[^/]*'),
+      )
+      .join('/')}(?:/.*)?$`,
+  )
+
+  const hits = []
+  // Walk from the first literal segment to keep the scan bounded.
+  const root = segments.findIndex((segment) => segment.includes('*'))
+  const scanRoot = segments.slice(0, root).join('/') || '.'
+  const candidates = walk(scanRoot, () => true)
+  for (const candidate of candidates) {
+    if (matcher.test(candidate)) hits.push(candidate)
+  }
+  // A pattern may name a directory rather than a file.
+  if (!hits.length && isDir(normalized)) hits.push(normalized)
+  return hits
+}
+
 /** Markdown headings of a document, in order, with their line numbers. */
 export function headings(relPath) {
   const found = []
@@ -131,14 +170,29 @@ export function headings(relPath) {
 }
 
 /**
+ * Preset templates: they carry placeholders instead of real paths
+ * (`<kind>`, `<slug>`), so link resolution cannot apply to them.
+ */
+export const PRESET_TEMPLATE_DIR = '.agents/preset/templates/'
+
+/**
  * Markdown documents governed by the documentation gates: root agent/readme
- * files plus every note and doc page.
+ * files plus every note and doc page. Templates are excluded because their
+ * links are instructions for a future repository, not links that resolve here.
  */
 export function governedMarkdown() {
   const fixed = ['AGENTS.md', 'README.md', 'README.zh.md'].filter(isFile)
   const notes = walk('.agents', (p) => p.endsWith('.md'))
-  const docs = walk('docs', (p) => p.endsWith('.md'))
-  return [...new Set([...fixed, ...notes, ...docs])].sort()
+  // `docs/` belongs to the project: a documentation site may carry front-matter,
+  // includes or component syntax this gate would misread. Only the map the
+  // project explicitly declared is governed here.
+  const docs = HUMAN_MAP !== null && isFile(HUMAN_MAP) ? [HUMAN_MAP] : []
+  return [...new Set([...fixed, ...notes, ...docs])]
+    .filter((relPath) => !relPath.startsWith(PRESET_TEMPLATE_DIR))
+    // The personal overlay is untracked, so it is absent from every other
+    // collaborator's checkout: a link to it here would break for them.
+    .filter((relPath) => relPath !== LOCAL_OVERLAY)
+    .sort()
 }
 
 /** Print the gate outcome and set a non-zero exit code on failure. */

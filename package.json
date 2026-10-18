@@ -27,7 +27,7 @@
     "node": "^22.19 || >=24"
   },
   "peerDependencies": {
-    "@deepseek-ai/dsh": ">=0.2.0-rc.1"
+    "@deepseek-ai/dsh": ">=0.2.1-rc.2"
   },
   "peerDependenciesMeta": {
     "@deepseek-ai/dsh": {
@@ -51,8 +51,9 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "check": "node scripts/build.mjs --check",
-    "verify:gates": "node scripts/gates/verify-agent-note-format.mjs && node scripts/gates/verify-doc-budgets.mjs && node scripts/gates/verify-md-links.mjs && node scripts/gates/verify-agent-skills.mjs",
-    "verify": "pnpm run check && pnpm run verify:gates",
+    "lint": "eslint src/ scripts/ *.mjs && pnpm run check && pnpm run fmt:check",
+    "lint:fix": "eslint src/ scripts/ *.mjs --fix && prettier --write \"src/**/*.ts\" \"scripts/**/*.mjs\" \"*.mjs\" \"*.json\" \"*.yml\"",
+    "verify": "pnpm run lint",
     "fmt": "prettier --write \"src/**/*.ts\" \"scripts/**/*.mjs\" \"*.mjs\" \"*.json\" \"*.yml\"",
     "fmt:check": "prettier --check \"src/**/*.ts\" \"scripts/**/*.mjs\" \"*.mjs\" \"*.json\" \"*.yml\""
   },
@@ -63,14 +64,18 @@
     "model"
   ],
   "devDependencies": {
-    "@deepseek-ai/cordis": "~4.0.4",
+    "@deepseek-ai/cordis": "~4.0.5",
     "@deepseek-ai/dsh-client-ui-primitives": "0.2.0-rc.1",
+    "@eslint/js": "^9.39.5",
     "@types/node": "^26.6.2",
     "@types/react": "^18.3.1",
     "@types/react-dom": "^18.3.1",
+    "eslint": "^9.39.5",
+    "globals": "^17.13.0",
     "prettier": "^3.9.9",
     "tsdown": "^0.23.0",
-    "typescript": "^7.0.2"
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.71.2"
   },
   "exports": {
     ".": {
@@ -82,6 +87,7 @@
     "./package.json": "./package.json"
   },
   "dependencies": {
-    "@modelcontextprotocol/client": "2.0.0"
+    "@modelcontextprotocol/client": "2.2.0",
+    "zod": "^4.4.3"
   }
 }

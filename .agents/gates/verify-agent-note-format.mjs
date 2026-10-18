@@ -7,8 +7,13 @@
  * by a `Status:` line matching the directory, and the required sections.
  */
 import { finish, lines, isFile, walk } from './_shared.mjs'
+import { NOTE_MODE } from './config.mjs'
 
-const STATUSES = ['proposed', 'implemented', 'rejected', 'archived']
+/** Which states exist depends on the strength the project chose at init. */
+const STATUSES =
+  NOTE_MODE === 'two-state'
+    ? ['proposed', 'implemented']
+    : ['proposed', 'implemented', 'rejected', 'archived']
 const KINDS = [
   'feature',
   'bug-fix',
@@ -17,18 +22,35 @@ const KINDS = [
   'process',
   'testing',
 ]
-const REQUIRED_SECTIONS = [
+/** A proposal still has open questions, so it carries acceptance and risks. */
+const PROPOSED_SECTIONS = [
   'Problem',
   'Proposal',
   'Alternatives considered',
   'Acceptance criteria',
   'Risks',
 ]
+
+/** A shipped decision has no open questions left: risks become consequences. */
+const IMPLEMENTED_SECTIONS = [
+  'Problem',
+  'Decision',
+  'Alternatives considered',
+  'Consequences',
+]
+
+const REJECTED_SECTIONS = ['Problem', 'Proposal', 'Alternatives considered']
 const ARCHIVED_SECTIONS = ['Problem', 'Proposal']
 const SLUG = /^\d{4}-\d{2}-\d{2}-[a-z0-9]+(?:-[a-z0-9]+)*\.md$/
 const IGNORED_BASENAMES = new Set(['AGENTS.md', 'README.md'])
 
 const failures = []
+
+if (NOTE_MODE === 'disabled') {
+  finish('verify-agent-note-format', [], '已跳过（NOTE_MODE=disabled）')
+  process.exit(0)
+}
+
 const notes = []
 
 const mentionsHeading = (text, heading) =>
@@ -85,36 +107,44 @@ for (const relPath of walk('.agents/notes', (p) => p.endsWith('.md'))) {
     failures.push(`${relPath}: 前 20 行内缺少 "Status: <status>"`)
   } else {
     const declared = statusLine.text.trim().replace(/^Status:\s*/, '')
-    if (declared !== status) {
+    // `rejected` carries a one-line reason after an em dash; the status word
+    // before it is what has to match the directory.
+    const statusWord = declared.split(/[—–-]/)[0].trim()
+    if (statusWord !== status) {
       failures.push(
         `${relPath}:${statusLine.line} — Status: ${declared} 与目录 "${status}" 不一致`,
       )
     }
+    if (status === 'rejected' && !/[—–-]\s*\S/.test(declared)) {
+      failures.push(
+        `${relPath}:${statusLine.line} — rejected 必须写成 "Status: rejected — <一行理由>"`,
+      )
+    }
   }
 
-  if (status === 'archived') {
-    for (const section of ARCHIVED_SECTIONS) {
-      if (!mentionsHeading(content, section))
-        failures.push(`${relPath}: 缺少 "## ${section}"`)
+  const required =
+    status === 'archived'
+      ? ARCHIVED_SECTIONS
+      : status === 'rejected'
+        ? REJECTED_SECTIONS
+        : status === 'implemented'
+          ? IMPLEMENTED_SECTIONS
+          : PROPOSED_SECTIONS
+
+  for (const section of required) {
+    if (!mentionsHeading(content, section)) {
+      failures.push(`${relPath}: 缺少 "## ${section}"（${status} 骨架）`)
     }
-    if (!/^Superseded by:\s*\S/m.test(content)) {
-      failures.push(`${relPath}: 归档笔记必须写 "Superseded by: <path|none>"`)
-    }
-  } else {
-    for (const section of REQUIRED_SECTIONS) {
-      if (!mentionsHeading(content, section))
-        failures.push(`${relPath}: 缺少 "## ${section}"`)
-    }
+  }
+
+  if (status === 'archived' && !/^Superseded by:\s*\S/m.test(content)) {
+    failures.push(`${relPath}: 归档笔记必须写 "Superseded by: <path|none>"`)
   }
 }
 
-for (const required of ['.agents/notes/README.md', '.agents/notes/AGENTS.md']) {
-  if (!isFile(required)) failures.push(`${required}: 治理契约文件缺失`)
-}
-if (!isFile('.agents/notes/implemented/AGENTS.md')) {
-  failures.push(
-    '.agents/notes/implemented/AGENTS.md: implemented 树的工作说明缺失',
-  )
+/** The governance contract is the single source for path, header and sections. */
+if (!isFile('.agents/notes/README.md')) {
+  failures.push('.agents/notes/README.md: 治理契约文件缺失')
 }
 
 finish(

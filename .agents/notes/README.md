@@ -44,7 +44,7 @@ Status: <status>
 
 `## Problem`、`## Proposal`、`## Alternatives considered`、`## Acceptance criteria`、`## Risks`
 
-`archived` 的 Note 只需 `## Problem`、`## Proposal`，并显式写明被谁取代：
+`archived` 的 Note 只需 `## Problem`、`## Proposal`，并显式写明被谁取代（无替代则写 `none`）：
 
 ```
 Superseded by: .agents/notes/implemented/architecture/2026-09-26-<slug>.md
@@ -55,8 +55,9 @@ Superseded by: .agents/notes/implemented/architecture/2026-09-26-<slug>.md
 - `proposed → implemented`：把文件 `git mv` 到 `implemented/`，同时更新 `Status:`，并把 `## Proposal` 改写为已实现的事实与最终形态。
 - `proposed → rejected`：同样 `git mv`，并在 `## Proposal` 上方补一段否决理由；不要删除原方案描述。
 - 任何状态 → `archived`：仅当该 Note 描述的事实已被取代或不再适用，且入链已改指新 Note。
+- 状态流转一律用 `git mv`，不要复制粘贴后删旧文件；历史放在 git，不放在文件名。
 
-重构时优先**原地更新** `implemented/` 里的既有 Note，让 Note 与代码保持同构；只有事实被替换时才归档。
+重构时优先**原地更新** `implemented/` 里的既有 Note，让 Note 与代码保持同构；只有事实被替换时才归档。与代码不一致的 `implemented/` Note 视为缺陷：改了代码就在同一变更里改 Note。
 
 ## 写作约束
 
@@ -64,14 +65,20 @@ Superseded by: .agents/notes/implemented/architecture/2026-09-26-<slug>.md
 - 只写结论与理由，不写推理过程、不写"本次会话我做了什么"。
 - 加粗仅用于真正的不变量；不使用 emoji 章节标题。
 - 命令、路径、标识符保留英文原文，不要翻译。
-- 篇幅：单篇 Note 建议 ≤ 1500 counting units（由 `scripts/gates/verify-doc-budgets.mjs` 的计数规则定义）。
+- 篇幅由 `.agents/gates/verify-doc-budgets.mjs` 持有，不要在此复述数值。
+
+## 反模式
+
+- 用 Note 复述代码结构（读者读代码即可）。
+- 把根入口文件里的命令、预算、授权规则抄进 Note（改一处要改多地，必然漂移）。
+- 为"改一个 typo"这类平凡改动补 Note。
 
 ## 校验
 
 新增或修改 Note 后运行：
 
 ```sh
-pnpm run verify:gates
+node .agents/gates/verify-agent-note-format.mjs
 ```
 
-闸门 `scripts/gates/verify-agent-note-format.mjs` 会校验路径编码、文件头、状态一致性与必需章节。
+它校验路径编码、文件头、状态一致性与按状态分派的必需章节；提交前跑 `node .agents/gates/verify-all.mjs`。

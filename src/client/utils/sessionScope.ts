@@ -8,25 +8,17 @@ import type {
 /**
  * Identity resolution for the page a Session-settings surface is rendering.
  *
- * DSH 0.2.0 removed both fields the surfaces used to read: `SessionListState`
- * carries no `current` and `WorkspaceListState` carries no `recentWorkspaceId`.
- * Reading them is not an error — it silently yields `undefined` — so a page
- * that keyed its workspace off them collapsed to a constant (the first
- * workspace in host order) and stopped following a workspace switch.
- *
- * The two 0.2.0 equivalents are recovered here, in one place, so the hero chip
- * and the view page cannot drift apart:
+ * The host exposes neither "current session" nor "recent workspace" as a
+ * field, so both are recovered here, in one place, and the hero chip and the
+ * view page cannot drift apart:
  *
  * - "current session" is the row the main view retains (`retainedBy.mainView`),
  *   which is exactly how the official `dsh-client-ui-session` picks it.
  * - "recent workspace" is derived from member-session recency, which is exactly
  *   the host's own `recentWorkspace()` rule.
- *
- * Both legacy fields are still consulted LAST, so an older host (or a test
- * double) that does provide them keeps working.
  */
 
-/** The row the main view currently retains, or the legacy `current` fallback. */
+/** The row the main view currently retains. */
 export function resolveMainSessionId(
   sessions?: SessionsState,
 ): string | undefined {
@@ -40,8 +32,7 @@ export function resolveMainSessionId(
       if ((byId[id]?.retainedBy?.mainView ?? 0) > 0) return id
     }
   }
-  // Legacy (pre-0.2.0) shape, kept as a graceful degradation only.
-  return sessions?.current
+  return undefined
 }
 
 /**
@@ -84,10 +75,6 @@ export function resolveRecentWorkspaceId(
     }
   }
 
-  // Legacy (pre-0.2.0) field, consulted only when recency ranked nothing.
-  if (selected === undefined && workspaces?.recentWorkspaceId) {
-    return workspaces.recentWorkspaceId
-  }
   return selected
 }
 

@@ -13,7 +13,7 @@ Status: implemented
 
 这两个字段只存在于 `@deepseek-ai/dsh-client-runtime@0.1.1-rc.2`，而**没有任何 bundle 行加载它**（全仓 `cordis.patch.yml` 对其匹配为 0；web 名单在 `dsh-web-app/cordis.patch.yml:122` 插入的是 `dsh-api-session-controller`）。读不存在的字段不报错、只返回 `undefined`，于是工作区解析塌缩成 `workspaceItems[0]`——宿主序第一个工作区，一个不随切换变化的常量。同一缺陷还使 hero chip 的 `checkOverride` 拿不到会话 id，"已为此会话单独配置" 徽标成为死代码。
 
-## Proposal
+## Decision
 
 **身份判定收进纯模块 `src/client/utils/sessionScope.ts`**，hero chip 与 `useSessionData` 共用，避免再次各写一份而漂移：
 
@@ -31,6 +31,14 @@ Status: implemented
 
 两个 `useSyncExternalStore` 兜底 `getSnapshot` 改为模块级常量：字面量每次读返回新对象，会永远判定快照变化。
 
+**落地约束：**
+
+- `pnpm run check`、`node .agents/gates/verify-all.mjs`、`pnpm run fmt:check` 全绿，`pnpm run build` 成功且客户端纯净度闸门通过。
+- 代码中不再以 `workspaceItems[0]` / `list[0]` 作为工作区兜底。
+- `resolvePageWorkspace` 在「显式 `sessionId` 命中」与「最近性命中」两条路径上返回不同工作区（纯函数可直接断言）。
+- `recentWorkspaceId` 与 `current` 仅作为带注释的降级容错出现，不再是主路径。
+- GUI 冒烟（人工，刷新页面、不重启 `dsh web`）：hero 页在两个工作区间切换工作区芯片，弹窗标题栏的工作区芯片同步跟随；在 hero 页保存会话作用域配置后下一次请求即生效；无工作区可解析时工作区页签禁用且无工作区芯片；会话内 tab、MCP 页、技能页、侧边栏图标、hero chip 渲染正常。
+
 ## Alternatives considered
 
 - **保留 `list[0]` 兜底，仅补主视图会话判定**：否决。切换时若工作区快照尚未到达，页面会退回第一个工作区并**显示错误的工作区**；诚实置空优于错误命名。
@@ -39,15 +47,7 @@ Status: implemented
 - **改用 `ctx.sessions.currentProvideInfo` 判定当前会话**：否决。该字段不在本插件已声明注入的服务面上，且它是 provide 投影而非列表事实。
 - **保留 `dsh-client-runtime` 的旧字段语义**：否决。该包不在任何 bundle 行内，按它编程等于按死代码编程。
 
-## Acceptance criteria
-
-- `pnpm run check`、`pnpm run verify:gates`、`pnpm run fmt:check` 全绿，`pnpm run build` 成功且客户端纯净度闸门通过。
-- 代码中不再以 `workspaceItems[0]` / `list[0]` 作为工作区兜底。
-- `resolvePageWorkspace` 在「显式 `sessionId` 命中」与「最近性命中」两条路径上返回不同工作区（纯函数可直接断言）。
-- `recentWorkspaceId` 与 `current` 仅作为带注释的降级容错出现，不再是主路径。
-- GUI 冒烟（人工，刷新页面、不重启 `dsh web`）：hero 页在两个工作区间切换工作区芯片，弹窗标题栏的工作区芯片同步跟随；在 hero 页保存会话作用域配置后下一次请求即生效；无工作区可解析时工作区页签禁用且无工作区芯片；会话内 tab、MCP 页、技能页、侧边栏图标、hero chip 渲染正常。
-
-## Risks
+## Consequences
 
 - **hero chip 仍依赖私有 DOM 锚点**（`heroWorkspaceRow` 等带哈希类名）：宿主改结构则 hero chip 仍静默失效。
 - **首屏时序**：会话与工作区快照分批到达，首帧可能解析为空并短暂禁用工作区页签，下一帧自行恢复。这是从「显示错误工作区」换来的代价。

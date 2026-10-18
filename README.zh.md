@@ -38,6 +38,7 @@
 - **三个作用域显式区分**：会话、工作区、全局是页面上显式选择的写入目标，不再依据请求恰好带了哪些字段来推断。
 - **新会话页直接写入活会话**：在新会话页选定工作区即已连上该工作区的空白会话，弹窗把会话级配置直接写入该会话，下一次请求即生效。没有会话的页面没有可写入的会话作用域，该页签会禁用并说明原因。
 - **接口契约单一来源**：路径、HTTP 方法与请求体形状各自只在 `src/types.ts` 声明一次；前端按此发送，服务端按此校验，不保留服务端兼容分支。
+- **解析阶梯只有一份**：会话 → 工作区 → 全局的取值规则与默认值定义在 `src/shared/`，前端显示与服务端强制共用同一份实现，面板不会显示一个值而运行时用另一个。
 - **接口经官方鉴权**：所有路由注册在官方 connection 载体上，请求先经 Host/Origin 信任栅栏与浏览器鉴权，才会进入处理器。
 - **资源与提示词只读浏览**：MCP 服务器弹窗内提供「资源 / 提示词」页签。资源按 资源 / 模板 分组，模板可填参后由服务端展开读取；提示词按 role 分块展示并支持复制全文与 Raw JSON。列表缓存优先、内容不落盘，读取仅在点击时发生，且只读视图不影响模型可见的工具与资源（模型侧仍由会话策略决定）。
 
@@ -47,9 +48,9 @@
 
 | 插件分支 | 兼容的 DeepSeek Harness (DSH) 主线版本 | 架构与机制支持 |
 | :--- | :--- | :--- |
-| **`main` 分支** | **`>= 0.2.0-rc.1`** | 原生对齐 **Session Format V4**、**Cordis 4.0.4**、`subagent/descriptor` v3 契约、`AgentPresetRegistry` 作用域 API，以及 0.2.0 版 `ui-primitives` 图标集。 |
+| **`main` 分支** | **`>= 0.2.1-rc.2`** | 原生对齐 **Session Format V4**、**Cordis 4.0.5**、`@modelcontextprotocol/client` 2.2.0、`subagent/descriptor` v3 契约、`AgentPresetRegistry` 作用域 API，以及 `ui-primitives` 图标集。 |
 
-> **⚠️ 注意**：本插件的 `main` 分支仅针对 DSH 0.2.0-rc.1 及以上主线版本原生对齐，**不保留任何向下兼容垫片**，不支持更早的 DSH 版本线。自 DSH 0.2.0 起宿主不再读取 `engines.dsh`，兼容性改由 `peerDependencies` 中的 `@deepseek-ai/dsh` 区间强制，因此不兼容的宿主会直接拒绝加载本插件，而不是加载出半可用状态。
+> **⚠️ 注意**：本插件的 `main` 分支仅针对 DSH 0.2.1-rc.2 及以上主线版本原生对齐，**不保留任何向下兼容垫片**，不支持更早的 DSH 版本线。宿主不读取 `engines.dsh`，兼容性由 `peerDependencies` 中的 `@deepseek-ai/dsh` 区间强制，因此不兼容的宿主会直接拒绝加载本插件，而不是加载出半可用状态。
 
 ---
 
@@ -174,10 +175,10 @@ dsh plugin --profile web remove @local/dsh-session-settings
 | :--- | :--- |
 | `pnpm run build` | 完整构建（TypeScript 类型检查 + 生成 `lib/` 构建产物） |
 | `pnpm run check` | 仅执行类型检查（`tsc --noEmit`），不生成文件 |
+| `pnpm run lint` | ESLint + 类型检查 + Prettier 检查 |
+| `pnpm run lint:fix` | ESLint 自动修复 + Prettier 写入 |
 | `pnpm run fmt` | 使用 Prettier 自动格式化源码与配置文件 |
 | `pnpm run fmt:check` | 检查代码格式规范 |
-| `pnpm run verify:gates` | 运行零依赖的文档与规范闸门 |
-| `pnpm run verify` | 提交前聚合校验（`check` + `verify:gates`） |
 
 ---
 

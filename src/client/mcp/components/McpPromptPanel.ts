@@ -13,7 +13,7 @@ import {
   describePromptBlock,
   renderPromptMessages,
 } from '../../utils/mcpPrimitives.ts'
-import type { PromptGetState } from '../hooks/useMcpPrimitives.ts'
+import type { PromptGetState } from '../discovery.ts'
 
 const e = React.createElement
 

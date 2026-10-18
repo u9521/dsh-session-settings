@@ -8,7 +8,7 @@ DSH 的沙箱只有三个全局模式（`read-only` / `workspace-write` / `dange
 
 摩擦是具体的：工具链缓存都在工作区外，用户要么每次升权到 `danger-full-access`（比所需宽得多），要么整体放宽默认模式——两者都牺牲隔离。
 
-## Proposal
+## Decision
 
 ### 一、交付范围：只做 allow
 
@@ -45,15 +45,7 @@ DSH 的沙箱只有三个全局模式（`read-only` / `workspace-write` / `dange
 
 实测数据、两条 cordis 装配约束与来源阶梯细节见[落地约束](2026-10-05-session-sandbox-policy-constraints.md)。
 
-## Alternatives considered
-
-- **改 `danger-full-access` + 提示词约束**：放弃内核边界，与诉求相反。
-- **硬编码常用缓存目录进 `workspace-write`**：一行改动即可让工具链跑通，但这是产品决策而非用户可配置策略。
-- **patch `sandboxPolicy.resolve()`**：见第二节。
-- **把 deny 表达成更小的 allow 白名单**：Landlock 与 bwrap 只能授予目录树，除非枚举全部子目录——文件多时不可行且随文件变化失效。
-- **上游 `SandboxPolicy` 增加字段**：唯一能让四方言自动一致的路径，但依赖上游发版。
-
-## Acceptance criteria
+**落地约束：**
 
 - `allow` 配置工作区外的兄弟目录后，bash 能写该目录，工作区外其它位置仍返回 `Permission denied`；未配置会话时同一写入仍被拒（实测）。
 - `resolveAllowPath` / `resolveAllowSet` 的路径解析、去重与丢弃语义正确（实测）。
@@ -62,7 +54,15 @@ DSH 的沙箱只有三个全局模式（`read-only` / `workspace-write` / `dange
 - `renderAllowContext([])` 返回空串；`detectCapability()` 在 provider 激活前 / 后 / 无 provider 下为 false / true / false（实测）。
 - `pnpm run verify` 全绿。
 
-## Risks
+## Alternatives considered
+
+- **改 `danger-full-access` + 提示词约束**：放弃内核边界，与诉求相反。
+- **硬编码常用缓存目录进 `workspace-write`**：一行改动即可让工具链跑通，但这是产品决策而非用户可配置策略。
+- **patch `sandboxPolicy.resolve()`**：见第二节。
+- **把 deny 表达成更小的 allow 白名单**：Landlock 与 bwrap 只能授予目录树，除非枚举全部子目录——文件多时不可行且随文件变化失效。
+- **上游 `SandboxPolicy` 增加字段**：唯一能让四方言自动一致的路径，但依赖上游发版。
+
+## Consequences
 
 - **包装 `confine` 依赖它的原型方法身份**。DSH 若把它改成自有字段、改名或移入 provider，包装会静默失效；`detectCapability()` 把它转成 UI 可见的"不支持"。
 - **追加语法依赖 provider 的 argv 形状**。`--` 缺失时本模块原样返回——保守方向，但上游改形状会静默停用增强。

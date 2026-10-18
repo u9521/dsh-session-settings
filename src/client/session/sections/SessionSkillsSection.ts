@@ -11,6 +11,7 @@ import type {
 } from '../../types/index.ts'
 import { EmptyState, SearchToolbar } from '../../components/index.ts'
 import { SkillCard } from '../../skills/components/SkillCard.ts'
+import { isSourceReadonly, sourceModeFor } from '../../utils/config.ts'
 
 const e = React.createElement
 
@@ -58,25 +59,12 @@ export function SessionSkillsSection({
     )
   })
 
-  const defaultMode = currentWorkspaceId ? 'workspace' : 'global'
-
-  const activeSourceMode: 'workspace' | 'global' | 'custom' =
-    scope === 'global'
-      ? 'custom'
-      : scope === 'workspace'
-        ? skillsConfig?.mode === 'custom'
-          ? 'custom'
-          : 'global'
-        : skillsConfig?.mode === 'custom'
-          ? 'custom'
-          : (skillsConfig?.mode ?? defaultMode)
-
-  const isReadonly =
-    scope === 'session'
-      ? activeSourceMode !== 'custom'
-      : scope === 'workspace'
-        ? activeSourceMode !== 'custom'
-        : false
+  const activeSourceMode = sourceModeFor(
+    scope,
+    skillsConfig,
+    Boolean(currentWorkspaceId),
+  )
+  const isReadonly = isSourceReadonly(scope, activeSourceMode)
 
   const sourceTabs =
     scope === 'session'

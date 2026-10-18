@@ -1,6 +1,5 @@
 import * as React from 'react'
 import type { Context } from '@deepseek-ai/cordis'
-import { createRoot, type Root } from 'react-dom/client'
 import * as locales from './locales/index.ts'
 import {
   LOCALE_NS,
@@ -177,9 +176,54 @@ export function apply(ctx: Context) {
     ),
   )
 
-  // 5. Decorate Settings sidebar nav icons for MCP Servers using official icons
+  // 5. Register the session-settings chip in the official New Session row.
+  //
+  // This used to be a DOM injection: a MutationObserver scanned the body for a
+  // private hero-row class and mounted a second React root inside it. The host
+  // now exposes conversation.hero.options for exactly this seat, so the chip is
+  // an ordinary slot entry and no root is created here.
+  slots.inject('conversation.hero.options', () =>
+    slots.register(
+      {
+        name: 'conversation.hero.options',
+        id: 'session-settings',
+        order: 10,
+        label: () => translator('sessionSettings.title'),
+      },
+      function SessionSettingsHeroSeat() {
+        return e(SessionSettingsHeroChip, {
+          remote,
+          locale: ctx.get('locale') as unknown as {
+            bind?: (
+              ns: string,
+            ) => (key: string, vars?: Record<string, string | number>) => string
+          },
+          sessions: ctx.get('sessions') as unknown as {
+            list?: {
+              subscribe: (cb: () => void) => () => void
+              getSnapshot: () => SessionsState
+            }
+          },
+          workspaces: ctx.get('workspaces') as unknown as {
+            list?: {
+              subscribe: (cb: () => void) => () => void
+              getSnapshot: () => WorkspacesState
+            }
+          },
+        })
+      },
+    ),
+  )
+
+  // 6. Decorate the Settings sidebar nav icon for the MCP section.
+  //
+  // This is the one DOM operation left: the settings shell hardcodes a glyph per
+  // section id and falls back to a gear for unknown ids, with no slot for an
+  // icon. The anchor is this plugin's own localized label rather than a
+  // hardcoded pair of strings, so a third locale keeps working.
   ctx.effect(() => {
     let frame = 0
+    const mcpLabel = translator('mcpServers.tabLabel')
     const updateNavIcons = () => {
       // Only execute when a dialog is open (e.g. Settings dialog)
       if (document.querySelector('[role="dialog"]') === null) return
@@ -189,11 +233,7 @@ export function apply(ctx: Context) {
         const label = btn.querySelector('span[class*="navLabel"]')
         if (!label) continue
 
-        // MCP Servers icon: IconCodeOutlineMedium
-        if (
-          label.textContent === 'MCP 服务器' ||
-          label.textContent === 'MCP Servers'
-        ) {
+        if (label.textContent === mcpLabel) {
           const iconSvg = btn.querySelector('svg[class*="navIcon"]')
           if (iconSvg && !iconSvg.getAttribute('data-mcp-official-icon')) {
             iconSvg.setAttribute('data-mcp-official-icon', 'true')
@@ -222,112 +262,4 @@ export function apply(ctx: Context) {
       observer.disconnect()
     }
   }, 'session-settings: official sidebar nav icons')
-
-  // 6. Mount Hero Session Settings Chip (in New Conversation Hero right after agent preset selector)
-  ctx.effect(() => {
-    let unmounted = false
-    let currentRoot: Root | null = null
-    let currentContainer: HTMLElement | null = null
-    let frame = 0
-
-    const checkMount = () => {
-      if (unmounted) return
-      const heroRow = document.querySelector(
-        'div[class*="heroWorkspaceRow"], div[class*="workspaceRow"]',
-      )
-      if (!heroRow) {
-        if (currentRoot) {
-          currentRoot.unmount()
-          currentRoot = null
-          currentContainer = null
-        }
-        return
-      }
-
-      // If container already mounted in this row and still in DOM
-      if (currentContainer && heroRow.contains(currentContainer)) {
-        // Ensure it stays after the agent preset selector button if agent preset loaded later
-        const seatBtn = heroRow.querySelector(
-          'button[class*="seat"], div[class*="seat"], [class*="agentPreset"]',
-        )
-        if (
-          seatBtn &&
-          seatBtn.parentNode === heroRow &&
-          currentContainer.previousElementSibling !== seatBtn
-        ) {
-          seatBtn.after(currentContainer)
-        }
-        return
-      }
-
-      if (currentRoot) {
-        currentRoot.unmount()
-        currentRoot = null
-        currentContainer = null
-      }
-
-      const container = document.createElement('div')
-      container.setAttribute('data-dsh-hero-session-settings', '')
-      container.className = 'dsh-hero-session-settings-seat'
-
-      // Insert directly after Agent Preset selector (button[class*="seat"]) if present, else append
-      const seatBtn = heroRow.querySelector(
-        'button[class*="seat"], div[class*="seat"], [class*="agentPreset"]',
-      )
-      if (seatBtn && seatBtn.parentNode === heroRow) {
-        seatBtn.after(container)
-      } else {
-        heroRow.appendChild(container)
-      }
-
-      currentContainer = container
-      currentRoot = createRoot(container)
-
-      currentRoot.render(
-        e(SessionSettingsHeroChip, {
-          remote,
-          locale: ctx.get('locale') as unknown as {
-            bind?: (
-              ns: string,
-            ) => (key: string, vars?: Record<string, string | number>) => string
-          },
-          sessions: ctx.get('sessions') as unknown as {
-            list?: {
-              subscribe: (cb: () => void) => () => void
-              getSnapshot: () => SessionsState
-            }
-          },
-          workspaces: ctx.get('workspaces') as unknown as {
-            list?: {
-              subscribe: (cb: () => void) => () => void
-              getSnapshot: () => WorkspacesState
-            }
-          },
-        }),
-      )
-    }
-
-    const scheduleCheck = () => {
-      if (frame !== 0) return
-      frame = requestAnimationFrame(() => {
-        frame = 0
-        checkMount()
-      })
-    }
-
-    const observer = new MutationObserver(scheduleCheck)
-    observer.observe(document.body, { childList: true, subtree: true })
-    scheduleCheck()
-
-    return () => {
-      unmounted = true
-      if (frame !== 0) cancelAnimationFrame(frame)
-      observer.disconnect()
-      if (currentRoot) {
-        currentRoot.unmount()
-        currentRoot = null
-        currentContainer = null
-      }
-    }
-  }, 'session-settings: hero chip')
 }

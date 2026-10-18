@@ -30,6 +30,15 @@ export class SkillPolicyProjection {
   private readonly ctx: Context
   private readonly getSessionSettingsStore: () => SessionSettingsStore
 
+  /**
+   * Every agent whose policy this projection owns.
+   *
+   * Kept separately from `installed`: an agent with nothing disabled has no
+   * shadowing registrations, and iterating the registration map would then
+   * skip it — so a later save that disables a skill would never reach the
+   * agents that had no restriction at creation time.
+   */
+  private readonly agents = new Set<Agent>()
   /** agent -> (skill name -> disposer of that agent's shadowing registration). */
   private readonly installed = new Map<Agent, Map<string, () => void>>()
   /** agent -> serialized disabled sets currently installed, for idempotence. */
@@ -45,11 +54,13 @@ export class SkillPolicyProjection {
 
   /** Apply this agent's skill policy; awaited by the `agent/created` listener. */
   public async applyToAgent(agent: Agent): Promise<void> {
+    this.agents.add(agent)
     await this.refresh(agent)
   }
 
   /** Drop bookkeeping for a disposed agent; its scoped registrations unwind with its context. */
   public forget(agent: Agent): void {
+    this.agents.delete(agent)
     this.installed.delete(agent)
     this.installedKeys.delete(agent)
   }
@@ -57,7 +68,7 @@ export class SkillPolicyProjection {
   /** Re-apply every live agent after a settings change. */
   public async notifyPolicyChanged(): Promise<void> {
     await Promise.all(
-      Array.from(this.installed.keys()).map(async (agent) => {
+      Array.from(this.agents).map(async (agent) => {
         try {
           await this.refresh(agent, true)
         } catch {

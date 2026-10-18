@@ -1,7 +1,67 @@
 import * as React from 'react'
-import { parseToolParameters } from '../utils/index.ts'
+import type { ToolParamItem } from '../types/index.ts'
 
 const e = React.createElement
+
+/**
+ * Parse a tool's JSON Schema into the parameter rows this viewer renders.
+ *
+ * Local to the viewer because it has no other consumer: a schema-shape helper
+ * with one call site is a module boundary that only adds a hop.
+ */
+function parseToolParameters(
+  schema?: Record<string, unknown>,
+): ToolParamItem[] {
+  if (!schema || typeof schema !== 'object') return []
+  const properties = schema.properties
+  if (!properties || typeof properties !== 'object') return []
+
+  const requiredSet = new Set(
+    (Array.isArray(schema.required) ? schema.required : []).filter(
+      (key): key is string => typeof key === 'string',
+    ),
+  )
+
+  const items: ToolParamItem[] = []
+  for (const [name, rawProp] of Object.entries(
+    properties as Record<string, unknown>,
+  )) {
+    if (!rawProp || typeof rawProp !== 'object') {
+      items.push({ name, type: 'any', required: requiredSet.has(name) })
+      continue
+    }
+    const prop = rawProp as {
+      type?: unknown
+      enum?: unknown
+      oneOf?: unknown
+      anyOf?: unknown
+      description?: unknown
+      default?: unknown
+    }
+    const typeStr =
+      typeof prop.type === 'string'
+        ? prop.type
+        : prop.enum
+          ? 'enum'
+          : prop.oneOf || prop.anyOf
+            ? 'union'
+            : 'any'
+    items.push({
+      name,
+      type: String(typeStr),
+      required: requiredSet.has(name),
+      description:
+        typeof prop.description === 'string' ? prop.description : undefined,
+      default: prop.default,
+      enum: Array.isArray(prop.enum)
+        ? (prop.enum as unknown[]).filter(
+            (entry): entry is string => typeof entry === 'string',
+          )
+        : undefined,
+    })
+  }
+  return items
+}
 
 export interface SchemaViewerProps {
   schema?: Record<string, unknown>

@@ -1,23 +1,12 @@
 import {
   type ConnectionService,
   type GlobalMcpServerConfig,
-  type McpCachedView,
   type McpProbeResult,
   type McpRefreshResult,
-  type McpServerStore,
-  type McpTransportType,
-  type McpReconnectConfig,
-  type SessionSettingsStore,
 } from '../../types.ts'
-import { loadMcpStore, saveMcpStore } from './storage.ts'
-import {
-  loadSessionSettingsStore,
-  saveSessionSettingsStore,
-  renameServerIdInSessionStore,
-} from '../session/storage.ts'
+import type { McpServerRegistry } from './registry.ts'
 import { testMcpConnection } from './tester/index.ts'
 import { getPrompt, readResource } from './tester/read.ts'
-import type { McpManager } from './manager.ts'
 import {
   badRequest,
   jsonResponse,
@@ -31,243 +20,9 @@ import {
  */
 const MCP_REFRESH_SETTLE_MS = 3000
 
-/**
- * Build the client-facing representation of the MCP servers.
- *
- * Heavy fields (`toolDetails`) are stripped down to counts, and the live
- * `runtime` status of the official mcp-client fork is attached. `runtime` is
- * response-only and never persisted: `saveMcpStore` always serializes the store
- * itself, never this projection.
- */
-function getSanitizedServers(
-  store: McpServerStore,
-  mcpManager?: McpManager,
-): GlobalMcpServerConfig[] {
-  // The registry is walked once and shared by every server in the response.
-  const registeredNames = mcpManager?.collectRegisteredToolNames()
-  return Object.values(store.servers).map((s) => {
-    const {
-      toolDetails,
-      resourceDetails,
-      resourceTemplateDetails,
-      promptDetails,
-      capabilities,
-      tools,
-      disabledTools,
-      ...rest
-    } = s
-    const server = {
-      ...rest,
-      tools: Array.isArray(tools) ? tools.length : 0,
-      disabledTools: Array.isArray(disabledTools) ? disabledTools.length : 0,
-      // Counts replace the full arrays on the list response; the detail arrays
-      // are served by `toolview` for the one server the panel opens.
-      resourceCount: Array.isArray(resourceDetails)
-        ? resourceDetails.length
-        : 0,
-      resourceTemplateCount: Array.isArray(resourceTemplateDetails)
-        ? resourceTemplateDetails.length
-        : 0,
-      promptCount: Array.isArray(promptDetails) ? promptDetails.length : 0,
-      capabilities,
-    } as GlobalMcpServerConfig
-    if (mcpManager) {
-      server.runtime = mcpManager.getServerStatus(s.id, registeredNames)
-    }
-    return server
-  })
-}
-
-/** Official `dsh-mcp-client` namespacing contract for `mcp__<serverName>__<tool>`. */
-const SERVER_NAME_PATTERN = /^[A-Za-z0-9_-]{1,32}$/
-
-/**
- * Fold one successful probe's discovery into the stored server.
- *
- * The single writer for everything a probe learns. Three call sites (the tools
- * endpoint, the test endpoint, and the manual refresh) previously repeated the
- * same field list, so every new discovered primitive had to be added in three
- * places or one of them would silently drop it. Arrays are assigned only when
- * the probe reported them, so a partial result cannot erase a good cache.
- *
- * @param server - stored config to update in place.
- * @param result - a successful probe outcome.
- */
-function applyProbeResult(
-  server: GlobalMcpServerConfig,
-  result: {
-    tools?: string[]
-    toolDetails?: GlobalMcpServerConfig['toolDetails']
-    resourceDetails?: GlobalMcpServerConfig['resourceDetails']
-    resourceTemplateDetails?: GlobalMcpServerConfig['resourceTemplateDetails']
-    promptDetails?: GlobalMcpServerConfig['promptDetails']
-    capabilities?: GlobalMcpServerConfig['capabilities']
-    detectedTransport?: GlobalMcpServerConfig['detectedTransport']
-    serverInfo?: GlobalMcpServerConfig['serverInfo']
-  },
-): void {
-  if (result.tools) server.tools = result.tools
-  if (result.toolDetails) server.toolDetails = result.toolDetails
-  if (result.resourceDetails) server.resourceDetails = result.resourceDetails
-  if (result.resourceTemplateDetails) {
-    server.resourceTemplateDetails = result.resourceTemplateDetails
-  }
-  if (result.promptDetails) server.promptDetails = result.promptDetails
-  if (result.capabilities) server.capabilities = result.capabilities
-  if (result.detectedTransport)
-    server.detectedTransport = result.detectedTransport
-  if (result.serverInfo) server.serverInfo = result.serverInfo
-  server.lastTestedAt = Date.now()
-}
-
-function parseServerConfig(
-  incoming: Partial<GlobalMcpServerConfig>,
-  existing?: GlobalMcpServerConfig,
-): { error?: string; config?: GlobalMcpServerConfig; id?: string } {
-  const rawId = (typeof incoming.id === 'string' ? incoming.id : '').trim()
-  const id = rawId.replace(/[^a-zA-Z0-9_-]/g, '_')
-  const name = (typeof incoming.name === 'string' ? incoming.name : '').trim()
-
-  if (!id || !name) {
-    return { error: 'Server ID and name are required' }
-  }
-
-  // The official mcp-client derives model-facing tool names from this id and
-  // rejects anything outside the pattern, so refuse it here with a clear message
-  // instead of failing later at mount time.
-  if (!SERVER_NAME_PATTERN.test(id)) {
-    return {
-      error: 'Server ID must be 1-32 characters of letters, digits, "_" or "-"',
-    }
-  }
-
-  const rawTransport = incoming.transport
-  const transport: McpTransportType | null =
-    rawTransport === 'stdio'
-      ? 'stdio'
-      : rawTransport === 'streamable-http' ||
-          rawTransport === 'streamable-http-or-sse' ||
-          rawTransport === 'sse'
-        ? 'streamable-http'
-        : null
-
-  if (!transport) {
-    return {
-      error: 'Valid transport (stdio, streamable-http) is required',
-    }
-  }
-
-  if (transport === 'stdio' && !incoming.command?.trim()) {
-    return { error: 'Command is required for stdio transport' }
-  }
-
-  if (transport !== 'stdio' && !incoming.url?.trim()) {
-    return { error: 'URL is required for HTTP/SSE transport' }
-  }
-
-  const now = Date.now()
-  const toolCallTimeoutMs =
-    typeof incoming.toolCallTimeoutMs === 'number' &&
-    incoming.toolCallTimeoutMs > 0
-      ? Math.floor(incoming.toolCallTimeoutMs)
-      : undefined
-
-  const failOnStartupError =
-    typeof incoming.failOnStartupError === 'boolean'
-      ? incoming.failOnStartupError
-      : undefined
-
-  let reconnect: McpReconnectConfig | undefined = undefined
-  if (incoming.reconnect && typeof incoming.reconnect === 'object') {
-    // The official schema requires delays and attempt counts >= 1; "do not
-    // retry" is expressed by `enabled: false`, never by a zero budget.
-    const atLeastOne = (value: unknown): number | undefined =>
-      typeof value === 'number' && Number.isFinite(value)
-        ? Math.max(1, Math.floor(value))
-        : undefined
-
-    reconnect = {
-      enabled:
-        typeof incoming.reconnect.enabled === 'boolean'
-          ? incoming.reconnect.enabled
-          : undefined,
-      initialDelayMs: atLeastOne(incoming.reconnect.initialDelayMs),
-      maxDelayMs: atLeastOne(incoming.reconnect.maxDelayMs),
-      maxAttempts: atLeastOne(incoming.reconnect.maxAttempts),
-    }
-  }
-
-  const disabledTools = Array.isArray(incoming.disabledTools)
-    ? Array.from(
-        new Set(
-          incoming.disabledTools
-            .filter((t): t is string => typeof t === 'string')
-            .map((t) => t.trim())
-            .filter(Boolean),
-        ),
-      )
-    : existing?.disabledTools
-
-  const config: GlobalMcpServerConfig = {
-    id,
-    name,
-    description: incoming.description?.trim() || undefined,
-    transport,
-    command: incoming.command?.trim() || undefined,
-    args: Array.isArray(incoming.args)
-      ? incoming.args.filter((a) => typeof a === 'string')
-      : [],
-    env:
-      incoming.env && typeof incoming.env === 'object'
-        ? incoming.env
-        : undefined,
-    cwd: incoming.cwd?.trim() || undefined,
-    url: incoming.url?.trim() || undefined,
-    headers:
-      incoming.headers && typeof incoming.headers === 'object'
-        ? incoming.headers
-        : undefined,
-    toolCallTimeoutMs: toolCallTimeoutMs ?? existing?.toolCallTimeoutMs,
-    failOnStartupError: failOnStartupError ?? existing?.failOnStartupError,
-    maxInstructionBytes:
-      typeof incoming.maxInstructionBytes === 'number' &&
-      incoming.maxInstructionBytes > 0
-        ? Math.floor(incoming.maxInstructionBytes)
-        : existing?.maxInstructionBytes,
-    reconnect: reconnect ?? existing?.reconnect,
-    disabledTools:
-      Array.isArray(disabledTools) && disabledTools.length > 0
-        ? disabledTools
-        : undefined,
-    tools: Array.isArray(incoming.tools) ? incoming.tools : existing?.tools,
-    toolDetails: incoming.toolDetails ?? existing?.toolDetails,
-    // Cached discovery lists ride through every edit so a rename or a settings
-    // change cannot silently drop them; the panel would otherwise show an empty
-    // resource tab until the next probe. Content is never among these.
-    resourceDetails: incoming.resourceDetails ?? existing?.resourceDetails,
-    resourceTemplateDetails:
-      incoming.resourceTemplateDetails ?? existing?.resourceTemplateDetails,
-    promptDetails: incoming.promptDetails ?? existing?.promptDetails,
-    capabilities: incoming.capabilities ?? existing?.capabilities,
-    detectedTransport:
-      incoming.detectedTransport ?? existing?.detectedTransport,
-    serverInfo: incoming.serverInfo ?? existing?.serverInfo,
-    lastTestedAt: incoming.lastTestedAt ?? existing?.lastTestedAt,
-    createdAt: existing?.createdAt ?? now,
-    updatedAt: now,
-  }
-
-  return { config, id }
-}
-
 export function registerMcpRoutes(
   connection: ConnectionService,
-  getMcpStore: () => McpServerStore,
-  setMcpStore: (s: McpServerStore) => void,
-  mcpManager?: McpManager,
-  getSessionSettingsStore?: () => SessionSettingsStore,
-  setSessionSettingsStore?: (s: SessionSettingsStore) => void,
-  invalidatePolicies?: () => void,
+  registry: McpServerRegistry,
 ): () => void {
   // 1. GET /mcp-servers/list
   const unregisterListRoute = connection.fetch.register(
@@ -275,10 +30,7 @@ export function registerMcpRoutes(
       endpoint: 'mcpServersList',
       handler: async () => {
         try {
-          const currentStore = loadMcpStore()
-          setMcpStore(currentStore)
-          const sanitizedServers = getSanitizedServers(currentStore, mcpManager)
-          return jsonResponse({ ok: true, servers: sanitizedServers })
+          return jsonResponse({ ok: true, servers: registry.list() })
         } catch (err: unknown) {
           return jsonResponse(
             {
@@ -306,20 +58,9 @@ export function registerMcpRoutes(
         }
 
         try {
-          const { error, config, id } = parseServerConfig(incoming)
-          if (error || !config || !id) {
-            return badRequest(error || 'Invalid server configuration')
-          }
-
-          const mcpStore = getMcpStore()
-          mcpStore.servers[id] = config
-          saveMcpStore(mcpStore)
-          setMcpStore(mcpStore)
-
-          mcpManager?.syncServer(config)
-          invalidatePolicies?.()
-
-          return jsonResponse({ ok: true, server: config })
+          const result = await registry.upsert(incoming)
+          if ('error' in result) return badRequest(result.error)
+          return jsonResponse({ ok: true, server: result.config })
         } catch (err: unknown) {
           return badRequest(err instanceof Error ? err.message : String(err))
         }
@@ -343,46 +84,12 @@ export function registerMcpRoutes(
           typeof parsed.originalId === 'string' ? parsed.originalId.trim() : ''
 
         try {
-          const mcpStore = getMcpStore()
-          const isRename = Boolean(originalId && mcpStore.servers[originalId])
-          const existing = isRename
-            ? mcpStore.servers[originalId]
-            : typeof incoming.id === 'string'
-              ? mcpStore.servers[incoming.id.trim()]
-              : undefined
-
-          const { error, config, id } = parseServerConfig(incoming, existing)
-          if (error || !config || !id) {
-            return badRequest(error || 'Invalid server configuration')
-          }
-
-          if (isRename && originalId !== id) {
-            delete mcpStore.servers[originalId]
-            await mcpManager?.unmountOfficialClient(originalId)
-
-            const currentSessionSettings = getSessionSettingsStore
-              ? getSessionSettingsStore()
-              : loadSessionSettingsStore()
-            if (
-              renameServerIdInSessionStore(
-                currentSessionSettings,
-                originalId,
-                id,
-              )
-            ) {
-              saveSessionSettingsStore(currentSessionSettings)
-              setSessionSettingsStore?.(currentSessionSettings)
-            }
-          }
-
-          mcpStore.servers[id] = config
-          saveMcpStore(mcpStore)
-          setMcpStore(mcpStore)
-
-          mcpManager?.syncServer(config)
-          invalidatePolicies?.()
-
-          return jsonResponse({ ok: true, server: config })
+          const result = await registry.upsert(
+            incoming,
+            originalId || undefined,
+          )
+          if ('error' in result) return badRequest(result.error)
+          return jsonResponse({ ok: true, server: result.config })
         } catch (err: unknown) {
           return badRequest(err instanceof Error ? err.message : String(err))
         }
@@ -401,14 +108,7 @@ export function registerMcpRoutes(
         if (!targetId) return badRequest('Server ID is required')
 
         try {
-          const mcpStore = getMcpStore()
-          if (mcpStore.servers[targetId]) {
-            delete mcpStore.servers[targetId]
-            saveMcpStore(mcpStore)
-            setMcpStore(mcpStore)
-            await mcpManager?.unmountOfficialClient(targetId)
-          }
-
+          await registry.remove(targetId)
           return jsonResponse({ ok: true, id: targetId })
         } catch (err: unknown) {
           return badRequest(err instanceof Error ? err.message : String(err))
@@ -429,25 +129,9 @@ export function registerMcpRoutes(
         const targetId = (
           new URL(request.url).searchParams.get('id') || ''
         ).trim()
-        const currentStore = loadMcpStore()
-        setMcpStore(currentStore)
-
-        if (!targetId || !currentStore.servers[targetId]) {
+        const cached = targetId ? registry.cacheView(targetId) : undefined
+        if (!cached) {
           return jsonResponse({ ok: false, error: 'Server not found' }, 404)
-        }
-
-        const s = currentStore.servers[targetId]
-        const cached: McpCachedView = {
-          ok: true,
-          tools: s.tools || [],
-          toolDetails: s.toolDetails || [],
-          resourceDetails: s.resourceDetails || [],
-          resourceTemplateDetails: s.resourceTemplateDetails || [],
-          promptDetails: s.promptDetails || [],
-          capabilities: s.capabilities,
-          disabledTools: Array.isArray(s.disabledTools) ? s.disabledTools : [],
-          serverInfo: s.serverInfo,
-          detectedTransport: s.detectedTransport,
         }
         return jsonResponse(cached)
       },
@@ -480,25 +164,21 @@ export function registerMcpRoutes(
         }
 
         try {
-          const mcpStore = getMcpStore()
           const targetId = (
             typeof probePayload.id === 'string' ? probePayload.id : ''
           ).trim()
-          const existing = targetId ? mcpStore.servers[targetId] : undefined
+          const existing = targetId ? registry.raw(targetId) : undefined
           const effectiveServer = existing
             ? { ...existing, ...probePayload }
             : probePayload
           const startedAt = Date.now()
           const probe = await testMcpConnection(effectiveServer)
 
-          if (targetId && mcpStore.servers[targetId] && probe.ok) {
-            const s = mcpStore.servers[targetId]
-            applyProbeResult(s, probe)
-
-            saveMcpStore(mcpStore)
-            setMcpStore(mcpStore)
-            mcpManager?.syncServer(s)
-            invalidatePolicies?.()
+          // Patch only the discovery fields AFTER the network round trip: a
+          // concurrent edit that landed during the probe keeps its connection
+          // config instead of being overwritten by a pre-await snapshot.
+          if (targetId && probe.ok) {
+            registry.recordDiscovery(targetId, probe)
           }
 
           let remount: McpRefreshResult | undefined
@@ -506,7 +186,8 @@ export function registerMcpRoutes(
             if (!targetId) {
               return badRequest('A "server.id" is required to remount')
             }
-            if (!mcpStore.servers[targetId]) {
+            const target = registry.raw(targetId)
+            if (!target) {
               return jsonResponse(
                 { ok: false, error: `Unknown MCP server "${targetId}"` },
                 404,
@@ -516,16 +197,14 @@ export function registerMcpRoutes(
             // `settleMs` makes the response wait (bounded) for the rebuilt fork
             // to register its tools, so a caller can update its badge from this
             // single response without polling.
-            const outcome = mcpManager
-              ? await mcpManager.refreshServer(mcpStore.servers[targetId], {
-                  force: parsed.force === true,
-                  settleMs: probe.ok ? MCP_REFRESH_SETTLE_MS : 0,
-                })
-              : undefined
+            const outcome = await registry.refreshClient(target, {
+              force: parsed.force === true,
+              settleMs: probe.ok ? MCP_REFRESH_SETTLE_MS : 0,
+            })
 
             remount = {
               id: targetId,
-              name: mcpStore.servers[targetId].name,
+              name: target.name,
               ok: probe.ok,
               message: probe.message,
               toolCount: probe.tools?.length ?? 0,
@@ -542,13 +221,7 @@ export function registerMcpRoutes(
           const result: McpProbeResult = {
             ...probe,
             ...(remount ? { remount } : {}),
-            ...(targetId
-              ? {
-                  server: getSanitizedServers(mcpStore, mcpManager).find(
-                    (s) => s.id === targetId,
-                  ),
-                }
-              : {}),
+            ...(targetId ? { server: registry.find(targetId) } : {}),
           }
 
           return jsonResponse(result)
@@ -569,117 +242,16 @@ export function registerMcpRoutes(
         if (parsed.data === undefined) {
           return badRequest('A "data" payload is required')
         }
-        const rootObj = parsed.data as Record<string, unknown>
-        const serversMap = (rootObj.mcpServers ?? rootObj) as Record<
-          string,
-          unknown
-        >
 
         try {
-          if (
-            !serversMap ||
-            typeof serversMap !== 'object' ||
-            Array.isArray(serversMap)
-          ) {
-            return jsonResponse(
-              {
-                ok: false,
-                message:
-                  'Invalid JSON format: expected mcpServers object mapping',
-              },
-              400,
-            )
+          const imported = await registry.importServers(parsed.data)
+          if ('error' in imported) {
+            return jsonResponse({ ok: false, message: imported.error }, 400)
           }
-
-          const mcpStore = getMcpStore()
-          let count = 0
-
-          for (const [key, rawVal] of Object.entries(serversMap)) {
-            if (!rawVal || typeof rawVal !== 'object') continue
-            const raw = rawVal as Record<string, unknown>
-            const rawId = (typeof raw.id === 'string' ? raw.id : key).trim()
-            const id = rawId.replace(/[^a-zA-Z0-9_-]/g, '_')
-            if (!id) continue
-
-            const name =
-              (typeof raw.name === 'string' ? raw.name : key).trim() || id
-            const transport: McpTransportType =
-              raw.transport === 'stdio'
-                ? 'stdio'
-                : raw.transport === 'streamable-http' ||
-                    raw.transport === 'streamable-http-or-sse' ||
-                    raw.transport === 'sse'
-                  ? 'streamable-http'
-                  : raw.url
-                    ? 'streamable-http'
-                    : 'stdio'
-
-            const existing = mcpStore.servers[id]
-            const now = Date.now()
-
-            const serverConfig: GlobalMcpServerConfig = {
-              id,
-              name,
-              description:
-                typeof raw.description === 'string'
-                  ? raw.description.trim()
-                  : existing?.description,
-              transport,
-              command:
-                typeof raw.command === 'string'
-                  ? raw.command.trim()
-                  : existing?.command,
-              args: Array.isArray(raw.args)
-                ? raw.args.filter((a): a is string => typeof a === 'string')
-                : existing?.args || [],
-              env:
-                raw.env && typeof raw.env === 'object'
-                  ? (raw.env as Record<string, string>)
-                  : existing?.env,
-              cwd: typeof raw.cwd === 'string' ? raw.cwd.trim() : existing?.cwd,
-              url: typeof raw.url === 'string' ? raw.url.trim() : existing?.url,
-              headers:
-                raw.headers && typeof raw.headers === 'object'
-                  ? (raw.headers as Record<string, string>)
-                  : existing?.headers,
-              toolCallTimeoutMs:
-                typeof raw.toolCallTimeoutMs === 'number'
-                  ? raw.toolCallTimeoutMs
-                  : existing?.toolCallTimeoutMs,
-              failOnStartupError:
-                typeof raw.failOnStartupError === 'boolean'
-                  ? raw.failOnStartupError
-                  : existing?.failOnStartupError,
-              reconnect: (raw.reconnect && typeof raw.reconnect === 'object'
-                ? raw.reconnect
-                : existing?.reconnect) as McpReconnectConfig | undefined,
-              disabledTools: Array.isArray(raw.disabledTools)
-                ? raw.disabledTools
-                : existing?.disabledTools,
-              tools: existing?.tools,
-              toolDetails: existing?.toolDetails,
-              detectedTransport: existing?.detectedTransport,
-              serverInfo: existing?.serverInfo,
-              lastTestedAt: existing?.lastTestedAt,
-              createdAt: existing?.createdAt ?? now,
-              updatedAt: now,
-            }
-
-            mcpStore.servers[id] = serverConfig
-            count++
-          }
-
-          saveMcpStore(mcpStore)
-          setMcpStore(mcpStore)
-
-          mcpManager?.syncAll()
-          invalidatePolicies?.()
-
-          const sanitizedServers = getSanitizedServers(mcpStore, mcpManager)
           return jsonResponse({
             ok: true,
-            count,
-            servers: sanitizedServers,
+            count: imported.count,
+            servers: registry.list(),
           })
         } catch (err: unknown) {
           return jsonResponse(

@@ -34,7 +34,7 @@ if (config.allowAgentSelectModel !== false && hasExplicitChildModel(agent)) retu
 
 线上实测（工作区 playground，父会话 `session-19695cc8`）：配置值为 `cpa-antigravity/gemini-3.8-flash-high`（`resolveEffectiveSubagentModel` 返回正确），而子代理 `6d9ed90e` 的 `request/header` 是 `a2a/deepseek-v4.1-flash`（父会话路由）。父会话日志中该次 `subagent` 工具调用的参数为 `{"description","prompt","run_in_background"}`，**不含** `provider`/`model`/`reasoning_effort`，即纯继承。
 
-## Proposal
+## Decision
 
 **一、自选的判别基准改为「相对继承基线的差异」。** 新增 `parentRoute(ctx, agent)`，镜像宿主自己的基线规则（`parent.session.requestHeader()?.config` 优先，回退 `parent.options`），取**直接**父代理——委派继承自调用它的那个 agent，而非 `resolveAgentSessionId` 所上溯的根会话（后者服务配置解析，是另一件事）。
 
@@ -54,17 +54,9 @@ function hasExplicitChildModel(ctx, agent) {
 
 **二、基线不可得时保守失败。** 父代理不在注册表（冷启动 resume 且父未加载）或两者都无路由时，判定为「自选」→ 不动子代理路由。宁可漏覆盖，也不误改一次真实的自选。
 
-## Alternatives considered
+**落地约束：**
 
-- **忽略 `allowAgentSelectModel`，一律强制**：否决。会让「允许 Agent 自选」永久失效，破坏真实的显式委派路由。
-- **用 `agent.options.subagentDepth` 的存在判别**：否决。它对每个子代理都被无条件写入，没有区分力。
-- **在 `agent/created` 缓存父路由快照**：否决。需引入按会话的生命周期状态与清理，而父代理由子代理的工具调用创建、请求期间仍在注册表中，活体查询已足够。
-- **在委派工具侧记录显式选择**：否决。工具属于宿主 `dsh-tool-subagent`，插件不能改；且其 `request.agentOptions` 对拦截器不可见。
-- **把 `reasoningEffort` 单独变化也算自选**：否决。与宿主 `routeChanged` 只比 provider/model 的口径保持一致，避免同一概念两套定义。
-
-## Acceptance criteria
-
-- `pnpm run check && pnpm run verify:gates` 全绿，`pnpm run fmt:check` 通过，`pnpm run build` 成功。
+- `pnpm run check && node .agents/gates/verify-all.mjs` 全绿，`pnpm run fmt:check` 通过，`pnpm run build` 成功。
 - 走真实 `agent/request` 瀑布（注册插件导出的 `registerSubagentModelInterceptor`）：
   - 子代理 options 等于直接父代理路由（纯继承）→ 返回配置的模型与推理强度；
   - 子代理 options 是不同路由且 `allowAgentSelectModel` 为真 → 保留子代理路由；
@@ -74,7 +66,15 @@ function hasExplicitChildModel(ctx, agent) {
   - 父代理两者皆无 → 保留子代理路由。
 - 既有的暂存消费、接口契约、鉴权闸门、注册顺序回归全部保持通过。
 
-## Risks
+## Alternatives considered
+
+- **忽略 `allowAgentSelectModel`，一律强制**：否决。会让「允许 Agent 自选」永久失效，破坏真实的显式委派路由。
+- **用 `agent.options.subagentDepth` 的存在判别**：否决。它对每个子代理都被无条件写入，没有区分力。
+- **在 `agent/created` 缓存父路由快照**：否决。需引入按会话的生命周期状态与清理，而父代理由子代理的工具调用创建、请求期间仍在注册表中，活体查询已足够。
+- **在委派工具侧记录显式选择**：否决。工具属于宿主 `dsh-tool-subagent`，插件不能改；且其 `request.agentOptions` 对拦截器不可见。
+- **把 `reasoningEffort` 单独变化也算自选**：否决。与宿主 `routeChanged` 只比 provider/model 的口径保持一致，避免同一概念两套定义。
+
+## Consequences
 
 - **父代理必须是活体**：一次性与后台子代理由父工具调用创建，父代理在请求期间仍在注册表中，故正常命中；冷启动 resume 且父未加载时走保守回退（与修复前表现一致，不误改路由）。
 - **极窄竞态**：基线用父代理**当前** `requestHeader`，与派生时刻可能相差（父会话在子代理首次请求前切换模型）。仅影响该窗口内的一次判定。

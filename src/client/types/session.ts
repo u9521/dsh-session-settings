@@ -64,31 +64,28 @@ export interface SessionInfo {
   parentId?: string
   /** List ordering key; the workspace recency ranking reads it. */
   updatedAt?: number
-  /**
-   * Local retention counts by consumer source. DSH 0.2.0 expresses "the session
-   * the main view is showing" here (`mainView`), not as a `current` id.
-   */
+  /** Local retention counts by consumer source; `mainView` marks the shown session. */
   retainedBy?: { mainView?: number }
 }
 
+/**
+ * The session list snapshot this plugin reads.
+ *
+ * "Which session the main view shows" is `byId[id].retainedBy.mainView`; there
+ * is no separate current-id field on the host's `SessionListState`.
+ */
 export interface SessionsState {
   byId?: Record<string, SessionInfo>
-  /**
-   * Pre-0.2.0 session selection. DSH 0.2.0's `SessionListState` has no such
-   * field — its equivalent fact is `byId[id].retainedBy.mainView`. Kept only as
-   * a graceful fallback for an older host; never the primary read.
-   */
-  current?: string
 }
 
+/**
+ * The workspace list snapshot this plugin reads.
+ *
+ * "Most recently active workspace" is derived from member-session `updatedAt`
+ * (see `resolveRecentWorkspaceId`); the host's snapshot carries no recency id.
+ */
 export interface WorkspacesState {
   items?: WorkspaceInfo[]
-  /**
-   * Pre-0.2.0 "most recently active workspace". DSH 0.2.0's workspace snapshot
-   * has no such field — recency is derived from member-session `updatedAt` (see
-   * `resolveRecentWorkspaceId`). Kept only as a graceful fallback.
-   */
-  recentWorkspaceId?: string
 }
 
 export type UseSessionsHook = (

@@ -6,24 +6,33 @@
  * description that does not say *when* to use it makes the catalog entry
  * unusable. Both are cheap to check and expensive to notice.
  */
-import { finish, isDir, readText, walk } from './_shared.mjs'
+import { finish, readText, walk } from './_shared.mjs'
 
-const SKILL_DIR = '.agents/skills'
+/**
+ * Two skill roots: the ones installed into this project, and the ones that ship
+ * inside the preset. Both are loaded by hash, so both need valid frontmatter.
+ */
+const SKILL_DIRS = ['.agents/skills', '.agents/preset/skills']
 const NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 
 const failures = []
 const seen = new Map()
 const skills = []
 
-for (const relPath of walk(SKILL_DIR, (p) => p.endsWith('.md'))) {
+const skillFiles = SKILL_DIRS.flatMap((dir) =>
+  walk(dir, (p) => p.endsWith('/SKILL.md')),
+)
+
+for (const relPath of skillFiles) {
   const segments = relPath.split('/')
   if (segments.at(-1) !== 'SKILL.md') continue
-  if (segments.length !== 4) {
-    failures.push(`${relPath}: 技能必须是 ${SKILL_DIR}/<name>/SKILL.md`)
+  // `<root>/<name>/SKILL.md`: the root may itself be nested (`.agents/preset/skills`).
+  if (segments.length < 4) {
+    failures.push(`${relPath}: 技能必须是 <skillDir>/<name>/SKILL.md`)
     continue
   }
 
-  const dirName = segments[2]
+  const dirName = segments.at(-2)
   skills.push(relPath)
   if (!NAME_PATTERN.test(dirName)) {
     failures.push(`${relPath}: 技能目录名必须是 kebab-case，当前 "${dirName}"`)
@@ -73,9 +82,10 @@ for (const relPath of walk(SKILL_DIR, (p) => p.endsWith('.md'))) {
   if (!/^##\s+\S/m.test(body)) failures.push(`${relPath}: 正文缺少二级标题章节`)
 }
 
-if (isDir(SKILL_DIR) && skills.length === 0) {
-  failures.push(`${SKILL_DIR}: 目录存在但没有任何技能`)
-}
+// An empty skills directory is legal: skills are optional, and a project that
+// chose none still gets a scaffold whose other gates mean something. Git does
+// not track empty directories anyway, so a directory with no skill costs
+// nothing and must not be reported as a defect.
 
 finish(
   'verify-agent-skills',

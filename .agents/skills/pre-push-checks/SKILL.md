@@ -7,6 +7,8 @@ description: 在提交或推送本仓库改动前使用，用于按改动面确�
 
 目标：用**最小**的命令集合覆盖 diff 的实际风险面，并如实汇报结果。不要为了看起来稳妥而全量重跑，也不要在没跑的情况下声称通过。
 
+`pnpm run verify` 等价于 `pnpm run lint`：它校验项目本体，不覆盖框架。框架由 `verify-all` 覆盖，两者互不代替。
+
 ## 步骤
 
 1. 确定改动面：
@@ -23,13 +25,13 @@ description: 在提交或推送本仓库改动前使用，用于按改动面确�
 
 | 改动面 | 必须执行 |
 | :--- | :--- |
-| `AGENTS.md`、`.agents/**`、`docs/**` | `pnpm run verify:gates` |
-| `src/**` | `pnpm run check && pnpm run build && pnpm run verify:gates` |
+| `AGENTS.md`、`.agents/**` | `node .agents/gates/verify-all.mjs` |
+| `src/**` | `pnpm run check && pnpm run build && node .agents/gates/verify-all.mjs` |
 | `src/client/**`、`src/client/styles/**`、`tsdown.config.mjs` | 加上 GUI 冒烟：`dsh web` 后检查会话设置 tab、MCP 服务器页、技能页、hero chip、侧边栏图标 |
 | `src/server/**`（拦截器、路由、存储） | 加上 GUI 冒烟：改会话设置后下一次请求即生效；禁用工具后被调用即被拒；`$DSH_HOME/storages/*.json` 内容符合预期 |
 | `package.json`、`pnpm-lock.yaml` | `pnpm install --frozen-lockfile && pnpm run build` |
 | `scripts/build.mjs`、`tsdown.config.mjs` | `pnpm run build`，并确认 `lib/client.js` 首行是 `window.__ModuleLoader__.load({ id: "@local/dsh-session-settings", ... })` |
-| `scripts/gates/**` | `pnpm run verify:gates`，并**故意**制造一次违规（如临时删掉某篇 Note 的 `## Risks`）确认闸门真的会失败 |
+| `.agents/gates/**` | `node .agents/gates/verify-all.mjs`，并**故意**制造一次违规（如临时删掉某篇 Note 的 `## Consequences`）确认闸门真的会失败 |
 
 ## 硬性禁忌
 

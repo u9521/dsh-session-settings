@@ -13,8 +13,8 @@ export const MCP_CLIENT_SETTLE_GRACE_MS = 10_000
 /**
  * Tool count cached by the last probe.
  *
- * `getSanitizedServers()` reduces the persisted `tools` array to a number for
- * the client, so this is how many tools the server is known to expose.
+ * The server list reduces the persisted `tools` array to a number for the
+ * client, so this is how many tools the server is known to expose.
  */
 export function expectedToolCount(server: GlobalMcpServerConfig): number {
   if (typeof server.tools === 'number') return server.tools

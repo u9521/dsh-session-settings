@@ -13,7 +13,7 @@ import {
   API_ENDPOINTS,
   API_METHODS,
 } from '../types/index.ts'
-import { EmptyState } from '../components/index.ts'
+import { EmptyState, ServerIcon } from '../components/index.ts'
 import { useMcpServers } from './hooks/useMcpServers.ts'
 import { McpServerCard } from './components/McpServerCard.ts'
 import { McpServerFormModal } from './components/McpServerFormModal.ts'
@@ -21,8 +21,8 @@ import { McpToolsModal } from './components/McpToolsModal.ts'
 import { McpResourcePanel } from './components/McpResourcePanel.ts'
 import { McpPromptPanel } from './components/McpPromptPanel.ts'
 import type { McpPrimitiveTab } from './components/McpPrimitivesTabs.ts'
-import { useMcpPrimitives } from './hooks/useMcpPrimitives.ts'
-import type { McpDiscovery } from './hooks/useMcpPrimitives.ts'
+import { useMcpDiscovery, serverPatch, probeServer } from './discovery.ts'
+import { EMPTY_DISCOVERY } from '../utils/mcpDiscovery.ts'
 import { useCopyFeedback } from './hooks/useCopyFeedback.ts'
 import { McpImportExportModal } from './components/McpImportExportModal.ts'
 import { McpSaveConfirmModal } from './components/McpSaveConfirmModal.ts'
@@ -212,17 +212,13 @@ export function McpServersSettingsTab({ t, close: _close }: McpSettingsProps) {
 
     setFormTesting(true)
     try {
-      const res = await fetch(API_ENDPOINTS.mcpServersProbe, {
-        method: API_METHODS.mcpServersProbe,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ server: serverObj }),
-      })
-      const data = await res.json()
+      const probe = await probeServer(serverObj)
       setFormTestResult({
-        ok: Boolean(data.ok),
-        message: data.message || (data.ok ? 'Connection OK' : 'Failed'),
+        ok: probe.ok,
+        message: probe.message || (probe.ok ? 'Connection OK' : 'Failed'),
       })
-      if (data.ok) {
+      if (probe.ok) {
+        const data = probe.discovery ?? EMPTY_DISCOVERY
         setFormServer((prev) => {
           const updated = {
             ...prev,
@@ -273,35 +269,6 @@ export function McpServersSettingsTab({ t, close: _close }: McpSettingsProps) {
   // serverInfo, and transport together. Writing them all here is what lets the
   // three tabs share one request, and patching the modal's target object is what
   // lets the discovery hook seed from it on the next render.
-  const applyDiscovery = React.useCallback(
-    (discovery: McpDiscovery, serverId?: string) => {
-      const id = serverId ?? toolsTargetServer?.id
-      if (!id) return
-      const { lists } = discovery
-      const patch: Partial<GlobalMcpServerConfig> = {
-        toolDetails: discovery.tools,
-        tools: discovery.tools.length,
-        resourceDetails: lists.resources,
-        resourceTemplateDetails: lists.resourceTemplates,
-        promptDetails: lists.prompts,
-        capabilities: lists.capabilities,
-        resourceCount: lists.resources.length,
-        resourceTemplateCount: lists.resourceTemplates.length,
-        promptCount: lists.prompts.length,
-        ...(discovery.serverInfo ? { serverInfo: discovery.serverInfo } : {}),
-        ...(discovery.detectedTransport
-          ? { detectedTransport: discovery.detectedTransport }
-          : {}),
-        lastTestedAt: Date.now(),
-      }
-      setServers((prev) =>
-        prev.map((entry) => (entry.id === id ? { ...entry, ...patch } : entry)),
-      )
-      setToolsTargetServer((prev) => (prev ? { ...prev, ...patch } : prev))
-    },
-    [toolsTargetServer?.id],
-  )
-
   // Open Tools modal from card or form
   const handleOpenTools = (
     server: Partial<GlobalMcpServerConfig>,
@@ -361,11 +328,31 @@ export function McpServersSettingsTab({ t, close: _close }: McpSettingsProps) {
 
   // All three tabs are views of ONE discovery, so a single hook owns the
   // request. It is cache-first, and resource/prompt CONTENT is never persisted.
-  const discovery = useMcpPrimitives({
-    server: toolsTargetServer,
-    onDiscovery: applyDiscovery,
-    t,
-  })
+  const mcp = useMcpDiscovery({ server: toolsTargetServer, t })
+  const discovery = mcp.discovery
+  const discoveryStatus = mcp.state.status
+  const discoveryError =
+    mcp.state.status === 'error' ? mcp.state.message : undefined
+
+  /**
+   * Refresh every primitive, then publish the result.
+   *
+   * The discovery hook returns its result instead of calling back into the
+   * host: the write-back is the caller's decision, and `serverPatch` is the one
+   * field table both this tab and the session page apply.
+   */
+  const refreshDiscovery = React.useCallback(async () => {
+    const result = await mcp.refresh()
+    if (!result) return
+    const id = toolsTargetServer?.id
+    if (!id) return
+    const patch = serverPatch(result)
+    setServers((prev) =>
+      prev.map((entry) => (entry.id === id ? { ...entry, ...patch } : entry)),
+    )
+    setToolsTargetServer((prev) => (prev ? { ...prev, ...patch } : prev))
+  }, [mcp, toolsTargetServer?.id])
+
   const { copiedKey, copy } = useCopyFeedback()
 
   const handleCopyPrimitive = React.useCallback(
@@ -395,7 +382,6 @@ export function McpServersSettingsTab({ t, close: _close }: McpSettingsProps) {
       setFormServer((prev) => ({ ...prev, disabledTools: disabledArray }))
       setToolsModalOpen(false)
       setSuccessMsg(t('mcpServers.toolsModal.saveSuccess'))
-      setTimeout(() => setSuccessMsg(''), 3000)
       return
     }
 
@@ -427,7 +413,6 @@ export function McpServersSettingsTab({ t, close: _close }: McpSettingsProps) {
         )
         setToolsModalOpen(false)
         setSuccessMsg(t('mcpServers.toolsModal.saveSuccess'))
-        setTimeout(() => setSuccessMsg(''), 3000)
       } else {
         setToolsSaveError(data.error || 'Failed to save tool settings')
       }
@@ -517,16 +502,13 @@ export function McpServersSettingsTab({ t, close: _close }: McpSettingsProps) {
     // Pre-save test connection check
     setFormSaving(true)
     try {
-      const testRes = await fetch(API_ENDPOINTS.mcpServersProbe, {
-        method: API_METHODS.mcpServersProbe,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ server: payload }),
-      })
-      const testData = await testRes.json()
-      if (testData && testData.ok) {
-        payload.detectedTransport =
-          testData.detectedTransport || payload.detectedTransport
-        payload.serverInfo = testData.serverInfo || payload.serverInfo
+      const probe = await probeServer(payload)
+      if (probe.ok) {
+        if (probe.discovery) {
+          payload.detectedTransport =
+            probe.discovery.detectedTransport || payload.detectedTransport
+          payload.serverInfo = probe.discovery.serverInfo || payload.serverInfo
+        }
         payload.lastTestedAt = Date.now()
         const saveRes = await executeSave(
           payload,
@@ -538,17 +520,11 @@ export function McpServersSettingsTab({ t, close: _close }: McpSettingsProps) {
         setSaveConfirm({
           open: true,
           message:
-            testData?.message ||
+            probe.message ||
             'Failed to establish connection to the MCP server.',
           payload,
         })
       }
-    } catch {
-      setSaveConfirm({
-        open: true,
-        message: 'Network request failed while testing connection.',
-        payload,
-      })
     } finally {
       setFormSaving(false)
     }
@@ -612,7 +588,6 @@ export function McpServersSettingsTab({ t, close: _close }: McpSettingsProps) {
         setSuccessMsg(
           t('mcpServers.importModal.success', { count: data.count || 0 }),
         )
-        setTimeout(() => setSuccessMsg(''), 3000)
       } else {
         setImportError(data.message || t('mcpServers.importModal.error'))
       }
@@ -771,13 +746,10 @@ export function McpServersSettingsTab({ t, close: _close }: McpSettingsProps) {
     e(McpToolsModal, {
       open: toolsModalOpen,
       server: toolsTargetServer,
-      loading: discovery.loading,
-      error: discovery.error || toolsSaveError,
+      busy: discoveryStatus === 'loading' || toolsSaving,
+      error: discoveryError || toolsSaveError,
       toolsList: discovery.tools,
       disabledToolsSet: toolsDisabledSet,
-      serverInfo: discovery.serverInfo,
-      detectedTransport: discovery.detectedTransport,
-      saving: toolsSaving,
       activeTab: primitiveTab,
       onTabChange: setPrimitiveTab,
       tabCounts: {
@@ -791,12 +763,12 @@ export function McpServersSettingsTab({ t, close: _close }: McpSettingsProps) {
         resources: discovery.lists.resources,
         resourceTemplates: discovery.lists.resourceTemplates,
         capabilities: discovery.lists.capabilities,
-        loading: discovery.loading,
-        error: discovery.error,
-        loaded: discovery.loaded,
-        read: discovery.resourceRead,
-        onRefresh: discovery.refresh,
-        onRead: discovery.readResource,
+        loading: discoveryStatus === 'loading',
+        error: discoveryError,
+        loaded: discoveryStatus === 'ready',
+        readState: mcp.readState,
+        onRefresh: refreshDiscovery,
+        onRead: mcp.readResource,
         onCopy: handleCopyPrimitive,
         copiedKey,
         t,
@@ -804,21 +776,111 @@ export function McpServersSettingsTab({ t, close: _close }: McpSettingsProps) {
       promptPanel: e(McpPromptPanel, {
         prompts: discovery.lists.prompts,
         capabilities: discovery.lists.capabilities,
-        loading: discovery.loading,
-        error: discovery.error,
-        loaded: discovery.loaded,
-        result: discovery.promptGet,
-        onRefresh: discovery.refresh,
-        onGet: discovery.getPrompt,
+        loading: discoveryStatus === 'loading',
+        error: discoveryError,
+        loaded: discoveryStatus === 'ready',
+        result: mcp.promptGet,
+        onRefresh: refreshDiscovery,
+        onGet: mcp.getPrompt,
         onCopy: handleCopyPrimitive,
         copiedKey,
         t,
       }),
       onToggleTool: handleToggleTool,
       onToggleAllTools: handleToggleAllTools,
-      onRefresh: discovery.refresh,
+      onRefresh: refreshDiscovery,
+      title: t(
+        primitiveTab === 'tools'
+          ? 'mcpServers.toolsModal.title'
+          : primitiveTab === 'resources'
+            ? 'mcpServers.primitives.titleResources'
+            : 'mcpServers.primitives.titlePrompts',
+      ),
+      headerExtra: e(
+        'div',
+        { className: 'dsh-mcp-tools-header-meta' },
+        toolsTargetServer
+          ? e(ServerIcon, {
+              server: toolsTargetServer,
+              serverInfo: discovery.serverInfo ?? toolsTargetServer.serverInfo,
+              transport: toolsTargetServer.transport,
+              size: 16,
+            })
+          : null,
+        toolsTargetServer
+          ? e(
+              'span',
+              { className: 'dsh-mcp-card-name' },
+              toolsTargetServer.name || toolsTargetServer.id,
+            )
+          : null,
+        toolsTargetServer && toolsTargetServer.id !== toolsTargetServer.name
+          ? e('span', { className: 'dsh-mcp-card-id' }, toolsTargetServer.id)
+          : null,
+      ),
+      // The global page's footer: a counter plus Save/Cancel on the tools tab,
+      // a single Close elsewhere. The session page injects its own.
+      footer: [
+        e(
+          'div',
+          { key: 'left', className: 'dsh-mcp-modal-footer-left' },
+          primitiveTab === 'tools'
+            ? e(
+                'span',
+                {
+                  style: {
+                    fontSize: 12,
+                    color: 'var(--dsw-alias-label-secondary)',
+                  },
+                },
+                t('sessionSettings.mcp.toolsEnabledCount', {
+                  enabled: discovery.tools.length - toolsDisabledSet.size,
+                  total: discovery.tools.length,
+                }),
+              )
+            : null,
+        ),
+        e(
+          'div',
+          { key: 'right', className: 'dsh-mcp-modal-footer-right' },
+          primitiveTab === 'tools'
+            ? e(
+                React.Fragment,
+                null,
+                e(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'dsh-sam-btn secondary',
+                    onClick: () => setToolsModalOpen(false),
+                  },
+                  t('mcpServers.actions.cancel'),
+                ),
+                e(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'dsh-sam-btn primary',
+                    disabled: toolsSaving,
+                    onClick: handleSaveToolsModal,
+                  },
+                  toolsSaving
+                    ? t('mcpServers.toolsModal.saving')
+                    : t('mcpServers.toolsModal.save'),
+                ),
+              )
+            : e(
+                'button',
+                {
+                  type: 'button',
+                  className: 'dsh-sam-btn primary',
+                  onClick: () => setToolsModalOpen(false),
+                },
+                t('mcpServers.primitives.close'),
+              ),
+        ),
+      ],
       onClose: () => setToolsModalOpen(false),
-      onSave: handleSaveToolsModal,
       t,
     }),
 

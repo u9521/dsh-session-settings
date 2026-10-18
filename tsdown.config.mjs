@@ -24,7 +24,8 @@ const ID = '@local/dsh-session-settings'
  * package: the installed copy of that name is a stale leftover whose module list
  * differs from the live seed. Kept verbatim rather than trimmed to this plugin's
  * current imports, so the purity gate never rejects a legitimate platform row.
- * Rationale: .agents/notes/implemented/architecture/2026-09-29-dsh-0-2-0-compatibility.md
+ * Rationale: the seed matches the running shell exactly, so an upgrade is a manual
+ * re-read of that bundle rather than a package-version bump.
  */
 const CLIENT_EXTERNALS = [
   'react',

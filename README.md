@@ -38,6 +38,7 @@ Configure per-session or global settings directly from the Web GUI with immediat
 - **Three Explicit Scopes**: Session, Workspace, and Global are distinct write targets chosen on the page, never inferred from which fields a request happens to carry.
 - **New-Session Page Targets a Live Session**: Choosing a workspace on the New-Session page connects that workspace's blank session, and the modal writes session-scope edits straight to it — effective on the next request. A page with no session has no session scope to write to, so that tab disables itself and explains why.
 - **Single Interface Contract**: Paths, HTTP methods, and request bodies are each declared once in `src/types.ts`; the client sends and the server validates against the same definitions, with no server-side compatibility branches.
+- **One Resolution Ladder**: The session → workspace → global rules and their defaults live in `src/shared/`, shared by the panel that displays them and the server that enforces them, so a panel cannot show one value while enforcement uses another.
 - **Authenticated Routes**: All routes are registered on the official connection carrier, so a request passes the Host/Origin fence and browser authentication before any handler runs.
 - **Read-Only Resource & Prompt Browsing**: The MCP server modal offers **Resources** and **Prompts** tabs. Resources are grouped into resources and templates, and a template's parameters are expanded server-side before reading; prompts are shown per role with copy-full-text and a Raw JSON view. Lists are cache-first and content is never persisted — reads happen only on click, and the read-only views never change what the model can see (that stays a session policy decision).
 
@@ -47,9 +48,9 @@ Configure per-session or global settings directly from the Web GUI with immediat
 
 | Plugin Branch | Compatible DeepSeek Harness (DSH) Mainline | Architecture & Features |
 | :--- | :--- | :--- |
-| **`main` branch** | **`>= 0.2.0-rc.1`** | Native support for **Session Format V4**, **Cordis 4.0.4**, the `subagent/descriptor` v3 contract, the `AgentPresetRegistry` scope API, and the 0.2.0 `ui-primitives` icon set. |
+| **`main` branch** | **`>= 0.2.1-rc.2`** | Native support for **Session Format V4**, **Cordis 4.0.5**, `@modelcontextprotocol/client` 2.2.0, the `subagent/descriptor` v3 contract, the `AgentPresetRegistry` scope API, and the `ui-primitives` icon set. |
 
-> **⚠️ Note**: The `main` branch targets DSH 0.2.0-rc.1 and above natively. It keeps **no backward-compatibility shims** and does not support earlier DSH lines. Since DSH 0.2.0 the host no longer reads `engines.dsh`; compatibility is enforced through the `peerDependencies` range on `@deepseek-ai/dsh`, so an incompatible host refuses the plugin instead of loading it half-broken.
+> **⚠️ Note**: The `main` branch targets DSH 0.2.1-rc.2 and above natively. It keeps **no backward-compatibility shims** and does not support earlier DSH lines. The host does not read `engines.dsh`; compatibility is enforced through the `peerDependencies` range on `@deepseek-ai/dsh`, so an incompatible host refuses the plugin instead of loading it half-broken.
 
 ---
 
@@ -174,10 +175,10 @@ dsh plugin --profile web remove @local/dsh-session-settings
 | :--- | :--- |
 | `pnpm run build` | Full build (runs `tsc` type check + generates `lib/` bundles) |
 | `pnpm run check` | Type check only (`tsc --noEmit`) without emitting files |
+| `pnpm run lint` | ESLint + type check + Prettier check |
+| `pnpm run lint:fix` | ESLint autofix + Prettier write |
 | `pnpm run fmt` | Format source code and configuration files with Prettier |
 | `pnpm run fmt:check` | Check code formatting compliance |
-| `pnpm run verify:gates` | Run the zero-dependency documentation and convention gates |
-| `pnpm run verify` | Aggregate pre-commit check (`check` + `verify:gates`) |
 
 ---
 

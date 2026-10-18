@@ -8,7 +8,11 @@ import type {
   SessionSettingsConfig,
 } from '../../types/index.ts'
 import { Badge, EmptyState } from '../../components/index.ts'
-import { resolveEffectiveSandbox } from '../../utils/config.ts'
+import {
+  isSourceReadonly,
+  resolveEffectiveSandbox,
+  sourceModeFor,
+} from '../../utils/config.ts'
 import {
   missingEntries,
   sandboxPathTemplates,
@@ -105,38 +109,13 @@ export function SessionSandboxSection({
   onSourceModeChange,
   t,
 }: SessionSandboxSectionProps) {
-  /**
-   * The source ladder, identical to the model / MCP / skills panels.
-   *
-   * Duplicated rather than shared because extracting it would touch three
-   * already-working panels; the duplication is recorded as a known cost in the
-   * Agent Note covering this feature.
-   */
-  const defaultMode = currentWorkspaceId ? 'workspace' : 'global'
-  const sourceMode: 'workspace' | 'global' | 'custom' =
+  /** The source ladder, shared with the model / MCP / skills panels. */
+  const sourceMode =
     activeSourceMode ??
-    (scope === 'global'
-      ? 'custom'
-      : scope === 'workspace'
-        ? sandboxConfig?.mode === 'custom'
-          ? 'custom'
-          : 'global'
-        : sandboxConfig?.mode === 'custom'
-          ? 'custom'
-          : (sandboxConfig?.mode ?? defaultMode))
+    sourceModeFor(scope, sandboxConfig, Boolean(currentWorkspaceId))
 
-  /**
-   * A non-custom source is view-only.
-   *
-   * `global` is always editable — there is no layer beneath it to follow, which
-   * is the same rule the other three panels apply.
-   */
-  const isReadonly =
-    scope === 'session'
-      ? sourceMode !== 'custom'
-      : scope === 'workspace'
-        ? sourceMode !== 'custom'
-        : false
+  /** A non-custom source is view-only; `global` always edits its own layer. */
+  const isReadonly = isSourceReadonly(scope, sourceMode)
 
   /**
    * The rules actually in force, which in a view-only state are the INHERITED

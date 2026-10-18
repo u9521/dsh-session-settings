@@ -10,13 +10,9 @@ import {
   type SkillItem,
   isSettingsScopeId,
 } from '../../types.ts'
-import {
-  normalizeSessionSettings,
-  normalizeGlobalSettings,
-  saveSessionSettingsStore,
-} from './storage.ts'
+import { normalizeSessionSettings, normalizeGlobalSettings } from './storage.ts'
+import { DEFAULT_GLOBAL_SETTINGS } from '../../shared/settings.ts'
 import { getAvailableSkills } from '../skills/discovery.ts'
-import type { McpManager } from '../mcp/manager.ts'
 import {
   badRequest,
   jsonResponse,
@@ -66,8 +62,7 @@ export function registerSessionSettingsRoutes(
   ctx: Context,
   connection: ConnectionService,
   getSessionSettingsStore: () => SessionSettingsStore,
-  setSessionSettingsStore: (s: SessionSettingsStore) => void,
-  mcpManager?: McpManager,
+  persistSessionSettings: () => Promise<void>,
   invalidatePolicies?: () => void,
   sandboxCapability?: (sessionId?: string) => SandboxCapabilityInfo,
   sandboxSkipped?: (sessionId?: string) => SandboxSkippedEntry[],
@@ -241,16 +236,9 @@ export function registerSessionSettingsRoutes(
     switch (scope) {
       case 'global': {
         if (isRestoringDefault) {
-          sessionSettingsStore.globalConfig = {
-            subagentModel: {
-              inherit: true,
-              allowAgentSelectModel: true,
-              overrideForkModel: false,
-            },
-            mcp: { enabledServerIds: [] },
-            skills: { disabledModelSkills: [], disabledUserSkills: [] },
-            sandbox: { allow: [] },
-          }
+          sessionSettingsStore.globalConfig = structuredClone(
+            DEFAULT_GLOBAL_SETTINGS,
+          )
         } else if (incomingConfig) {
           sessionSettingsStore.globalConfig =
             await withoutRuntimeSkills(incomingConfig)
@@ -302,13 +290,11 @@ export function registerSessionSettingsRoutes(
       }
     }
 
-    saveSessionSettingsStore(sessionSettingsStore)
-    setSessionSettingsStore(sessionSettingsStore)
+    await persistSessionSettings()
 
-    mcpManager?.syncAll()
+    // One broadcast re-derives the MCP mount set and every per-agent policy
+    // surface (tools, prompt sections, skills, sandbox roots).
     invalidatePolicies?.()
-
-    ctx.emit('skills/change')
 
     const sessionEntry = targetSessionId
       ? sessionSettingsStore.sessions[targetSessionId]

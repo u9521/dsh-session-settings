@@ -6,7 +6,11 @@ import type {
   SessionSettingsConfig,
 } from '../../types/index.ts'
 import { effortLabel } from '../../utils/index.ts'
-import { resolveEffectiveSubagentModel } from '../../utils/config.ts'
+import {
+  isSourceReadonly,
+  resolveEffectiveSubagentModel,
+  sourceModeFor,
+} from '../../utils/config.ts'
 
 const e = React.createElement
 
@@ -43,26 +47,12 @@ export function SubagentModelSection({
   onOverrideForkModelChange,
   t,
 }: SubagentModelSectionProps) {
-  const defaultMode = currentWorkspaceId ? 'workspace' : 'global'
-
-  // Determine active source mode: 'workspace' | 'global' | 'custom'
-  const activeSourceMode: 'workspace' | 'global' | 'custom' =
-    scope === 'global'
-      ? 'custom'
-      : scope === 'workspace'
-        ? modelConfig?.mode === 'custom'
-          ? 'custom'
-          : 'global'
-        : modelConfig?.mode === 'custom'
-          ? 'custom'
-          : (modelConfig?.mode ?? defaultMode)
-
-  const isReadonly =
-    scope === 'session'
-      ? activeSourceMode !== 'custom'
-      : scope === 'workspace'
-        ? activeSourceMode !== 'custom'
-        : false
+  const activeSourceMode = sourceModeFor(
+    scope,
+    modelConfig,
+    Boolean(currentWorkspaceId),
+  )
+  const isReadonly = isSourceReadonly(scope, activeSourceMode)
 
   const effectiveModelConfig = resolveEffectiveSubagentModel(
     { subagentModel: modelConfig, mcp: {}, skills: {}, sandbox: {} },

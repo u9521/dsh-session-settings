@@ -15,11 +15,14 @@ import {
   type SessionSkillsConfig,
   API_ENDPOINTS,
 } from '../types/index.ts'
-import { useSessionData } from './hooks/useSessionData.ts'
-import { useSessionActions } from './hooks/useSessionActions.ts'
+import {
+  useSessionCatalogs,
+  useSessionSettings,
+} from './settings-controller.ts'
 import { resolveEffectiveSandbox } from '../utils/config.ts'
 import { HeaderBar } from './sections/HeaderBar.ts'
 import { NavigationSidebar } from './sections/NavigationSidebar.ts'
+import type { NavSection } from '../types/index.ts'
 import { SubagentModelSection } from './sections/SubagentModelSection.ts'
 import { SessionMcpSection } from './sections/SessionMcpSection.ts'
 import { SessionSandboxSection } from './sections/SessionSandboxSection.ts'
@@ -28,8 +31,11 @@ import { SessionMcpToolsModal } from './modals/SessionMcpToolsModal.ts'
 import { McpResourcePanel } from '../mcp/components/McpResourcePanel.ts'
 import { McpPromptPanel } from '../mcp/components/McpPromptPanel.ts'
 import type { McpPrimitiveTab } from '../mcp/components/McpPrimitivesTabs.ts'
-import { useMcpPrimitives } from '../mcp/hooks/useMcpPrimitives.ts'
-import type { McpDiscovery } from '../mcp/hooks/useMcpPrimitives.ts'
+import {
+  useMcpDiscovery,
+  serverPatch,
+  type McpDiscovery,
+} from '../mcp/discovery.ts'
 import { useCopyFeedback } from '../mcp/hooks/useCopyFeedback.ts'
 import { SkillDetailModal } from '../skills/components/SkillDetailModal.ts'
 
@@ -44,450 +50,327 @@ export * from './modals/SessionMcpToolsModal.ts'
 const e = React.createElement
 
 export function SessionSettingsViewPage(props: ClientPageProps) {
-  const { t, sessionId, onClose, onSave } = props
+  const { t, sessionId, onClose } = props
 
-  const data = useSessionData(props)
+  const settings = useSessionSettings(props)
+  const catalogs = useSessionCatalogs(props, sessionId)
 
-  // A session-scope edit needs a live session to write to. Without one the tab
-  // disables itself and the page explains why, rather than retargeting the save
-  // to a scope the user did not choose.
-  const canEditSessionScope = Boolean(sessionId)
-  const canEditWorkspaceScope = Boolean(data.currentWorkspaceId)
-  const actions = useSessionActions({
-    sessionId,
-    currentWorkspaceId: data.currentWorkspaceId,
-    currentWorkspaceTitle: data.currentWorkspaceTitle,
-    modelConfig: data.modelConfig,
-    mcpConfig: data.mcpConfig,
-    skillsConfig: data.skillsConfig,
-    sandboxConfig: data.sandboxConfig,
-    workspaceModelConfig: data.workspaceModelConfig,
-    workspaceMcpConfig: data.workspaceMcpConfig,
-    workspaceSkillsConfig: data.workspaceSkillsConfig,
-    workspaceSandboxConfig: data.workspaceSandboxConfig,
-    globalModelConfig: data.globalModelConfig,
-    globalMcpConfig: data.globalMcpConfig,
-    globalSkillsConfig: data.globalSkillsConfig,
-    globalSandboxConfig: data.globalSandboxConfig,
-    setModelConfig: data.setModelConfig,
-    setMcpConfig: data.setMcpConfig,
-    setSkillsConfig: data.setSkillsConfig,
-    setSandboxConfig: data.setSandboxConfig,
-    setWorkspaceModelConfig: data.setWorkspaceModelConfig,
-    setWorkspaceMcpConfig: data.setWorkspaceMcpConfig,
-    setWorkspaceSkillsConfig: data.setWorkspaceSkillsConfig,
-    setWorkspaceSandboxConfig: data.setWorkspaceSandboxConfig,
-    setGlobalModelConfig: data.setGlobalModelConfig,
-    setGlobalMcpConfig: data.setGlobalMcpConfig,
-    setGlobalSkillsConfig: data.setGlobalSkillsConfig,
-    setGlobalSandboxConfig: data.setGlobalSandboxConfig,
-    setGlobalConfig: data.setGlobalConfig,
-    setWorkspaceSettings: data.setWorkspaceSettings,
-    setHasSessionOverride: data.setHasSessionOverride,
-    setSaveSuccessMsg: data.setSaveSuccessMsg,
-    setError: data.setError,
-    setCopiedId: data.setCopiedId,
-    sessionsMap: data.sessionsMap,
-    reloadMcpServers: data.reloadMcpServers,
-    onSave,
-    t,
-  })
-
+  const [activeNav, setActiveNav] = React.useState<NavSection>('model')
   const [sessionToolsReadonly, setSessionToolsReadonly] =
     React.useState<boolean>(false)
   const [sessionSkillReadonly, setSessionSkillReadonly] =
     React.useState<boolean>(false)
+  const [primitiveTab, setPrimitiveTab] =
+    React.useState<McpPrimitiveTab>('tools')
 
-  // Dynamic getters & setters according to current active scope
-  const currentModelConfig: SubagentModelConfig =
-    data.activeScope === 'global'
-      ? data.globalModelConfig
-      : data.activeScope === 'workspace'
-        ? data.workspaceModelConfig
-        : data.modelConfig
+  // The draft for the active scope, per domain. `settings.draft` already
+  // resolves the scope, so the page never dispatches on it again.
+  const modelConfig = settings.draft('subagentModel') as SubagentModelConfig
+  const mcpConfig = settings.draft('mcp') as SessionMcpConfig
+  const skillsConfig = settings.draft('skills') as SessionSkillsConfig
+  const sandboxConfig = settings.draft('sandbox') as SessionSandboxConfig
 
-  const setCurrentModelConfig = (cfg: SubagentModelConfig) => {
-    if (data.activeScope === 'global') {
-      data.setGlobalModelConfig(cfg)
-    } else if (data.activeScope === 'workspace') {
-      data.setWorkspaceModelConfig(cfg)
-    } else {
-      data.setModelConfig(cfg)
-    }
-  }
+  const setModelConfig = (value: SubagentModelConfig) =>
+    settings.update('subagentModel', value)
+  const setMcpConfig = (value: SessionMcpConfig) =>
+    settings.update('mcp', value)
+  const setSkillsConfig = (value: SessionSkillsConfig) =>
+    settings.update('skills', value)
+  const setSandboxConfig = (value: SessionSandboxConfig) =>
+    settings.update('sandbox', value)
 
-  const currentMcpConfig: SessionMcpConfig =
-    data.activeScope === 'global'
-      ? data.globalMcpConfig
-      : data.activeScope === 'workspace'
-        ? data.workspaceMcpConfig
-        : data.mcpConfig
+  const workspaceSettings = settings.layers.workspace
+  const globalConfig = settings.layers.global
+  const currentWorkspaceId = settings.workspaceId
 
-  const setCurrentMcpConfig = (cfg: SessionMcpConfig) => {
-    if (data.activeScope === 'global') {
-      data.setGlobalMcpConfig(cfg)
-    } else if (data.activeScope === 'workspace') {
-      data.setWorkspaceMcpConfig(cfg)
-    } else {
-      data.setMcpConfig(cfg)
-    }
-  }
+  const effectiveSandbox = settings.effective('sandbox') as SessionSandboxConfig
+  const effectiveSkills = settings.effective('skills') as SessionSkillsConfig
+  const effectiveMcp = settings.effective('mcp') as SessionMcpConfig
 
-  const currentSkillsConfig: SessionSkillsConfig =
-    data.activeScope === 'global'
-      ? data.globalSkillsConfig
-      : data.activeScope === 'workspace'
-        ? data.workspaceSkillsConfig
-        : data.skillsConfig
+  const effectiveDisabledModelSet = new Set(
+    effectiveSkills.disabledModelSkills ?? [],
+  )
+  const effectiveDisabledUserSet = new Set(
+    effectiveSkills.disabledUserSkills ?? [],
+  )
+  const effectiveActiveSkillsCount = catalogs.skills.filter(
+    (s) => !effectiveDisabledModelSet.has(s.name),
+  ).length
+  const effectiveActiveMcpCount = (effectiveMcp.enabledServerIds ?? []).length
 
-  const setCurrentSkillsConfig = (cfg: SessionSkillsConfig) => {
-    if (data.activeScope === 'global') {
-      data.setGlobalSkillsConfig(cfg)
-    } else if (data.activeScope === 'workspace') {
-      data.setWorkspaceSkillsConfig(cfg)
-    } else {
-      data.setSkillsConfig(cfg)
-    }
-  }
-
-  const currentSandboxConfig: SessionSandboxConfig =
-    data.activeScope === 'global'
-      ? data.globalSandboxConfig
-      : data.activeScope === 'workspace'
-        ? data.workspaceSandboxConfig
-        : data.sandboxConfig
-
-  /**
-   * Write a sandbox edit into the active scope.
-   *
-   * The section always emits a complete config, so this is a plain scope
-   * dispatch with no merge: the value the user sees is the value saved.
-   */
-  const handleSandboxChange = (cfg: SessionSandboxConfig) => {
-    data.setSaveSuccessMsg('')
-    if (data.activeScope === 'global') {
-      data.setGlobalSandboxConfig(cfg)
-    } else if (data.activeScope === 'workspace') {
-      data.setWorkspaceSandboxConfig(cfg)
-    } else {
-      data.setSandboxConfig(cfg)
-    }
-  }
-
-  /**
-   * The layer the sandbox panel's rules currently come from.
-   *
-   * Derived with the same ladder the model / MCP / skills panels use, so all
-   * four agree about the current source.
-   */
-  const sandboxSourceMode: 'workspace' | 'global' | 'custom' =
-    data.activeScope === 'global'
+  /** The layer the sandbox panel's rules come from. */
+  const sandboxSourceMode =
+    settings.scope === 'global'
       ? 'custom'
-      : data.activeScope === 'workspace'
-        ? currentSandboxConfig?.mode === 'custom'
+      : settings.scope === 'workspace'
+        ? sandboxConfig?.mode === 'custom'
           ? 'custom'
           : 'global'
-        : currentSandboxConfig?.mode === 'custom'
+        : sandboxConfig?.mode === 'custom'
           ? 'custom'
-          : (currentSandboxConfig?.mode ??
-            (data.currentWorkspaceId ? 'workspace' : 'global'))
+          : (sandboxConfig?.mode ??
+            (currentWorkspaceId ? 'workspace' : 'global'))
 
-  /**
-   * Switch the sandbox panel's source layer.
-   *
-   * Entering `custom` seeds the list from the rules that were in force, so the
-   * switch reads as taking over what was already being granted rather than
-   * silently clearing it. Leaving `custom` writes only `mode`, which discards
-   * this layer's list without touching any parent layer.
-   */
-  const handleSandboxSourceModeChange = (mode: SessionSandboxMode) => {
-    if (mode === 'custom') {
-      const effective = resolveEffectiveSandbox(
-        data.activeScope === 'session'
-          ? ({ sandbox: data.sandboxConfig } as SessionSettingsConfig)
-          : undefined,
-        data.activeScope === 'global'
-          ? undefined
-          : (data.workspaceSettings ??
-              ({
-                sandbox: data.workspaceSandboxConfig,
-              } as SessionSettingsConfig)),
-        data.activeScope === 'global'
-          ? ({ sandbox: data.globalSandboxConfig } as SessionSettingsConfig)
-          : data.globalConfig,
-      )
-      handleSandboxChange({ mode: 'custom', allow: effective.allow ?? [] })
-      return
-    }
-    handleSandboxChange({ mode })
-  }
+  const notice = settings.notice ?? catalogs.notice
 
   // Runtime status of the official MCP clients does not change on its own —
-  // re-read it whenever the MCP section becomes active.
+  // re-read it whenever the MCP section becomes active, and after a save
+  // (saving MCP settings mounts or unmounts servers).
   React.useEffect(() => {
-    if (data.activeNav === 'mcp') {
-      void data.reloadMcpServers()
-    }
-  }, [data.activeNav, data.reloadMcpServers])
+    if (activeNav === 'mcp') void catalogs.reloadServers()
+  }, [activeNav, catalogs.reloadServers])
 
-  // Model change handlers
+  const handleSave = async () => {
+    await settings.save()
+    void catalogs.reloadServers()
+  }
+
+  const handleReset = async () => {
+    await settings.reset()
+    void catalogs.reloadServers()
+  }
+
+  // ---- Model handlers -----------------------------------------------------
+
   const handleModelModeChange = (mode: SubagentModelMode) => {
-    data.setSaveSuccessMsg('')
-    data.setError('')
     const extraFlags = {
-      allowAgentSelectModel: currentModelConfig.allowAgentSelectModel,
-      overrideForkModel: currentModelConfig.overrideForkModel,
+      allowAgentSelectModel: modelConfig.allowAgentSelectModel,
+      overrideForkModel: modelConfig.overrideForkModel,
     }
     if (mode === 'workspace') {
-      setCurrentModelConfig({ mode: 'workspace', ...extraFlags })
+      setModelConfig({ mode: 'workspace', ...extraFlags })
     } else if (mode === 'global') {
-      setCurrentModelConfig({ mode: 'global', ...extraFlags })
+      setModelConfig({ mode: 'global', ...extraFlags })
     } else if (mode === 'inherit') {
-      setCurrentModelConfig({ mode: 'custom', inherit: true, ...extraFlags })
+      setModelConfig({ mode: 'custom', inherit: true, ...extraFlags })
     } else if (mode === 'custom') {
-      if (
-        currentModelConfig.model?.provider &&
-        currentModelConfig.model?.model
-      ) {
-        setCurrentModelConfig({
-          mode: 'custom',
-          inherit: false,
-          model: currentModelConfig.model,
-          ...extraFlags,
-        })
-      } else {
-        setCurrentModelConfig({
-          mode: 'custom',
-          inherit: false,
-          model: {
-            provider: '',
-            model: '',
-            reasoningEffort: undefined,
-          },
-          ...extraFlags,
-        })
-      }
+      const model =
+        modelConfig.model?.provider && modelConfig.model?.model
+          ? modelConfig.model
+          : { provider: '', model: '', reasoningEffort: undefined }
+      setModelConfig({ mode: 'custom', inherit: false, model, ...extraFlags })
     }
   }
 
   const handleProviderChange = (providerId: string) => {
-    const group = data.providers.find((g) => g.id === providerId)
-    const firstModel = group?.models?.[0]?.id || ''
-    setCurrentModelConfig({
+    const group = catalogs.providers.find((g) => g.id === providerId)
+    setModelConfig({
       mode: 'custom',
       inherit: false,
       model: {
         provider: providerId,
-        model: firstModel,
+        model: group?.models?.[0]?.id || '',
         reasoningEffort: undefined,
       },
-      allowAgentSelectModel: currentModelConfig.allowAgentSelectModel,
-      overrideForkModel: currentModelConfig.overrideForkModel,
+      allowAgentSelectModel: modelConfig.allowAgentSelectModel,
+      overrideForkModel: modelConfig.overrideForkModel,
     })
   }
 
   const handleModelSelectChange = (modelId: string) => {
-    const currentProvider = currentModelConfig.model?.provider || ''
-    const currentGroup = data.providers.find((g) => g.id === currentProvider)
-    const selectedModel = currentGroup?.models?.find((m) => m.id === modelId)
-    const supportedEfforts = selectedModel?.reasoning?.efforts || []
-    const isEffortValid =
-      !currentModelConfig.model?.reasoningEffort ||
-      supportedEfforts.some(
-        (eff) => eff.id === currentModelConfig.model?.reasoningEffort,
-      )
-
-    setCurrentModelConfig({
+    const currentProvider = modelConfig.model?.provider || ''
+    const group = catalogs.providers.find((g) => g.id === currentProvider)
+    const selected = group?.models?.find((m) => m.id === modelId)
+    const efforts = selected?.reasoning?.efforts || []
+    const effort = modelConfig.model?.reasoningEffort
+    setModelConfig({
       mode: 'custom',
       inherit: false,
       model: {
         provider: currentProvider,
         model: modelId,
-        reasoningEffort: isEffortValid
-          ? currentModelConfig.model?.reasoningEffort
-          : undefined,
+        reasoningEffort:
+          effort && efforts.some((eff) => eff.id === effort)
+            ? effort
+            : undefined,
       },
-      allowAgentSelectModel: currentModelConfig.allowAgentSelectModel,
-      overrideForkModel: currentModelConfig.overrideForkModel,
+      allowAgentSelectModel: modelConfig.allowAgentSelectModel,
+      overrideForkModel: modelConfig.overrideForkModel,
     })
   }
 
   const handleReasoningEffortChange = (effortId: string) => {
-    if (!currentModelConfig.model) return
-    setCurrentModelConfig({
+    if (!modelConfig.model) return
+    setModelConfig({
       mode: 'custom',
       inherit: false,
       model: {
-        ...currentModelConfig.model,
+        ...modelConfig.model,
         reasoningEffort: effortId || undefined,
       },
-      allowAgentSelectModel: currentModelConfig.allowAgentSelectModel,
-      overrideForkModel: currentModelConfig.overrideForkModel,
+      allowAgentSelectModel: modelConfig.allowAgentSelectModel,
+      overrideForkModel: modelConfig.overrideForkModel,
     })
   }
 
-  const handleAllowAgentSelectModelChange = (allow: boolean) => {
-    data.setSaveSuccessMsg('')
-    data.setError('')
-    setCurrentModelConfig({
-      ...currentModelConfig,
-      allowAgentSelectModel: allow,
-    })
-  }
+  const handleAllowAgentSelectModelChange = (allow: boolean) =>
+    setModelConfig({ ...modelConfig, allowAgentSelectModel: allow })
 
-  const handleOverrideForkModelChange = (override: boolean) => {
-    data.setSaveSuccessMsg('')
-    data.setError('')
-    setCurrentModelConfig({
-      ...currentModelConfig,
-      overrideForkModel: override,
-    })
-  }
+  const handleOverrideForkModelChange = (override: boolean) =>
+    setModelConfig({ ...modelConfig, overrideForkModel: override })
 
-  // MCP change handlers
-  const effectiveEnabledServerIds = (): string[] => {
-    if (data.activeScope === 'global') {
-      return currentMcpConfig.enabledServerIds ?? []
-    }
-    if (currentMcpConfig.mode === 'custom') {
-      return currentMcpConfig.enabledServerIds ?? []
-    }
+  // ---- MCP handlers -------------------------------------------------------
+
+  /** Ids enabled by the layer this scope inherits from. */
+  const inheritedServerIds = (): string[] => {
+    if (settings.scope === 'global') return mcpConfig.enabledServerIds ?? []
+    if (mcpConfig.mode === 'custom') return mcpConfig.enabledServerIds ?? []
     if (
-      currentMcpConfig.mode === 'workspace' &&
-      data.workspaceSettings?.mcp?.mode === 'custom'
+      mcpConfig.mode === 'workspace' &&
+      workspaceSettings?.mcp?.mode === 'custom'
     ) {
-      return data.workspaceSettings.mcp.enabledServerIds ?? []
+      return workspaceSettings.mcp.enabledServerIds ?? []
     }
-    return data.globalConfig?.mcp?.enabledServerIds ?? []
+    return globalConfig?.mcp?.enabledServerIds ?? []
   }
 
   const handleMcpModeChange = (mode: SessionMcpMode) => {
-    data.setSaveSuccessMsg('')
-    data.setError('')
     if (
       mode === 'custom' &&
-      (!currentMcpConfig.enabledServerIds ||
-        currentMcpConfig.enabledServerIds.length === 0)
+      (!mcpConfig.enabledServerIds || mcpConfig.enabledServerIds.length === 0)
     ) {
-      const inherited = effectiveEnabledServerIds()
-      setCurrentMcpConfig({
-        ...currentMcpConfig,
+      const inherited = inheritedServerIds()
+      setMcpConfig({
+        ...mcpConfig,
         mode: 'custom',
         enabledServerIds:
-          inherited.length > 0
-            ? inherited
-            : data.availableMcpServers.map((s) => s.id),
+          inherited.length > 0 ? inherited : catalogs.servers.map((s) => s.id),
       })
-    } else {
-      setCurrentMcpConfig({
-        ...currentMcpConfig,
-        mode,
-      })
+      return
     }
+    setMcpConfig({ ...mcpConfig, mode })
   }
 
   const handleToggleMcpServer = (serverId: string) => {
-    data.setSaveSuccessMsg('')
-    data.setError('')
-    const currentIds = effectiveEnabledServerIds()
-    const nextIds = currentIds.includes(serverId)
-      ? currentIds.filter((id) => id !== serverId)
-      : [...currentIds, serverId]
-
-    setCurrentMcpConfig({
-      ...currentMcpConfig,
-      mode: data.activeScope === 'global' ? undefined : 'custom',
-      enabledServerIds: nextIds,
+    const current = inheritedServerIds()
+    const next = current.includes(serverId)
+      ? current.filter((id) => id !== serverId)
+      : [...current, serverId]
+    setMcpConfig({
+      ...mcpConfig,
+      mode: settings.scope === 'global' ? undefined : 'custom',
+      enabledServerIds: next,
     })
   }
 
   const handleToggleSelectAllMcp = () => {
-    const currentIds = effectiveEnabledServerIds()
-    const isAll =
-      data.availableMcpServers.length > 0 &&
-      data.availableMcpServers.every((s) => currentIds.includes(s.id))
-    setCurrentMcpConfig({
-      ...currentMcpConfig,
-      mode: data.activeScope === 'global' ? undefined : 'custom',
-      enabledServerIds: isAll ? [] : data.availableMcpServers.map((s) => s.id),
+    const current = inheritedServerIds()
+    const all =
+      catalogs.servers.length > 0 &&
+      catalogs.servers.every((s) => current.includes(s.id))
+    setMcpConfig({
+      ...mcpConfig,
+      mode: settings.scope === 'global' ? undefined : 'custom',
+      enabledServerIds: all ? [] : catalogs.servers.map((s) => s.id),
     })
   }
 
-  // Publish a completed discovery to the server list and the modal's target.
-  //
-  // One probe (or cache read) yields tools, resources, templates, prompts,
-  // serverInfo, and transport together, so a single write-back keeps every tab
-  // and the card in step. Patching the modal's own object is what lets the
-  // discovery hook seed from it on the next render.
+  // ---- Sandbox handlers ---------------------------------------------------
+
+  const handleSandboxChange = (cfg: SessionSandboxConfig) =>
+    setSandboxConfig(cfg)
+
+  const handleSandboxSourceModeChange = (mode: SessionSandboxMode) => {
+    if (mode === 'custom') {
+      const effective = resolveEffectiveSandbox(
+        settings.scope === 'session'
+          ? ({ sandbox: sandboxConfig } as SessionSettingsConfig)
+          : undefined,
+        settings.scope === 'global'
+          ? undefined
+          : (workspaceSettings ??
+              ({ sandbox: sandboxConfig } as SessionSettingsConfig)),
+        settings.scope === 'global'
+          ? ({ sandbox: globalConfig.sandbox } as SessionSettingsConfig)
+          : globalConfig,
+      )
+      setSandboxConfig({ mode: 'custom', allow: effective.allow ?? [] })
+      return
+    }
+    setSandboxConfig({ mode })
+  }
+
+  // ---- Skills handlers ----------------------------------------------------
+
+  const handleSkillsModeChange = (mode: SessionSkillsMode) => {
+    const inheritedModel =
+      workspaceSettings?.skills?.mode === 'custom'
+        ? (workspaceSettings.skills.disabledModelSkills ?? [])
+        : []
+    const inheritedUser =
+      workspaceSettings?.skills?.mode === 'custom'
+        ? (workspaceSettings.skills.disabledUserSkills ?? [])
+        : []
+    setSkillsConfig({
+      ...skillsConfig,
+      mode,
+      disabledModelSkills:
+        mode === 'custom'
+          ? (skillsConfig.disabledModelSkills ?? [])
+          : mode === 'workspace'
+            ? inheritedModel
+            : [],
+      disabledUserSkills:
+        mode === 'custom'
+          ? (skillsConfig.disabledUserSkills ?? [])
+          : mode === 'workspace'
+            ? inheritedUser
+            : [],
+    })
+  }
+
+  // ---- Session tools modal ------------------------------------------------
+
+  const [sessionToolsModalServer, setSessionToolsModalServer] =
+    React.useState<GlobalMcpServerConfig | null>(null)
+  const [sessionToolsMode, setSessionToolsMode] = React.useState<
+    'global' | 'custom'
+  >('global')
+  const [sessionDisabledToolsSet, setSessionDisabledToolsSet] = React.useState<
+    Set<string>
+  >(new Set())
+
   const applySessionDiscovery = React.useCallback(
     (discovery: McpDiscovery, serverId?: string) => {
-      const id = serverId ?? data.sessionToolsModalServer?.id
+      const id = serverId ?? sessionToolsModalServer?.id
       if (!id) return
-      const { lists } = discovery
-      const patch: Partial<GlobalMcpServerConfig> = {
-        toolDetails: discovery.tools,
-        tools: discovery.tools.length,
-        resourceDetails: lists.resources,
-        resourceTemplateDetails: lists.resourceTemplates,
-        promptDetails: lists.prompts,
-        capabilities: lists.capabilities,
-        resourceCount: lists.resources.length,
-        resourceTemplateCount: lists.resourceTemplates.length,
-        promptCount: lists.prompts.length,
-        ...(discovery.serverInfo ? { serverInfo: discovery.serverInfo } : {}),
-        ...(discovery.detectedTransport
-          ? { detectedTransport: discovery.detectedTransport }
-          : {}),
-        lastTestedAt: Date.now(),
-      }
-      data.setAvailableMcpServers((prev) =>
-        prev.map((s) => (s.id === id ? { ...s, ...patch } : s)),
-      )
-      data.setSessionToolsModalServer((prev) =>
+      const patch = serverPatch(discovery)
+      setSessionToolsModalServer((prev) =>
         prev && prev.id === id ? { ...prev, ...patch } : prev,
       )
     },
-    [
-      data.setAvailableMcpServers,
-      data.setSessionToolsModalServer,
-      data.sessionToolsModalServer?.id,
-    ],
+    [sessionToolsModalServer?.id],
   )
 
-  // Session tools modal handlers
   const handleOpenSessionToolsModal = async (
     server: GlobalMcpServerConfig,
     isReadonly?: boolean,
   ) => {
     setSessionToolsReadonly(Boolean(isReadonly))
     setPrimitiveTab('tools')
-    const currentToolsMode = currentMcpConfig.toolsMode?.[server.id] || 'global'
-    data.setSessionToolsMode(currentToolsMode)
-    data.setSessionDisabledToolsSet(
+    setSessionToolsMode(mcpConfig.toolsMode?.[server.id] || 'global')
+    setSessionDisabledToolsSet(
       new Set(
-        currentMcpConfig.disabledTools?.[server.id] ||
+        mcpConfig.disabledTools?.[server.id] ||
           (Array.isArray(server.disabledTools) ? server.disabledTools : []),
       ),
     )
-    // Opening is now purely local. The discovery hook reads the cache and, only
-    // if it is empty and the user asks, probes — so no request is issued here.
-    data.setSessionToolsModalServer(server)
+    setSessionToolsModalServer(server)
   }
 
-  // The session tab shows the same read-only viewers as the global tab. Lists
-  // are cache-first and content is never persisted; the reads are GUI actions
-  // that never enter this session's context.
-  const [primitiveTab, setPrimitiveTab] =
-    React.useState<McpPrimitiveTab>('tools')
-  const discovery = useMcpPrimitives({
-    server: data.sessionToolsModalServer,
-    onDiscovery: applySessionDiscovery,
-    t,
-  })
+  const mcp = useMcpDiscovery({ server: sessionToolsModalServer, t })
+  const discovery = mcp.discovery
+  const discoveryStatus = mcp.state.status
+  const discoveryError =
+    mcp.state.status === 'error' ? mcp.state.message : undefined
+  const refreshDiscovery = async () => {
+    const result = await mcp.refresh()
+    if (result) applySessionDiscovery(result)
+  }
   const { copiedKey, copy } = useCopyFeedback()
 
   const handleToggleSessionTool = (toolName: string) => {
-    data.setSessionDisabledToolsSet((prev) => {
+    setSessionDisabledToolsSet((prev) => {
       const next = new Set(prev)
       if (next.has(toolName)) next.delete(toolName)
       else next.add(toolName)
@@ -497,156 +380,86 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
 
   const handleToggleAllSessionTools = (enableAll: boolean) => {
     if (enableAll) {
-      data.setSessionDisabledToolsSet(new Set())
-    } else {
-      data.setSessionDisabledToolsSet(
-        new Set(
-          discovery.tools
-            .map((t) => t.name)
-            .filter((n): n is string => typeof n === 'string' && Boolean(n)),
-        ),
-      )
+      setSessionDisabledToolsSet(new Set())
+      return
     }
+    setSessionDisabledToolsSet(
+      new Set(
+        discovery.tools
+          .map((tool) => tool.name)
+          .filter((name): name is string => Boolean(name)),
+      ),
+    )
   }
 
   const handleResetSessionToolsToDefault = () => {
-    data.setSessionDisabledToolsSet(
+    setSessionDisabledToolsSet(
       new Set(
-        Array.isArray(data.sessionToolsModalServer?.disabledTools)
-          ? data.sessionToolsModalServer.disabledTools
+        Array.isArray(sessionToolsModalServer?.disabledTools)
+          ? sessionToolsModalServer.disabledTools
           : [],
       ),
     )
   }
 
   const handleCloseSessionToolsModal = () => {
-    // The discovery hook resets itself when its server becomes null.
-    data.setSessionToolsModalServer(null)
+    setSessionToolsModalServer(null)
     setPrimitiveTab('tools')
   }
 
   const handleApplySessionTools = () => {
-    if (!data.sessionToolsModalServer) return
-    const serverId = data.sessionToolsModalServer.id
-    const nextToolsMode = { ...(currentMcpConfig.toolsMode || {}) }
-    const nextDisabledTools = { ...(currentMcpConfig.disabledTools || {}) }
-
-    nextToolsMode[serverId] = data.sessionToolsMode
-    if (data.sessionToolsMode === 'custom') {
-      nextDisabledTools[serverId] = Array.from(data.sessionDisabledToolsSet)
+    if (!sessionToolsModalServer) return
+    const serverId = sessionToolsModalServer.id
+    const nextToolsMode = { ...(mcpConfig.toolsMode || {}) }
+    const nextDisabledTools = { ...(mcpConfig.disabledTools || {}) }
+    nextToolsMode[serverId] = sessionToolsMode
+    if (sessionToolsMode === 'custom') {
+      nextDisabledTools[serverId] = Array.from(sessionDisabledToolsSet)
     } else {
       delete nextDisabledTools[serverId]
     }
-
-    const currentEnabled = currentMcpConfig.enabledServerIds || []
-    const nextEnabled = currentEnabled.includes(serverId)
-      ? currentEnabled
-      : [...currentEnabled, serverId]
-
-    setCurrentMcpConfig({
-      ...currentMcpConfig,
-      enabledServerIds: nextEnabled,
+    const enabled = mcpConfig.enabledServerIds || []
+    setMcpConfig({
+      ...mcpConfig,
+      enabledServerIds: enabled.includes(serverId)
+        ? enabled
+        : [...enabled, serverId],
       toolsMode: nextToolsMode,
       disabledTools: nextDisabledTools,
     })
     handleCloseSessionToolsModal()
   }
 
-  // Skills change handlers
-  const defaultDisabledModelSkills =
-    data.globalConfig?.skills?.disabledModelSkills || []
-  const defaultDisabledUserSkills =
-    data.globalConfig?.skills?.disabledUserSkills || []
+  // ---- Skill detail modal -------------------------------------------------
 
-  const workspaceDisabledModelSkills =
-    data.workspaceSettings?.skills?.mode === 'custom'
-      ? data.workspaceSettings.skills.disabledModelSkills || []
-      : defaultDisabledModelSkills
-  const workspaceDisabledUserSkills =
-    data.workspaceSettings?.skills?.mode === 'custom'
-      ? data.workspaceSettings.skills.disabledUserSkills || []
-      : defaultDisabledUserSkills
-
-  const effectiveDisabledModelList =
-    data.activeScope === 'global'
-      ? currentSkillsConfig.disabledModelSkills || []
-      : currentSkillsConfig.mode === 'custom'
-        ? currentSkillsConfig.disabledModelSkills || []
-        : currentSkillsConfig.mode === 'workspace'
-          ? workspaceDisabledModelSkills
-          : defaultDisabledModelSkills
-
-  const effectiveDisabledUserList =
-    data.activeScope === 'global'
-      ? currentSkillsConfig.disabledUserSkills || []
-      : currentSkillsConfig.mode === 'custom'
-        ? currentSkillsConfig.disabledUserSkills || []
-        : currentSkillsConfig.mode === 'workspace'
-          ? workspaceDisabledUserSkills
-          : defaultDisabledUserSkills
-
-  const effectiveDisabledModelSet = new Set(effectiveDisabledModelList)
-  const effectiveDisabledUserSet = new Set(effectiveDisabledUserList)
-
-  const effectiveActiveSkillsCount = data.availableSkills.filter(
-    (s) => !effectiveDisabledModelSet.has(s.name),
-  ).length
-
-  const handleSkillsModeChange = (mode: SessionSkillsMode) => {
-    data.setSaveSuccessMsg('')
-    data.setError('')
-    setCurrentSkillsConfig({
-      ...currentSkillsConfig,
-      mode,
-      disabledModelSkills:
-        mode === 'custom'
-          ? currentSkillsConfig.disabledModelSkills || []
-          : mode === 'workspace'
-            ? data.workspaceSettings?.skills?.mode === 'custom'
-              ? data.workspaceSettings.skills.disabledModelSkills || []
-              : []
-            : [],
-      disabledUserSkills:
-        mode === 'custom'
-          ? currentSkillsConfig.disabledUserSkills || []
-          : mode === 'workspace'
-            ? data.workspaceSettings?.skills?.mode === 'custom'
-              ? data.workspaceSettings.skills.disabledUserSkills || []
-              : []
-            : [],
-    })
-  }
+  const [sessionSkillModalTarget, setSessionSkillModalTarget] =
+    React.useState<SkillItem | null>(null)
+  const [skillsContentMap, setSkillsContentMap] = React.useState<
+    Record<string, SkillItem>
+  >({})
+  const [skillsLoadingMap, setSkillsLoadingMap] = React.useState<
+    Record<string, boolean>
+  >({})
+  const [skillsSearch, setSkillsSearch] = React.useState<string>('')
 
   const handleSaveSessionSkillModal = (
     skillName: string,
     modelDisabled: boolean,
     userDisabled: boolean,
   ) => {
-    data.setSaveSuccessMsg('')
-    data.setError('')
-    const curModel =
-      data.activeScope === 'global' || currentSkillsConfig.mode === 'custom'
-        ? currentSkillsConfig.disabledModelSkills || []
-        : effectiveDisabledModelList
-    const curUser =
-      data.activeScope === 'global' || currentSkillsConfig.mode === 'custom'
-        ? currentSkillsConfig.disabledUserSkills || []
-        : effectiveDisabledUserList
-
-    const nextModel = modelDisabled
-      ? Array.from(new Set([...curModel, skillName]))
-      : curModel.filter((n) => n !== skillName)
-    const nextUser = userDisabled
-      ? Array.from(new Set([...curUser, skillName]))
-      : curUser.filter((n) => n !== skillName)
-
-    setCurrentSkillsConfig({
-      ...currentSkillsConfig,
-      mode: data.activeScope === 'global' ? undefined : 'custom',
-      disabledModelSkills: nextModel,
-      disabledUserSkills: nextUser,
+    const curModel = effectiveSkills.disabledModelSkills ?? []
+    const curUser = effectiveSkills.disabledUserSkills ?? []
+    setSkillsConfig({
+      ...skillsConfig,
+      mode: settings.scope === 'global' ? undefined : 'custom',
+      disabledModelSkills: modelDisabled
+        ? Array.from(new Set([...curModel, skillName]))
+        : curModel.filter((name) => name !== skillName),
+      disabledUserSkills: userDisabled
+        ? Array.from(new Set([...curUser, skillName]))
+        : curUser.filter((name) => name !== skillName),
     })
-    data.setSessionSkillModalTarget(null)
+    setSessionSkillModalTarget(null)
   }
 
   const handleOpenSessionSkillModal = async (
@@ -654,110 +467,68 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
     isReadonly?: boolean,
   ) => {
     setSessionSkillReadonly(Boolean(isReadonly))
-    data.setSessionSkillModalTarget(skill)
+    setSessionSkillModalTarget(skill)
     const skillName = skill.name
-    if (!data.skillsContentMap[skillName] && !skill.content) {
-      data.setSkillsLoadingMap((prev) => ({ ...prev, [skillName]: true }))
-      try {
-        const url = sessionId
-          ? `${API_ENDPOINTS.skillsContent}?name=${encodeURIComponent(skillName)}&sessionId=${encodeURIComponent(sessionId)}`
-          : `${API_ENDPOINTS.skillsContent}?name=${encodeURIComponent(skillName)}`
-        const res = await fetch(url)
-        if (res.ok) {
-          const resData = await res.json()
-          if (resData?.ok && resData.skill) {
-            data.setSkillsContentMap((prev) => ({
-              ...prev,
-              [skillName]: resData.skill,
-            }))
-          } else {
-            data.setSkillsContentMap((prev) => ({
-              ...prev,
-              [skillName]: {
-                ...skill,
-                content: t('sessionSettings.skills.noContent'),
-              },
-            }))
-          }
-        } else {
-          data.setSkillsContentMap((prev) => ({
-            ...prev,
-            [skillName]: {
-              ...skill,
-              content: t('sessionSettings.skills.loadError'),
-            },
-          }))
-        }
-      } catch (err: unknown) {
-        data.setSkillsContentMap((prev) => ({
-          ...prev,
-          [skillName]: {
-            ...skill,
-            content: t('sessionSettings.skills.loadErrorWithReason', {
-              reason: err instanceof Error ? err.message : String(err),
-            }),
-          },
-        }))
-      } finally {
-        data.setSkillsLoadingMap((prev) => ({ ...prev, [skillName]: false }))
-      }
-    }
-  }
+    if (skillsContentMap[skillName] || skill.content) return
 
-  const handleRefreshSkills = async () => {
-    data.setRefreshingSkills(true)
+    setSkillsLoadingMap((prev) => ({ ...prev, [skillName]: true }))
     try {
       const url = sessionId
-        ? `${API_ENDPOINTS.skills}?sessionId=${encodeURIComponent(sessionId)}`
-        : API_ENDPOINTS.skills
+        ? `${API_ENDPOINTS.skillsContent}?name=${encodeURIComponent(skillName)}&sessionId=${encodeURIComponent(sessionId)}`
+        : `${API_ENDPOINTS.skillsContent}?name=${encodeURIComponent(skillName)}`
       const res = await fetch(url)
-      if (res.ok) {
-        const resData = await res.json()
-        if (resData?.ok && Array.isArray(resData.skills)) {
-          data.setAvailableSkills(resData.skills)
-        }
-      }
-    } catch {
+      const body = res.ok ? await res.json() : undefined
+      const content =
+        body?.ok && body.skill
+          ? body.skill.content
+          : res.ok
+            ? t('sessionSettings.skills.noContent')
+            : t('sessionSettings.skills.loadError')
+      setSkillsContentMap((prev) => ({
+        ...prev,
+        [skillName]: { ...skill, content },
+      }))
+    } catch (err: unknown) {
+      setSkillsContentMap((prev) => ({
+        ...prev,
+        [skillName]: {
+          ...skill,
+          content: t('sessionSettings.skills.loadErrorWithReason', {
+            reason: err instanceof Error ? err.message : String(err),
+          }),
+        },
+      }))
     } finally {
-      data.setRefreshingSkills(false)
+      setSkillsLoadingMap((prev) => ({ ...prev, [skillName]: false }))
     }
   }
 
-  const defaultActiveMcpCount =
-    data.globalConfig?.mcp?.enabledServerIds?.length ?? 0
+  // ---- Footer labels ------------------------------------------------------
 
-  const effectiveActiveMcpCount =
-    data.activeScope === 'global'
-      ? (currentMcpConfig.enabledServerIds || []).length
-      : currentMcpConfig.mode === 'custom' || !sessionId
-        ? (currentMcpConfig.enabledServerIds || []).length
-        : currentMcpConfig.mode === 'workspace' &&
-            data.workspaceSettings?.mcp?.mode === 'custom'
-          ? (data.workspaceSettings.mcp.enabledServerIds || []).length
-          : defaultActiveMcpCount
-
-  // Determine if reset button should be shown
   const showResetButton =
-    data.activeScope === 'global'
+    settings.scope === 'global'
       ? true
-      : data.activeScope === 'workspace'
-        ? Boolean(data.workspaceSettings)
-        : Boolean(sessionId && data.hasSessionOverride)
+      : settings.scope === 'workspace'
+        ? Boolean(workspaceSettings)
+        : Boolean(sessionId && settings.hasSessionOverride)
 
   const resetLabel =
-    data.activeScope === 'global'
+    settings.scope === 'global'
       ? t('sessionSettings.action.resetGlobal')
-      : data.activeScope === 'workspace'
+      : settings.scope === 'workspace'
         ? t('sessionSettings.action.resetWorkspace')
         : t('sessionSettings.action.resetSession')
 
-  const saveLabel = actions.saving
+  const saveLabel = settings.saving
     ? t('sessionSettings.action.saving')
-    : data.activeScope === 'global'
+    : settings.scope === 'global'
       ? t('sessionSettings.action.saveGlobal')
-      : data.activeScope === 'workspace'
+      : settings.scope === 'workspace'
         ? t('sessionSettings.action.saveWorkspace')
         : t('sessionSettings.action.saveSession')
+
+  const canEditSessionScope = settings.sessionScopeAvailable
+  const canEditWorkspaceScope = settings.workspaceScopeAvailable
 
   return e(
     'div',
@@ -766,63 +537,53 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
       'data-session-settings-view': '',
       'data-conversation-composer-overlay': '',
     },
-    // Top Header
     e(HeaderBar, {
-      activeScope: data.activeScope,
+      activeScope: settings.scope,
       sessionId,
-      copiedId: data.copiedId,
-      currentWorkspaceTitle: data.currentWorkspaceTitle,
-      currentWorkspace: data.currentWorkspace || undefined,
-      onCopySessionId: actions.handleCopySessionId,
+      copiedId: settings.copiedId,
+      currentWorkspaceTitle: settings.workspaceTitle,
+      currentWorkspace: undefined,
+      onCopySessionId: () => void settings.copySessionId(),
       onClose,
       t,
     }),
 
-    // Notifications
-    data.saveSuccessMsg
+    notice
       ? e(
           'div',
-          { className: 'dsh-sam-notice success dsh-view-notice' },
-          data.saveSuccessMsg,
-        )
-      : null,
-    data.error
-      ? e(
-          'div',
-          { className: 'dsh-sam-notice error dsh-view-notice' },
-          data.error,
+          {
+            className: `dsh-sam-notice ${notice.kind === 'success' ? 'success' : 'error'} dsh-view-notice`,
+          },
+          notice.message,
         )
       : null,
 
-    // Main Split Body: Sub-sidebar + Content
     e(
       'div',
       { className: 'dsh-session-view-body' },
-      // Left Sub-sidebar
       e(NavigationSidebar, {
-        activeNav: data.activeNav,
-        onNavChange: data.setActiveNav,
-        modelConfig: currentModelConfig,
+        activeNav,
+        onNavChange: setActiveNav,
+        modelConfig,
         effectiveActiveMcpCount,
         effectiveActiveSkillsCount,
-        availableSkills: data.availableSkills,
-        sandboxAllowCount: (currentSandboxConfig?.allow ?? []).length,
+        availableSkills: catalogs.skills,
+        sandboxAllowCount: (effectiveSandbox?.allow ?? []).length,
         t,
       }),
 
-      // Right Main Content Panel
       e(
         'div',
         { className: 'dsh-session-view-content' },
-        data.activeNav === 'model'
+        activeNav === 'model'
           ? e(SubagentModelSection, {
-              scope: data.activeScope,
-              modelConfig: currentModelConfig,
-              providers: data.providers,
-              loadingModels: data.loadingModels,
-              currentWorkspaceId: data.currentWorkspaceId,
-              workspaceSettings: data.workspaceSettings,
-              globalConfig: data.globalConfig,
+              scope: settings.scope,
+              modelConfig,
+              providers: catalogs.providers,
+              loadingModels: catalogs.loadingModels,
+              currentWorkspaceId,
+              workspaceSettings,
+              globalConfig,
               onModelModeChange: handleModelModeChange,
               onProviderChange: handleProviderChange,
               onModelSelectChange: handleModelSelectChange,
@@ -833,56 +594,56 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
             })
           : null,
 
-        data.activeNav === 'mcp'
+        activeNav === 'mcp'
           ? e(SessionMcpSection, {
-              scope: data.activeScope,
+              scope: settings.scope,
               sessionId,
-              mcpConfig: currentMcpConfig,
-              availableMcpServers: data.availableMcpServers,
-              currentWorkspaceId: data.currentWorkspaceId,
-              workspaceSettings: data.workspaceSettings,
-              globalConfig: data.globalConfig,
-              refreshingClientId: data.refreshingClientId,
-              clientRefreshResults: data.clientRefreshResults,
+              mcpConfig,
+              availableMcpServers: catalogs.servers,
+              currentWorkspaceId,
+              workspaceSettings,
+              globalConfig,
+              refreshingClientId: catalogs.refreshingClientId,
+              clientRefreshResults: catalogs.clientRefreshResults,
               onMcpModeChange: handleMcpModeChange,
               onToggleMcpServer: handleToggleMcpServer,
               onToggleSelectAllMcp: handleToggleSelectAllMcp,
               onOpenSessionToolsModal: handleOpenSessionToolsModal,
-              onRefreshClient: data.handleRefreshClient,
+              onRefreshClient: catalogs.refreshClient,
               t,
             })
           : null,
 
-        data.activeNav === 'skills'
+        activeNav === 'skills'
           ? e(SessionSkillsSection, {
-              scope: data.activeScope,
-              skillsConfig: currentSkillsConfig,
-              availableSkills: data.availableSkills,
-              currentWorkspaceId: data.currentWorkspaceId,
-              workspaceSettings: data.workspaceSettings,
-              globalConfig: data.globalConfig,
-              skillsSearch: data.skillsSearch,
-              refreshingSkills: data.refreshingSkills,
+              scope: settings.scope,
+              skillsConfig,
+              availableSkills: catalogs.skills,
+              currentWorkspaceId,
+              workspaceSettings,
+              globalConfig,
+              skillsSearch,
+              refreshingSkills: catalogs.refreshingSkills,
               effectiveDisabledModelSet,
               effectiveDisabledUserSet,
               onSkillsModeChange: handleSkillsModeChange,
-              onSkillsSearchChange: data.setSkillsSearch,
-              onRefreshSkills: handleRefreshSkills,
+              onSkillsSearchChange: setSkillsSearch,
+              onRefreshSkills: catalogs.reloadSkills,
               onOpenSessionSkillModal: handleOpenSessionSkillModal,
               t,
             })
           : null,
 
-        data.activeNav === 'sandbox'
+        activeNav === 'sandbox'
           ? e(SessionSandboxSection, {
-              scope: data.activeScope,
-              sandboxConfig: currentSandboxConfig,
-              currentWorkspaceId: data.currentWorkspaceId,
-              workspaceSettings: data.workspaceSettings,
-              globalConfig: data.globalConfig,
-              capability: data.sandboxCapability,
-              skipped: data.sandboxSkipped,
-              effectiveMode: data.sandboxCapability?.effectiveMode,
+              scope: settings.scope,
+              sandboxConfig,
+              currentWorkspaceId,
+              workspaceSettings,
+              globalConfig,
+              capability: catalogs.sandboxCapability,
+              skipped: catalogs.sandboxSkipped,
+              effectiveMode: catalogs.sandboxCapability?.effectiveMode,
               activeSourceMode: sandboxSourceMode,
               onChange: handleSandboxChange,
               onSourceModeChange: handleSandboxSourceModeChange,
@@ -892,73 +653,48 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
       ),
     ),
 
-    // Footer Actions
     e(
       'div',
       { className: 'dsh-session-view-footer' },
       e(
         'div',
         { className: 'dsh-view-footer-left' },
-        // Scope Tabs Navigator ([ 会话 ] [ 工作区 ] [ 全局 ])
         e(
           'div',
           { className: 'dsh-scope-tabs-nav', role: 'tablist' },
-          e(
-            'button',
-            {
-              type: 'button',
-              role: 'tab',
-              'aria-selected': data.activeScope === 'session',
-              className: `dsh-scope-tab-btn ${data.activeScope === 'session' ? 'active' : ''} ${!canEditSessionScope ? 'disabled' : ''}`,
-              disabled: !canEditSessionScope,
-              title: !canEditSessionScope
-                ? t('sessionSettings.scopeTabs.sessionDisabledHint')
-                : undefined,
-              onClick: () => {
-                if (canEditSessionScope) data.setActiveScope('session')
+          ...(
+            [
+              ['session', canEditSessionScope, 'sessionDisabledHint'],
+              ['workspace', canEditWorkspaceScope, 'workspaceDisabledHint'],
+              ['global', true, undefined],
+            ] as const
+          ).map(([scope, enabled, hint]) =>
+            e(
+              'button',
+              {
+                key: scope,
+                type: 'button',
+                role: 'tab',
+                'aria-selected': settings.scope === scope,
+                className: `dsh-scope-tab-btn ${settings.scope === scope ? 'active' : ''} ${!enabled ? 'disabled' : ''}`,
+                disabled: !enabled,
+                title: enabled
+                  ? undefined
+                  : t(`sessionSettings.scopeTabs.${hint}`),
+                onClick: () => {
+                  if (enabled) settings.select(scope)
+                },
               },
-            },
-            t('sessionSettings.scopeTabs.session'),
-          ),
-          e(
-            'button',
-            {
-              type: 'button',
-              role: 'tab',
-              'aria-selected': data.activeScope === 'workspace',
-              className: `dsh-scope-tab-btn ${data.activeScope === 'workspace' ? 'active' : ''} ${!canEditWorkspaceScope ? 'disabled' : ''}`,
-              disabled: !canEditWorkspaceScope,
-              title: !canEditWorkspaceScope
-                ? t('sessionSettings.scopeTabs.workspaceDisabledHint')
-                : undefined,
-              onClick: () => {
-                if (canEditWorkspaceScope) data.setActiveScope('workspace')
-              },
-            },
-            t('sessionSettings.scopeTabs.workspace'),
-          ),
-          e(
-            'button',
-            {
-              type: 'button',
-              role: 'tab',
-              'aria-selected': data.activeScope === 'global',
-              className: `dsh-scope-tab-btn ${data.activeScope === 'global' ? 'active' : ''}`,
-              onClick: () => data.setActiveScope('global'),
-            },
-            t('sessionSettings.scopeTabs.global'),
+              t(`sessionSettings.scopeTabs.${scope}`),
+            ),
           ),
         ),
-        // A disabled button cannot explain itself: its `title` is unreachable
-        // (no pointer events reach a disabled control in most browsers), so the
-        // reason is rendered as text next to the tabs.
+        // A disabled button cannot explain itself: its title is unreachable,
+        // so the reason is rendered as text next to the tabs.
         !canEditSessionScope || !canEditWorkspaceScope
           ? e(
               'span',
-              {
-                className: 'dsh-scope-hint',
-                role: 'note',
-              },
+              { className: 'dsh-scope-hint', role: 'note' },
               !canEditSessionScope
                 ? t('sessionSettings.scopeTabs.sessionDisabledHint')
                 : t('sessionSettings.scopeTabs.workspaceDisabledHint'),
@@ -974,8 +710,8 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
               {
                 type: 'button',
                 className: 'dsh-sam-btn tertiary',
-                disabled: actions.saving,
-                onClick: () => actions.handleResetScope(data.activeScope),
+                disabled: settings.saving,
+                onClick: () => void handleReset(),
               },
               resetLabel,
             )
@@ -985,21 +721,20 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
           {
             type: 'button',
             className: 'dsh-sam-btn primary',
-            disabled: actions.saving,
-            onClick: () => actions.handleSaveScope(data.activeScope),
+            disabled: settings.saving,
+            onClick: () => void handleSave(),
           },
           saveLabel,
         ),
       ),
     ),
 
-    // Session Tools Modal
     e(SessionMcpToolsModal, {
-      server: data.sessionToolsModalServer,
-      toolsMode: data.sessionToolsMode,
-      disabledToolsSet: data.sessionDisabledToolsSet,
-      fetching: discovery.loading,
-      error: discovery.error,
+      server: sessionToolsModalServer,
+      toolsMode: sessionToolsMode,
+      disabledToolsSet: sessionDisabledToolsSet,
+      fetching: discoveryStatus === 'loading',
+      error: discoveryError,
       toolsList: discovery.tools as McpDiscoveredTool[],
       isReadonly: sessionToolsReadonly,
       activeTab: primitiveTab,
@@ -1015,12 +750,12 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
         resources: discovery.lists.resources,
         resourceTemplates: discovery.lists.resourceTemplates,
         capabilities: discovery.lists.capabilities,
-        loading: discovery.loading,
-        error: discovery.error,
-        loaded: discovery.loaded,
-        read: discovery.resourceRead,
-        onRefresh: discovery.refresh,
-        onRead: discovery.readResource,
+        loading: discoveryStatus === 'loading',
+        error: discoveryError,
+        loaded: discoveryStatus === 'ready',
+        readState: mcp.readState,
+        onRefresh: refreshDiscovery,
+        onRead: mcp.readResource,
         onCopy: copy,
         copiedKey,
         t,
@@ -1028,23 +763,23 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
       promptPanel: e(McpPromptPanel, {
         prompts: discovery.lists.prompts,
         capabilities: discovery.lists.capabilities,
-        loading: discovery.loading,
-        error: discovery.error,
-        loaded: discovery.loaded,
-        result: discovery.promptGet,
-        onRefresh: discovery.refresh,
-        onGet: discovery.getPrompt,
+        loading: discoveryStatus === 'loading',
+        error: discoveryError,
+        loaded: discoveryStatus === 'ready',
+        result: mcp.promptGet,
+        onRefresh: refreshDiscovery,
+        onGet: mcp.getPrompt,
         onCopy: copy,
         copiedKey,
         t,
       }),
-      onToolsModeChange: (val) => {
-        data.setSessionToolsMode(val)
-        if (val === 'global') {
-          data.setSessionDisabledToolsSet(
+      onToolsModeChange: (value) => {
+        setSessionToolsMode(value)
+        if (value === 'global') {
+          setSessionDisabledToolsSet(
             new Set(
-              Array.isArray(data.sessionToolsModalServer?.disabledTools)
-                ? data.sessionToolsModalServer.disabledTools
+              Array.isArray(sessionToolsModalServer?.disabledTools)
+                ? sessionToolsModalServer.disabledTools
                 : [],
             ),
           )
@@ -1053,32 +788,31 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
       onToggleTool: handleToggleSessionTool,
       onToggleAllTools: handleToggleAllSessionTools,
       onResetToDefault: handleResetSessionToolsToDefault,
-      onFetchTools: discovery.refresh,
+      onFetchTools: refreshDiscovery,
       onClose: handleCloseSessionToolsModal,
       onApply: handleApplySessionTools,
       t,
     }),
 
-    // Skill Detail Modal
     e(SkillDetailModal, {
-      skill: data.sessionSkillModalTarget,
-      detail: data.sessionSkillModalTarget
-        ? data.skillsContentMap[data.sessionSkillModalTarget.name] ||
-          data.sessionSkillModalTarget
+      skill: sessionSkillModalTarget,
+      detail: sessionSkillModalTarget
+        ? skillsContentMap[sessionSkillModalTarget.name] ||
+          sessionSkillModalTarget
         : null,
-      isModelDisabled: data.sessionSkillModalTarget
-        ? effectiveDisabledModelSet.has(data.sessionSkillModalTarget.name)
+      isModelDisabled: sessionSkillModalTarget
+        ? effectiveDisabledModelSet.has(sessionSkillModalTarget.name)
         : false,
-      isUserDisabled: data.sessionSkillModalTarget
-        ? effectiveDisabledUserSet.has(data.sessionSkillModalTarget.name)
+      isUserDisabled: sessionSkillModalTarget
+        ? effectiveDisabledUserSet.has(sessionSkillModalTarget.name)
         : false,
-      loadingContent: data.sessionSkillModalTarget
-        ? Boolean(data.skillsLoadingMap[data.sessionSkillModalTarget.name])
+      loadingContent: sessionSkillModalTarget
+        ? Boolean(skillsLoadingMap[sessionSkillModalTarget.name])
         : false,
-      isSessionContext: data.activeScope === 'session',
+      isSessionContext: settings.scope === 'session',
       isReadonly: sessionSkillReadonly,
       onSave: sessionSkillReadonly ? undefined : handleSaveSessionSkillModal,
-      onClose: () => data.setSessionSkillModalTarget(null),
+      onClose: () => setSessionSkillModalTarget(null),
       t,
     }),
   )

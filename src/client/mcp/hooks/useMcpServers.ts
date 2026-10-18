@@ -4,6 +4,7 @@ import {
   API_ENDPOINTS,
   API_METHODS,
 } from '../../types/index.ts'
+import { probeServer, serverPatch } from '../discovery.ts'
 
 export function useMcpServers(
   t: (key: string, vars?: Record<string, string | number>) => string,
@@ -12,6 +13,15 @@ export function useMcpServers(
   const [loading, setLoading] = React.useState<boolean>(true)
   const [error, setError] = React.useState<string>('')
   const [successMsg, setSuccessMsg] = React.useState<string>('')
+
+  // One owner for the expiring success notice: every handler just sets the text
+  // and this effect arms the clear. Previously each handler carried its own
+  // setTimeout, so a handler that forgot one left the banner up forever.
+  React.useEffect(() => {
+    if (!successMsg) return
+    const timer = setTimeout(() => setSuccessMsg(''), 3000)
+    return () => clearTimeout(timer)
+  }, [successMsg])
 
   // Test state
   const [testingId, setTestingId] = React.useState<string | null>(null)
@@ -64,7 +74,6 @@ export function useMcpServers(
         if (data.ok) {
           setServers((prev) => prev.filter((s) => s.id !== server.id))
           setSuccessMsg(t('mcpServers.notices.deleted'))
-          setTimeout(() => setSuccessMsg(''), 3000)
         }
       }
     } catch (err: unknown) {
@@ -80,43 +89,18 @@ export function useMcpServers(
     const id = server.id || 'form_test'
     setTestingId(id)
     try {
-      const res = await fetch(API_ENDPOINTS.mcpServersProbe, {
-        method: API_METHODS.mcpServersProbe,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ server }),
-      })
-      const data = (await res.json()) as {
-        ok?: boolean
-        message?: string
-        detectedTransport?: 'stdio' | 'streamable-http' | 'sse'
-        serverInfo?: GlobalMcpServerConfig['serverInfo']
-        tools?: string[] | number
-      }
+      const probe = await probeServer(server)
       setTestResults((prev) => ({
         ...prev,
         [id]: {
-          ok: Boolean(data.ok),
-          message: data.message || (data.ok ? 'Connection OK' : 'Failed'),
+          ok: probe.ok,
+          message: probe.message || (probe.ok ? 'Connection OK' : 'Failed'),
         },
       }))
-      if (data.ok && server.id) {
+      if (probe.ok && server.id && probe.discovery) {
+        const patch = serverPatch(probe.discovery)
         setServers((prev) =>
-          prev.map((s) =>
-            s.id === server.id
-              ? {
-                  ...s,
-                  detectedTransport:
-                    data.detectedTransport || s.detectedTransport,
-                  serverInfo: data.serverInfo || s.serverInfo,
-                  tools: Array.isArray(data.tools)
-                    ? data.tools.length
-                    : typeof data.tools === 'number'
-                      ? data.tools
-                      : s.tools,
-                  lastTestedAt: Date.now(),
-                }
-              : s,
-          ),
+          prev.map((s) => (s.id === server.id ? { ...s, ...patch } : s)),
         )
       }
     } catch (err: unknown) {
@@ -166,7 +150,6 @@ export function useMcpServers(
           return [...prev, savedServer]
         })
         setSuccessMsg(t('mcpServers.notices.saved'))
-        setTimeout(() => setSuccessMsg(''), 3000)
         return { ok: true }
       } else {
         return { ok: false, error: data.error || 'Failed to save server' }

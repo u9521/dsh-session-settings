@@ -843,6 +843,48 @@ export interface SessionPersistenceService {
   ): Promise<SessionPersistenceStat | undefined>
 }
 
+/**
+ * The domain form this plugin declares its two stores on.
+ *
+ * Structural rather than imported: the host package is not a dependency of this
+ * plugin, and a value import would inline a second `zod` into the server
+ * bundle. The shape below is the part of `DomainSpec` this plugin uses; the
+ * host validates it at `open`.
+ */
+export interface StorageDomainSpec {
+  readonly name: string
+  readonly version: number
+  readonly layout?: 'single' | 'per-record'
+  readonly global?: { readonly schema: unknown; readonly initial: unknown }
+  readonly tables: Record<string, { readonly valueSchema: unknown }>
+}
+
+/** One opened table: synchronous reads from memory, durable writes. */
+export interface StorageDomainTable<V> {
+  get(key: string): V | undefined
+  entries(): IterableIterator<[string, V]>
+  keys(): IterableIterator<string>
+  readonly size: number
+  put(key: string, value: V): Promise<void>
+  delete(key: string): Promise<boolean>
+}
+
+/** One opened domain. */
+export interface StorageDomain {
+  readonly name: string
+  readonly global: {
+    get(): unknown
+    set(value: unknown): Promise<void>
+  }
+  table<V>(name: string): StorageDomainTable<V>
+  close(): Promise<void>
+}
+
+/** Data-form facility that opens declared domains. */
+export interface StorageDomainFacility {
+  open(spec: StorageDomainSpec): Promise<StorageDomain>
+}
+
 export interface LoaderEntry {
   id?: string
   name?: string
@@ -1097,6 +1139,11 @@ declare module '@deepseek-ai/cordis' {
     fs?: FileSystemLike
     /** The sandbox policy owner, read for the session's effective mode. */
     sandboxPolicy?: SandboxPolicyServiceLike
+    /**
+     * Schema-validated durable stores. The host mounts it in every base
+     * profile, rooted at `$DSH_HOME/storages`.
+     */
+    storageDomain?: StorageDomainFacility
   }
 
   interface Events {
@@ -1124,8 +1171,6 @@ declare module '@deepseek-ai/cordis' {
      * observes every change, not just its own scope's.
      */
     'tools/change'(): void
-
-    'skills/change'(): void
 
     'agent/created'(payload: {
       agent: Agent

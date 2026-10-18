@@ -9,6 +9,7 @@ import type {
 import { EmptyState, Badge, ServerIcon } from '../../components/index.ts'
 import { formatProtocolTitle } from '../../utils/string.ts'
 import { isMcpClientUnavailable } from '../../utils/mcpRuntime.ts'
+import { isSourceReadonly, sourceModeFor } from '../../utils/config.ts'
 
 const e = React.createElement
 
@@ -50,25 +51,12 @@ export function SessionMcpSection({
   onRefreshClient,
   t,
 }: SessionMcpSectionProps) {
-  const defaultMode = currentWorkspaceId ? 'workspace' : 'global'
-
-  const activeSourceMode: 'workspace' | 'global' | 'custom' =
-    scope === 'global'
-      ? 'custom'
-      : scope === 'workspace'
-        ? mcpConfig?.mode === 'custom'
-          ? 'custom'
-          : 'global'
-        : mcpConfig?.mode === 'custom'
-          ? 'custom'
-          : (mcpConfig?.mode ?? defaultMode)
-
-  const isReadonly =
-    scope === 'session'
-      ? activeSourceMode !== 'custom'
-      : scope === 'workspace'
-        ? activeSourceMode !== 'custom'
-        : false
+  const activeSourceMode = sourceModeFor(
+    scope,
+    mcpConfig,
+    Boolean(currentWorkspaceId),
+  )
+  const isReadonly = isSourceReadonly(scope, activeSourceMode)
 
   const isAllMcpSelected =
     availableMcpServers.length > 0 &&

@@ -16,9 +16,7 @@ import {
   renderResourceContents,
   resourceLabel,
 } from '../../utils/mcpPrimitives.ts'
-import type { ResourceReadState } from '../hooks/useMcpPrimitives.ts'
-import type { ResourceReadRequest } from '../hooks/useMcpPrimitives.ts'
-import { resourceTargetKey } from '../hooks/useMcpPrimitives.ts'
+import type { ResourceReadRequest, ResourceReadState } from '../discovery.ts'
 
 const e = React.createElement
 
@@ -29,7 +27,8 @@ export interface McpResourcePanelProps {
   loading: boolean
   error?: string
   loaded: boolean
-  read: ResourceReadState
+  /** Read state of one row; the panel never learns the row-key format. */
+  readState: (targetKey: string) => ResourceReadState
   onRefresh: () => void
   onRead: (args: ResourceReadRequest) => void
   onCopy: (text: string, key: string) => void
@@ -40,14 +39,14 @@ export interface McpResourcePanelProps {
 /** One template row with its own variable form. */
 function TemplateRow({
   template,
-  read,
+  readState,
   onRead,
   onCopy,
   copiedKey,
   t,
 }: {
   template: McpDiscoveredResourceTemplate
-  read: ResourceReadState
+  readState: McpResourcePanelProps['readState']
   onRead: McpResourcePanelProps['onRead']
   onCopy: McpResourcePanelProps['onCopy']
   copiedKey?: string
@@ -69,8 +68,8 @@ function TemplateRow({
   const copyKey = `tplCopy:${template.uriTemplate}`
   // The row key MUST come from the same function the hook uses to tag the read
   // state; re-deriving the format here would drift silently if it ever changed.
-  const rowKey = resourceTargetKey({ uriTemplate: template.uriTemplate })
-  const isThis = read.targetKey === rowKey
+  const read = readState(`tpl:${template.uriTemplate}`)
+  const isThis = read.targetKey !== undefined
 
   return e(
     'div',
@@ -228,14 +227,14 @@ function TemplateRow({
 /** One concrete resource row. */
 function ResourceRow({
   resource,
-  read,
+  readState,
   onRead,
   onCopy,
   copiedKey,
   t,
 }: {
   resource: McpDiscoveredResource
-  read: ResourceReadState
+  readState: McpResourcePanelProps['readState']
   onRead: McpResourcePanelProps['onRead']
   onCopy: McpResourcePanelProps['onCopy']
   copiedKey?: string
@@ -243,8 +242,8 @@ function ResourceRow({
 }) {
   const [expanded, setExpanded] = React.useState(false)
   const copyKey = `uriCopy:${resource.uri}`
-  const rowKey = resourceTargetKey({ uri: resource.uri })
-  const isThis = read.targetKey === rowKey
+  const read = readState(`uri:${resource.uri}`)
+  const isThis = read.targetKey !== undefined
 
   return e(
     'div',
@@ -368,7 +367,7 @@ export function McpResourcePanel({
   loading,
   error,
   loaded,
-  read,
+  readState,
   onRefresh,
   onRead,
   onCopy,
@@ -521,7 +520,7 @@ export function McpResourcePanel({
             e(ResourceRow, {
               key: resource.uri,
               resource,
-              read,
+              readState,
               onRead,
               onCopy,
               copiedKey,
@@ -552,7 +551,7 @@ export function McpResourcePanel({
             e(TemplateRow, {
               key: template.uriTemplate,
               template,
-              read,
+              readState,
               onRead,
               onCopy,
               copiedKey,

@@ -23,13 +23,11 @@ const e = React.createElement
  *
  * These MUST be module-level constants: a fresh object literal returned from
  * `getSnapshot` reads as a changed snapshot every time, which spins the
- * subscription whenever the store is absent.
+ * subscription whenever the store is absent. They also keep the chip renderable
+ * from a slot registration that has not resolved the stores yet.
  */
-const EMPTY_SESSIONS: SessionsState = { byId: {}, current: undefined }
-const EMPTY_WORKSPACES: WorkspacesState = {
-  items: [],
-  recentWorkspaceId: undefined,
-}
+const EMPTY_SESSIONS: SessionsState = { byId: {} }
+const EMPTY_WORKSPACES: WorkspacesState = { items: [] }
 
 export interface SessionSettingsHeroChipProps {
   remote?: ClientRemoteServiceRef

@@ -1,6 +1,5 @@
 export * from './Badge.ts'
 export * from './ItemToggleCard.ts'
-export * from './ModeSelector.ts'
 export * from './SearchToolbar.ts'
 export * from './ModalDialog.ts'
 export * from './EmptyState.ts'

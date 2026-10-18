@@ -6,15 +6,12 @@ import {
 import type {
   GlobalMcpServerConfig,
   McpDiscoveredTool,
-  McpServerInfo,
 } from '../../types/index.ts'
 import {
   ModalDialog,
   SchemaViewer,
-  ServerIcon,
   SearchToolbar,
 } from '../../components/index.ts'
-import { formatProtocolTitle } from '../../utils/string.ts'
 import { McpPrimitivesTabs, type McpPrimitiveTab } from './McpPrimitivesTabs.ts'
 
 const e = React.createElement
@@ -22,13 +19,11 @@ const e = React.createElement
 export interface McpToolsModalProps {
   open: boolean
   server: Partial<GlobalMcpServerConfig> | null
-  loading: boolean
+  /** True while the probe or save is in flight. */
+  busy?: boolean
   error?: string
   toolsList: McpDiscoveredTool[]
   disabledToolsSet: Set<string>
-  serverInfo?: McpServerInfo | null
-  detectedTransport?: string | null
-  saving: boolean
   /**
    * Which of the three primitive tabs is showing. The modal owns the strip while
    * the resource and prompt bodies are injected, so this component stays free of
@@ -44,20 +39,39 @@ export interface McpToolsModalProps {
   onToggleAllTools: (enableAll: boolean) => void
   onRefresh: () => void
   onClose: () => void
-  onSave: () => void
+  /**
+   * Dialog title. The session page prefixes the server name; the global page
+   * names only the active tab.
+   */
+  title: string
+  /** Extra header content beside the title (icon, badges, protocol pill). */
+  headerExtra?: React.ReactNode
+  /**
+   * Content above the toolbar on the tools tab.
+   *
+   * The session page puts its global/custom switch here; the global page has no
+   * equivalent, so it omits the share.
+   */
+  toolsHeader?: React.ReactNode
+  /**
+   * The action row.
+   *
+   * Injected rather than owned: the global page ends with Save/Cancel while the
+   * session page ends with a mode selector plus Apply, and neither difference
+   * belongs in the shared body. Everything above the footer — search, schema
+   * expansion, tool cards, the tab strip — is one implementation.
+   */
+  footer: React.ReactNode
   t: (key: string, vars?: Record<string, string | number>) => string
 }
 
 export function McpToolsModal({
   open,
   server,
-  loading,
+  busy = false,
   error,
   toolsList,
   disabledToolsSet,
-  serverInfo,
-  detectedTransport,
-  saving,
   activeTab,
   onTabChange,
   tabCounts,
@@ -67,7 +81,10 @@ export function McpToolsModal({
   onToggleAllTools,
   onRefresh,
   onClose,
-  onSave,
+  title,
+  headerExtra,
+  toolsHeader,
+  footer,
   t,
 }: McpToolsModalProps) {
   const [search, setSearch] = React.useState<string>('')
@@ -98,150 +115,17 @@ export function McpToolsModal({
     )
   })
 
-  const effectiveInfo = serverInfo || server.serverInfo
-  const headerMeta = e(
-    'div',
-    { className: 'dsh-mcp-tools-header-meta' },
-    e(ServerIcon, {
-      server,
-      serverInfo: effectiveInfo,
-      transport: server.transport,
-      size: 16,
-    }),
-    e('span', { className: 'dsh-mcp-card-name' }, server.name || server.id),
-    server.id && server.id !== server.name
-      ? e('span', { className: 'dsh-mcp-card-id' }, server.id)
-      : null,
-    e(
-      'span',
-      {
-        className: `dsh-mcp-proto-badge ${server.transport === 'stdio' ? 'stdio' : (detectedTransport ?? server.transport ?? 'streamable-http')}`,
-      },
-      server.transport === 'stdio'
-        ? 'STDIO'
-        : detectedTransport === 'sse'
-          ? 'SSE'
-          : detectedTransport === 'streamable-http'
-            ? 'Streamable HTTP'
-            : 'HTTP / SSE',
-    ),
-    effectiveInfo?.websiteUrl
-      ? e(
-          'a',
-          {
-            key: 'website',
-            href: effectiveInfo.websiteUrl,
-            target: '_blank',
-            rel: 'noopener noreferrer',
-            className: 'dsh-mcp-proto-badge website',
-            title: effectiveInfo.websiteUrl,
-          },
-          '🔗 ' + t('mcpServers.table.website'),
-        )
-      : null,
-    effectiveInfo?.version
-      ? e(
-          'span',
-          {
-            className: 'dsh-mcp-proto-badge server-version',
-            title: formatProtocolTitle(effectiveInfo, t),
-          },
-          effectiveInfo.name &&
-            effectiveInfo.name !== server.id &&
-            effectiveInfo.name !== server.name
-            ? `${effectiveInfo.name} ${effectiveInfo.version}`
-            : effectiveInfo.version,
-        )
-      : effectiveInfo?.protocolVersion
-        ? e(
-            'span',
-            {
-              className: 'dsh-mcp-proto-badge server-version',
-              title: formatProtocolTitle(effectiveInfo, t),
-            },
-            `MCP ${effectiveInfo.protocolVersion}`,
-          )
-        : null,
-  )
+  const headerMeta = headerExtra ?? null
 
   return e(
     ModalDialog,
     {
       open: Boolean(server),
       onClose,
-      // The title states what the panel is showing, so it tracks the active
-      // tab instead of always naming the tools list.
-      title: t(
-        activeTab === 'tools'
-          ? 'mcpServers.toolsModal.title'
-          : activeTab === 'resources'
-            ? 'mcpServers.primitives.titleResources'
-            : 'mcpServers.primitives.titlePrompts',
-      ),
+      title,
       headerExtra: headerMeta,
       panelClassName: 'dsh-mcp-tools-modal',
-      footer: [
-        e(
-          'div',
-          { key: 'left', className: 'dsh-mcp-modal-footer-left' },
-          // Only the tools tab has a counter worth showing; the read-only tabs
-          // deliberately contribute nothing here.
-          activeTab === 'tools'
-            ? e(
-                'span',
-                {
-                  style: {
-                    fontSize: 12,
-                    color: 'var(--dsw-alias-label-secondary)',
-                  },
-                },
-                t('sessionSettings.mcp.toolsEnabledCount', {
-                  enabled: toolsList.length - disabledToolsSet.size,
-                  total: toolsList.length,
-                }),
-              )
-            : null,
-        ),
-        e(
-          'div',
-          { key: 'right', className: 'dsh-mcp-modal-footer-right' },
-          activeTab === 'tools'
-            ? e(
-                React.Fragment,
-                null,
-                e(
-                  'button',
-                  {
-                    type: 'button',
-                    className: 'dsh-sam-btn secondary',
-                    onClick: onClose,
-                  },
-                  t('mcpServers.actions.cancel'),
-                ),
-                e(
-                  'button',
-                  {
-                    type: 'button',
-                    className: 'dsh-sam-btn primary',
-                    disabled: saving,
-                    onClick: onSave,
-                  },
-                  saving
-                    ? t('mcpServers.toolsModal.saving')
-                    : t('mcpServers.toolsModal.save'),
-                ),
-              )
-            : e(
-                'button',
-                {
-                  type: 'button',
-                  className: 'dsh-sam-btn primary',
-                  onClick: onClose,
-                },
-                t('mcpServers.primitives.close'),
-              ),
-        ),
-      ],
+      footer,
     },
     e(McpPrimitivesTabs, {
       active: activeTab,
@@ -268,7 +152,7 @@ export function McpToolsModal({
       ? e(
           React.Fragment,
           null,
-          // Toolbar
+          toolsHeader ?? null,
           e(SearchToolbar, {
             value: search,
             onChange: setSearch,
@@ -280,7 +164,7 @@ export function McpToolsModal({
                   key: 'enableAll',
                   type: 'button',
                   className: 'dsh-sam-btn secondary',
-                  disabled: loading || toolsList.length === 0,
+                  disabled: busy || toolsList.length === 0,
                   onClick: () => onToggleAllTools(true),
                 },
                 t('mcpServers.toolsModal.enableAll'),
@@ -291,7 +175,7 @@ export function McpToolsModal({
                   key: 'disableAll',
                   type: 'button',
                   className: 'dsh-sam-btn secondary',
-                  disabled: loading || toolsList.length === 0,
+                  disabled: busy || toolsList.length === 0,
                   onClick: () => onToggleAllTools(false),
                 },
                 t('mcpServers.toolsModal.disableAll'),
@@ -302,26 +186,26 @@ export function McpToolsModal({
                   key: 'retry',
                   type: 'button',
                   className: 'dsh-sam-btn secondary',
-                  disabled: loading,
+                  disabled: busy,
                   onClick: onRefresh,
                   // One shared label for all three tabs: the probe refreshes
                   // every primitive at once, so no tab should name only its own.
                   title: t('mcpServers.actions.refresh'),
                 },
-                loading
+                busy
                   ? e(IconLoadingOutlineMedium, {
                       size: 14,
                       className: 'dsh-spin',
                     })
                   : e(IconRefreshOutlineMedium, { size: 14 }),
-                loading
+                busy
                   ? t('mcpServers.actions.toolsFetching')
                   : t('mcpServers.actions.refresh'),
               ),
             ],
           }),
           // Tools list / States
-          loading
+          busy
             ? e(
                 'div',
                 {

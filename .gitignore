@@ -3,3 +3,6 @@ node_modules/
 *.log
 lib/
 .pnpm-store/
+
+# Untracked personal overlay for the agent framework
+AGENTS.local.md

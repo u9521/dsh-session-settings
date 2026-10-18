@@ -16,7 +16,7 @@ const isSaveDefault =
 
 同轮还暴露：会话页签在无会话 id 时不可用；顶栏把"没有会话"与"已有暂存"压成一个布尔，故首次进入新会话时**无任何提示**。
 
-## Proposal
+## Decision
 
 **作用域在接口上显式声明。** `save-settings` 必填判别字段 `scope`（`SettingsScopeId`），缺失或非法即 400，**不再回退推断**：
 
@@ -34,6 +34,15 @@ const isSaveDefault =
 
 **作用域可用性与默认页签**：`session` 需 `sessionId`，`workspace` 需 `currentWorkspaceId`，`global` 恒可用；默认取首个可用者。会话身份消失（归档）时，已选页签若失效则重新取默认，用户自选的有效选择不被推翻。
 
+**落地约束：**
+
+- `pnpm run check`、`node .agents/gates/verify-all.mjs`、`pnpm run fmt:check` 通过，`pnpm run build` 成功。
+- 三个 `scope` 各发一次保存，回读 `session_settings.json`：**只有目标键变化**，其余两处逐字节不变。
+- `scope` 缺失、`scope:'session'` 无 `sessionId`、`scope:'workspace'` 无 `workspaceId` 均返回 **400**；`scope:'session-pending'` 亦返回 400（不再是合法值）。
+- `src/` 内不出现 `pendingSessions`、`pendingConfig`、`stagePendingSession`、`takePendingSession`、`session-pending`；`SessionSettingsStore` 无该键。
+- 归档当前会话后停在无会话页面：会话页签禁用且渲染可见提示，默认页签为工作区（有工作区时），保存写入 `workspaces[workspaceId]`。
+- 有 `sessionId` 时顶栏显示可复制 id chip；无 `sessionId` 时不渲染会话 chip。
+
 ## Alternatives considered
 
 - **拆独立端点**：否决，多份 handler 重复校验；判别字段已表达同一边界。
@@ -45,16 +54,7 @@ const isSaveDefault =
 - **用 `hasPendingSession()` 区分新建与复用**：否决，它是 JSONL 后端特有，且对已落盘的新建会话返回 false。
 - **无会话时把会话级保存改道写入工作区默认**：否决，用户选的是「会话」，静默改写其他作用域正是本 Note 的原始缺陷。
 
-## Acceptance criteria
-
-- `pnpm run check`、`pnpm run verify:gates`、`pnpm run fmt:check` 通过，`pnpm run build` 成功。
-- 三个 `scope` 各发一次保存，回读 `session_settings.json`：**只有目标键变化**，其余两处逐字节不变。
-- `scope` 缺失、`scope:'session'` 无 `sessionId`、`scope:'workspace'` 无 `workspaceId` 均返回 **400**；`scope:'session-pending'` 亦返回 400（不再是合法值）。
-- `src/` 内不出现 `pendingSessions`、`pendingConfig`、`stagePendingSession`、`takePendingSession`、`session-pending`；`SessionSettingsStore` 无该键。
-- 归档当前会话后停在无会话页面：会话页签禁用且渲染可见提示，默认页签为工作区（有工作区时），保存写入 `workspaces[workspaceId]`。
-- 有 `sessionId` 时顶栏显示可复制 id chip；无 `sessionId` 时不渲染会话 chip。
-
-## Risks
+## Consequences
 
 - **破坏性接口变更**：`scope` 必填，半新半旧 HMR 窗口内旧载荷得 400；刷新后一致。
 - **能力收缩不可逆**：无会话页面不再能"先配好、等下一个会话"，必须新建会话后再配置。

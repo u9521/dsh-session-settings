@@ -1,56 +1,41 @@
 import * as React from 'react'
-import {
-  type GlobalMcpServerConfig,
-  type McpDiscoveredTool,
-  type McpPromptGetResult,
-  type McpResourceReadResult,
-  type McpServerInfo,
-  API_ENDPOINTS,
-  API_METHODS,
-} from '../../types/index.ts'
+import type {
+  GlobalMcpServerConfig,
+  McpPromptGetResult,
+  McpProbeResult,
+  McpResourceReadResult,
+} from '../types/index.ts'
+import { API_ENDPOINTS, API_METHODS } from '../types/index.ts'
 import {
   listsFromResponse,
   type McpPrimitiveLists,
-} from '../../utils/mcpPrimitives.ts'
+} from '../utils/mcpPrimitives.ts'
+import {
+  EMPTY_DISCOVERY,
+  discoveryFromResponse,
+  resourceTargetKey,
+  type McpDiscovery,
+} from '../utils/mcpDiscovery.ts'
+
+export type { McpDiscovery } from '../utils/mcpDiscovery.ts'
+export { serverPatch, resourceTargetKey } from '../utils/mcpDiscovery.ts'
 
 /**
- * The four primitives one server declares, as a single discovery result.
+ * The MCP discovery face: one probe, one result shape, one patch.
  *
- * Re-exported from the pure utils module so the panel, this hook, and the host
- * pages all name one type. `capabilities` rides alongside the lists because an
- * empty list alone is ambiguous: the MCP SDK answers a `list*` call for an
- * unadvertised capability with an empty result rather than an error, so only the
- * flags can tell "declares nothing" from "does not support this".
+ * Discovery used to be assembled in three places — five probe call sites each
+ * parsing the response themselves, two copies of the field-by-field write-back
+ * to the server list, and a hook whose twelve flat members the host had to
+ * re-seed through a callback. This module owns the parse, the patch, and the
+ * state machine, so a caller names what it wants instead of rebuilding it.
  */
-export type { McpPrimitiveLists } from '../../utils/mcpPrimitives.ts'
-
-/** One server's full discovery, from a single probe or a cache read. */
-export interface McpDiscovery {
-  tools: McpDiscoveredTool[]
-  lists: McpPrimitiveLists
-  serverInfo?: McpServerInfo
-  detectedTransport?: 'stdio' | 'streamable-http' | 'sse'
-}
-
-const EMPTY_LISTS: McpPrimitiveLists = {
-  resources: [],
-  resourceTemplates: [],
-  prompts: [],
-}
-
-const EMPTY_DISCOVERY: McpDiscovery = { tools: [], lists: EMPTY_LISTS }
 
 /** Read state for one on-demand resource read. */
 export interface ResourceReadState {
   loading: boolean
   error?: string
   result?: McpResourceReadResult
-  /**
-   * Identity of the row this state belongs to (`uri:<uri>` or `tpl:<template>`).
-   * The panel renders many rows against one shared read slot, so without this a
-   * row could not tell whether a result was its own — a template read in
-   * particular has no `uri` to compare against before expansion.
-   */
+  /** Identity of the row this state belongs to; the panel renders many rows. */
   targetKey?: string
   /** The URI the displayed result belongs to, so a refresh can repeat it. */
   uri?: string
@@ -68,60 +53,48 @@ export interface PromptGetState {
   loading: boolean
   error?: string
   result?: McpPromptGetResult
-  /** Prompt name this state belongs to; the panel renders many rows per slot. */
+  /** Prompt name this state belongs to. */
   targetName?: string
 }
 
-export interface UseMcpPrimitivesOptions {
-  /** The server whose primitives are shown. Null closes the panel. */
-  server: Partial<GlobalMcpServerConfig> | null
-  /**
-   * Publish a completed discovery to the host so its server list and modal
-   * target stay in step. Called after both a probe and a cache read.
-   */
-  onDiscovery?: (discovery: McpDiscovery) => void
-  t: (key: string, vars?: Record<string, string | number>) => string
-}
-
-export interface UseMcpPrimitivesResult {
-  /** Tools of the current server. */
-  tools: McpDiscoveredTool[]
-  lists: McpPrimitiveLists
-  serverInfo?: McpServerInfo
-  detectedTransport?: 'stdio' | 'streamable-http' | 'sse'
-  /**
-   * One loading flag and one error for ALL THREE tabs.
-   *
-   * The probe returns every primitive in a single connection, so the tools,
-   * resource, and prompt tabs are three views of one request. Separate flags
-   * would let one tab claim to be loading while another claimed to have failed.
-   */
-  loading: boolean
-  error?: string
-  /** True once cached data has been read or a probe has completed. */
-  loaded: boolean
-  /**
-   * Refresh every primitive from one probe.
-   *
-   * Shared by all three tabs, so any refresh button updates the whole panel and
-   * only one request leaves the browser.
-   */
-  refresh: () => Promise<void>
-  resourceRead: ResourceReadState
-  readResource: (args: ResourceReadRequest) => Promise<void>
-  promptGet: PromptGetState
-  getPrompt: (name: string, args?: Record<string, string>) => Promise<void>
-}
-
 /**
- * Stable identity for one resource row's read state.
+ * Probe one server over a single connection.
  *
- * Template form is keyed by the template string rather than an expanded URI:
- * the panel needs the key BEFORE the read succeeds, and expansion happens
- * server-side.
+ * The one request every caller shares: the discovery panel, the card's test
+ * action, and the form's pre-save check all send the same body and need the
+ * same normalized result. What differs is only how a failure is presented, so
+ * this returns the outcome and lets the caller decide.
+ *
+ * @param server - the connection-relevant fields (discovered lists are output).
+ * @returns the discovery plus the probe's own ok/message, or a failure.
  */
-export function resourceTargetKey(args: ResourceReadRequest): string {
-  return args.uri ? `uri:${args.uri}` : `tpl:${args.uriTemplate ?? ''}`
+export async function probeServer(
+  server: Partial<GlobalMcpServerConfig>,
+): Promise<{ ok: boolean; message?: string; discovery?: McpDiscovery }> {
+  try {
+    const res = await fetch(API_ENDPOINTS.mcpServersProbe, {
+      method: API_METHODS.mcpServersProbe,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ server }),
+    })
+    const data = (await res.json()) as McpProbeResult & {
+      ok?: boolean
+      message?: string
+    }
+    if (!res.ok || !data?.ok) {
+      return { ok: false, message: data?.message }
+    }
+    return {
+      ok: true,
+      message: data.message,
+      discovery: discoveryFromResponse(data),
+    }
+  } catch (err: unknown) {
+    return {
+      ok: false,
+      message: err instanceof Error ? err.message : String(err),
+    }
+  }
 }
 
 /** Whether any list actually carries entries (flags alone do not count). */
@@ -133,30 +106,44 @@ function hasEntries(lists: McpPrimitiveLists): boolean {
   )
 }
 
+/** The discovery state machine: exactly one status at a time. */
+export type DiscoveryState =
+  | { status: 'idle' }
+  | { status: 'loading' }
+  | { status: 'ready'; discovery: McpDiscovery }
+  | { status: 'error'; message: string }
+
+export interface UseMcpDiscoveryOptions {
+  /** The server whose primitives are shown. Null closes the panel. */
+  server: Partial<GlobalMcpServerConfig> | null
+  t: (key: string, vars?: Record<string, string | number>) => string
+}
+
+export interface McpDiscoveryController {
+  state: DiscoveryState
+  /** The discovery of the current server, empty while idle or loading. */
+  discovery: McpDiscovery
+  /** Probe every primitive over one connection. */
+  refresh: () => Promise<McpDiscovery | undefined>
+  readResource: (args: ResourceReadRequest) => Promise<void>
+  getPrompt: (name: string, args?: Record<string, string>) => Promise<void>
+  /** The read state of one resource row, or an idle placeholder. */
+  readState: (targetKey: string) => ResourceReadState
+  promptGet: PromptGetState
+}
+
 /**
- * Own one server's whole discovery surface for the management modal.
- *
- * All three tabs consume this: tools, resources/templates, and prompts are four
- * views of a single probe, so one hook owns the request, one loading flag, one
- * error, and one `refresh`. Splitting them across two state machines — as an
- * earlier revision did — let the tools tab and the primitive tabs disagree about
- * whether the same request was in flight.
+ * Own one server's discovery: the request, the state machine, and the reads.
  *
  * The open path is cache-first: the payload the caller already holds is used
  * when it carries entries, otherwise the cache endpoint is read. That endpoint
  * never opens a connection, so only an explicit refresh reaches the server.
  */
-export function useMcpPrimitives({
+export function useMcpDiscovery({
   server,
-  onDiscovery,
   t,
-}: UseMcpPrimitivesOptions): UseMcpPrimitivesResult {
-  const [discovery, setDiscovery] =
-    React.useState<McpDiscovery>(EMPTY_DISCOVERY)
-  const [loading, setLoading] = React.useState(false)
-  const [error, setError] = React.useState<string | undefined>()
-  const [loaded, setLoaded] = React.useState(false)
-
+}: UseMcpDiscoveryOptions): McpDiscoveryController {
+  const [state, setState] = React.useState<DiscoveryState>({ status: 'idle' })
   const [resourceRead, setResourceRead] = React.useState<ResourceReadState>({
     loading: false,
   })
@@ -166,18 +153,9 @@ export function useMcpPrimitives({
 
   const serverId = server?.id
 
-  // Keep the publish callback in a ref so the seed effect does not re-run merely
-  // because the host handed us a new closure.
-  const publish = React.useRef(onDiscovery)
-  React.useEffect(() => {
-    publish.current = onDiscovery
-  }, [onDiscovery])
-
   React.useEffect(() => {
     if (!server) {
-      setDiscovery(EMPTY_DISCOVERY)
-      setLoaded(false)
-      setError(undefined)
+      setState({ status: 'idle' })
       setResourceRead({ loading: false })
       setPromptGet({ loading: false })
       return
@@ -186,8 +164,6 @@ export function useMcpPrimitives({
     let cancelled = false
     setResourceRead({ loading: false })
     setPromptGet({ loading: false })
-    setError(undefined)
-    setLoaded(false)
 
     const seededTools = Array.isArray(server.toolDetails)
       ? server.toolDetails
@@ -200,19 +176,23 @@ export function useMcpPrimitives({
     // report "declares resources but provides none" for a server whose cached
     // list is sitting in the store.
     if (seededTools.length > 0 || hasEntries(seededLists)) {
-      setDiscovery({
-        tools: seededTools,
-        lists: seededLists,
-        serverInfo: server.serverInfo,
-        detectedTransport: server.detectedTransport,
+      setState({
+        status: 'ready',
+        discovery: {
+          tools: seededTools,
+          lists: seededLists,
+          serverInfo: server.serverInfo,
+          detectedTransport: server.detectedTransport,
+        },
       })
-      setLoaded(true)
       return
     }
 
-    setDiscovery(EMPTY_DISCOVERY)
-
-    if (!serverId) return
+    setState({ status: 'loading' })
+    if (!serverId) {
+      setState({ status: 'idle' })
+      return
+    }
 
     void (async () => {
       try {
@@ -220,29 +200,27 @@ export function useMcpPrimitives({
           `${API_ENDPOINTS.mcpServersCache}?id=${encodeURIComponent(serverId)}`,
         )
         const data = await res.json()
-        if (cancelled || !data?.ok) return
+        if (cancelled) return
+        if (!data?.ok) {
+          setState({ status: 'idle' })
+          return
+        }
 
         const cachedLists = listsFromResponse(data)
-
         // Here the flags DO count, because this response IS the cache: a set
         // capability with empty lists genuinely means "declares it, exposes
         // none", which is the distinction the panel renders.
         const cachedHasAny =
           hasEntries(cachedLists) || cachedLists.capabilities !== undefined
-        if (!cachedHasAny) return
-
-        const next: McpDiscovery = {
-          tools: Array.isArray(data.toolDetails) ? data.toolDetails : [],
-          lists: cachedLists,
-          serverInfo: data.serverInfo,
-          detectedTransport: data.detectedTransport,
-        }
-        setDiscovery(next)
-        setLoaded(true)
-        publish.current?.(next)
+        setState(
+          cachedHasAny
+            ? { status: 'ready', discovery: discoveryFromResponse(data) }
+            : { status: 'idle' },
+        )
       } catch {
         // A failed cache read is not an error the user must see; an explicit
         // refresh reports its own failures.
+        if (!cancelled) setState({ status: 'idle' })
       }
     })()
 
@@ -268,10 +246,11 @@ export function useMcpPrimitives({
    * prompts over a single connection, so there is nothing to gain from a
    * per-tab request and something to lose (divergent spinners and errors).
    */
-  const refresh = React.useCallback(async () => {
-    if (!server) return
-    setLoading(true)
-    setError(undefined)
+  const refresh = React.useCallback(async (): Promise<
+    McpDiscovery | undefined
+  > => {
+    if (!server) return undefined
+    setState({ status: 'loading' })
     try {
       const res = await fetch(API_ENDPOINTS.mcpServersProbe, {
         method: API_METHODS.mcpServersProbe,
@@ -280,31 +259,30 @@ export function useMcpPrimitives({
         // an output of this call, never an input to it.
         body: JSON.stringify({ server }),
       })
-      const data = await res.json()
+      const data = (await res.json()) as McpProbeResult & {
+        ok?: boolean
+        message?: string
+      }
       if (!res.ok || !data?.ok) {
-        setError(
-          typeof data?.message === 'string'
-            ? data.message
-            : t('mcpServers.primitives.fetchFailed'),
-        )
-        return
+        setState({
+          status: 'error',
+          message:
+            typeof data?.message === 'string'
+              ? data.message
+              : t('mcpServers.primitives.fetchFailed'),
+        })
+        return undefined
       }
 
-      const next: McpDiscovery = {
-        tools: Array.isArray(data.toolDetails) ? data.toolDetails : [],
-        lists: listsFromResponse(data),
-        serverInfo: data.serverInfo,
-        detectedTransport: data.detectedTransport,
-      }
-      setDiscovery(next)
-      setLoaded(true)
-      publish.current?.(next)
+      const discovery = discoveryFromResponse(data)
+      setState({ status: 'ready', discovery })
+      return discovery
     } catch (err: unknown) {
-      setError(
-        `${t('mcpServers.primitives.fetchFailed')}${err instanceof Error ? err.message : String(err)}`,
-      )
-    } finally {
-      setLoading(false)
+      setState({
+        status: 'error',
+        message: `${t('mcpServers.primitives.fetchFailed')}${err instanceof Error ? err.message : String(err)}`,
+      })
+      return undefined
     }
   }, [server, t])
 
@@ -389,18 +367,20 @@ export function useMcpPrimitives({
     [server, t],
   )
 
+  /** The read state of one row; every other row sees an idle placeholder. */
+  const readState = React.useCallback(
+    (targetKey: string): ResourceReadState =>
+      resourceRead.targetKey === targetKey ? resourceRead : { loading: false },
+    [resourceRead],
+  )
+
   return {
-    tools: discovery.tools,
-    lists: discovery.lists,
-    serverInfo: discovery.serverInfo,
-    detectedTransport: discovery.detectedTransport,
-    loading,
-    error,
-    loaded,
+    state,
+    discovery: state.status === 'ready' ? state.discovery : EMPTY_DISCOVERY,
     refresh,
-    resourceRead,
     readResource,
-    promptGet,
     getPrompt,
+    readState,
+    promptGet,
   }
 }
