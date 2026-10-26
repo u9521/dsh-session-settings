@@ -367,6 +367,8 @@ export const zh = {
     tabLabel: 'MCP 服务器',
     title: 'MCP 服务器',
     desc: '集中配置并管理 Model Context Protocol (MCP) 服务器，供各个会话按需选用与隔离。',
+    exportNotice:
+      '已导出 {count} 个 MCP 服务器为 mcp.json（env 与 headers 为明文，请妥善保管）',
     actions: {
       add: '添加服务器',
       import: '导入配置',
@@ -438,13 +440,16 @@ export const zh = {
     },
     importModal: {
       title: '导入 MCP 配置',
-      desc: '支持标准 Claude Desktop / Cursor 格式的 JSON 配置文件（包含 mcpServers 键）。',
+      desc: '接受 .mcp.json 文档（顶层 mcpServers 映射，条目按 type 区分 stdio / sse / http）。每一条被拒绝的条目都会连同原因列出。',
       placeholder:
-        '{\n  "mcpServers": {\n    "github": {\n      "command": "npx",\n      "args": ["-y", "@modelcontextprotocol/server-github"],\n      "env": {\n        "GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_..."\n      }\n    }\n  }\n}',
+        '{\n  "mcpServers": {\n    "github": {\n      "type": "stdio",\n      "command": "npx",\n      "args": ["-y", "@modelcontextprotocol/server-github"],\n      "env": {\n        "GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_..."\n      }\n    },\n    "remote": {\n      "type": "http",\n      "url": "https://example.com/mcp"\n    }\n  }\n}',
       confirm: '导入',
       importing: '导入中...',
-      success: '成功导入 {count} 个 MCP 服务器！',
-      error: '导入失败：JSON 格式不正确或未找到合法的 mcpServers 条目',
+      success: '已导入 {count} 个 MCP 服务器（覆盖 {overwritten} 个）',
+      partial: '已导入 {count} 个，另有 {skipped} 条被拒绝，见下方列表',
+      pickFile: '选择文件…',
+      pickFileHint: '或直接粘贴到下方',
+      error: '导入失败：JSON 格式不正确，或未找到 mcpServers 条目',
     },
     toolsModal: {
       title: '工具列表',

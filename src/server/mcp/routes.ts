@@ -1,6 +1,7 @@
 import {
   type ConnectionService,
   type GlobalMcpServerConfig,
+  type McpImportResult,
   type McpProbeResult,
   type McpRefreshResult,
 } from '../../types.ts'
@@ -279,11 +280,17 @@ export function registerMcpRoutes(
           if ('error' in imported) {
             return jsonResponse({ ok: false, message: imported.error }, 400)
           }
-          return jsonResponse({
-            ok: true,
+          // `ok` means the request was understood, not that every entry
+          // landed: `skipped` carries the ones that did not, and the client
+          // renders them. Answering `ok: false` because one entry was bad
+          // would hide the entries that were written.
+          const result: McpImportResult = {
             count: imported.count,
+            skipped: imported.skipped,
+            overwritten: imported.overwritten,
             servers: registry.list(),
-          })
+          }
+          return jsonResponse({ ok: true, ...result })
         } catch (err: unknown) {
           return jsonResponse(
             {

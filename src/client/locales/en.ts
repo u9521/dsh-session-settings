@@ -393,6 +393,8 @@ export const en = {
       cancel: 'Cancel',
       refresh: 'Refresh',
     },
+    exportNotice:
+      'Exported {count} MCP servers to mcp.json (env and headers are plaintext — store the file carefully)',
     table: {
       website: 'Website',
       empty:
@@ -453,14 +455,17 @@ export const en = {
     },
     importModal: {
       title: 'Import MCP Config',
-      desc: 'Supports standard Claude Desktop / Cursor formatted JSON config files (containing the mcpServers key).',
+      desc: 'Accepts an .mcp.json document (a top-level mcpServers mapping, each entry discriminated by type: stdio / sse / http). Every rejected entry is listed with its reason.',
       placeholder:
-        '{\n  "mcpServers": {\n    "github": {\n      "command": "npx",\n      "args": ["-y", "@modelcontextprotocol/server-github"],\n      "env": {\n        "GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_..."\n      }\n    }\n  }\n}',
+        '{\n  "mcpServers": {\n    "github": {\n      "type": "stdio",\n      "command": "npx",\n      "args": ["-y", "@modelcontextprotocol/server-github"],\n      "env": {\n        "GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_..."\n      }\n    },\n    "remote": {\n      "type": "http",\n      "url": "https://example.com/mcp"\n    }\n  }\n}',
       confirm: 'Import',
       importing: 'Importing...',
-      success: 'Successfully imported {count} MCP servers!',
-      error:
-        'Import failed: Invalid JSON format or no valid mcpServers entries found',
+      success: 'Imported {count} MCP servers ({overwritten} overwritten)',
+      partial:
+        'Imported {count} servers; {skipped} entries were rejected — see the list below',
+      pickFile: 'Choose file…',
+      pickFileHint: 'or paste below',
+      error: 'Import failed: invalid JSON, or no mcpServers entries found',
     },
     toolsModal: {
       title: 'Tools',

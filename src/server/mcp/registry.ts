@@ -17,12 +17,15 @@
 import type {
   GlobalMcpServerConfig,
   McpCachedView,
+  McpImportSkip,
   McpReconnectConfig,
   McpServerStore,
   McpTestResult,
   McpTransportType,
   SessionSettingsStore,
 } from '../../types.ts'
+import type { McpDocumentEntry } from '../../shared/mcpDocument.ts'
+import { serverIdFromKey } from '../../shared/mcpDocument.ts'
 
 import { renameServerIdInSessionStore } from '../session/storage.ts'
 import type { McpManager, McpRefreshOutcome } from './manager.ts'
@@ -190,6 +193,130 @@ export function normalizeServer(
   }
 
   return { config, id }
+}
+
+/**
+ * Keys that must never be written into the store.
+ *
+ * A JSON document can carry `__proto__` as an own key; assigning it with
+ * `store.servers[key] = …` walks the prototype setter instead of creating a
+ * server, so the entry silently vanishes from the list while still counting as
+ * a write.
+ */
+const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
+
+/** Read the document envelope; the only shape the importer accepts. */
+function parseDocument(
+  data: unknown,
+): { mcpServers: Record<string, unknown> } | { error: string } {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    return {
+      error:
+        'Invalid format: expected an .mcp.json document ({ "mcpServers": { ... } })',
+    }
+  }
+  const root = data as Record<string, unknown>
+  const mcpServers = root.mcpServers
+  if (
+    !mcpServers ||
+    typeof mcpServers !== 'object' ||
+    Array.isArray(mcpServers)
+  ) {
+    return {
+      error:
+        'Invalid format: expected an "mcpServers" object mapping names to server entries',
+    }
+  }
+  return { mcpServers: mcpServers as Record<string, unknown> }
+}
+
+/**
+ * Turn one document entry into a stored config.
+ *
+ * `type` is the discriminator, as in the format itself: a missing `type` falls
+ * back to the entry's own shape (`command` → stdio, `url` → http), which is why
+ * a `type`-less entry is legal rather than "legacy".
+ */
+function entryToConfig(
+  key: string,
+  value: unknown,
+  existingById: Record<string, GlobalMcpServerConfig>,
+): { id: string; config: GlobalMcpServerConfig } | { error: string } {
+  if (FORBIDDEN_KEYS.has(key)) return { error: 'Reserved key' }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return { error: 'Entry must be an object' }
+  }
+  const entry = value as McpDocumentEntry & Record<string, unknown>
+
+  const statedId =
+    typeof entry.id === 'string' && entry.id.trim() ? entry.id.trim() : ''
+  if (statedId && FORBIDDEN_KEYS.has(statedId)) {
+    return { error: 'Reserved id' }
+  }
+  // An explicit `id` wins; otherwise the key names the server. Either way the
+  // id has to be mountable, and a rejection is reported instead of being
+  // rewritten into `_____`.
+  const rawId = statedId || key.trim()
+  const id = serverIdFromKey(rawId)
+  if (!id) {
+    return {
+      error: statedId
+        ? `Invalid id "${statedId}": use 1-32 characters of letters, digits, "_" or "-"`
+        : `Invalid server name "${key}": use 1-32 characters of letters, digits, "_" or "-"`,
+    }
+  }
+
+  const transport = transportOf(entry)
+  if ('error' in transport) return transport
+
+  const name =
+    typeof entry.name === 'string' && entry.name.trim() ? entry.name.trim() : id
+
+  const normalized = normalizeServer(
+    {
+      ...(entry as Partial<GlobalMcpServerConfig>),
+      id,
+      name,
+      transport: transport.transport,
+    },
+    existingById[id],
+  )
+  if ('error' in normalized) return { error: normalized.error }
+  return { id: normalized.id, config: normalized.config }
+}
+
+/**
+ * Map the document's four-value `type` onto this plugin's two transports.
+ *
+ * `sse` and `http` are both streamable HTTP here; the distinction is preserved
+ * on export through `detectedTransport`, not by a third transport value. `ws`
+ * has no client in the Host at all, so it is refused rather than silently
+ * downgraded to something it is not.
+ */
+function transportOf(
+  entry: McpDocumentEntry,
+): { transport: McpTransportType } | { error: string } {
+  const stated = entry.type
+  if (stated === 'stdio') return { transport: 'stdio' }
+  if (stated === 'sse' || stated === 'http') {
+    return { transport: 'streamable-http' }
+  }
+  if (stated === 'ws') {
+    return { error: 'The "ws" transport is not supported' }
+  }
+  if (stated !== undefined) {
+    return { error: `Unknown transport type "${String(stated)}"` }
+  }
+  // No type stated: the format's own rule, read off the entry's shape.
+  if (typeof entry.command === 'string' && entry.command.trim()) {
+    return { transport: 'stdio' }
+  }
+  if (typeof entry.url === 'string' && entry.url.trim()) {
+    return { transport: 'streamable-http' }
+  }
+  return {
+    error: 'Entry declares neither "command" (stdio) nor "url" (http/sse)',
+  }
 }
 
 /** Fold one successful probe's discovery into a stored server. */
@@ -378,68 +505,56 @@ export class McpServerRegistry {
   }
 
   /**
-   * Import an `mcpServers` mapping.
+   * Import a `.mcp.json` document.
    *
-   * Each entry passes the same normalizer as a form submission: an id outside
-   * the grammar is skipped rather than silently rewritten into a name the
-   * client cannot mount, and existing discovery caches survive the write.
+   * Every entry is accounted for: it is either written or reported in
+   * `skipped` with the reason. The previous version `continue`d on any
+   * validation error and still answered `ok: true` with a write count, so an
+   * import that dropped every stdio server was indistinguishable from one that
+   * worked — which is exactly how this failed in practice.
+   *
+   * Existing discovery caches survive an overwrite: the same id re-imported
+   * keeps what a probe already learned about it.
    */
   public async importServers(
     data: unknown,
-  ): Promise<{ count: number } | { error: string }> {
-    const root = data as Record<string, unknown> | undefined
-    const serversMap = (root?.mcpServers ?? root) as
-      Record<string, unknown> | undefined
-    if (
-      !serversMap ||
-      typeof serversMap !== 'object' ||
-      Array.isArray(serversMap)
-    ) {
-      return {
-        error: 'Invalid JSON format: expected mcpServers object mapping',
-      }
-    }
+  ): Promise<
+    | { count: number; skipped: McpImportSkip[]; overwritten: number }
+    | { error: string }
+  > {
+    const document = parseDocument(data)
+    if ('error' in document) return document
 
     const store = this.current()
-    let count = 0
-    for (const [key, rawValue] of Object.entries(serversMap)) {
-      if (!rawValue || typeof rawValue !== 'object') continue
-      const raw = rawValue as Record<string, unknown>
-      const id =
-        typeof raw.id === 'string' && raw.id.trim() ? raw.id.trim() : key
-      const name =
-        typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim() : id
-      const existingId = id.replace(/[^a-zA-Z0-9_-]/g, '_')
+    const skipped: McpImportSkip[] = []
+    // Count each id once, however many keys resolve to it: a write count that
+    // outruns the list is how `count: 2` came to mean one server.
+    const written = new Set<string>()
+    const overwritten = new Set<string>()
 
-      const normalized = normalizeServer(
-        {
-          ...(raw as Partial<GlobalMcpServerConfig>),
-          id,
-          name,
-          // A bare URL with no transport stated is an HTTP server; the
-          // normalizer still owns every other validation.
-          transport:
-            raw.transport === undefined && raw.url !== undefined
-              ? 'streamable-http'
-              : (raw.transport as McpTransportType | undefined),
-        },
-        store.servers[existingId],
-      )
-      if ('error' in normalized) continue
-
-      // A rename inside an import must retire the old live fork, exactly as a
-      // form edit does; otherwise the namespace stays reserved under the old id.
-      if (existingId !== normalized.id && store.servers[existingId]) {
-        delete store.servers[existingId]
-        void this.deps.manager?.unmountOfficialClient(existingId)
+    for (const [key, entry] of Object.entries(document.mcpServers)) {
+      const result = entryToConfig(key, entry, store.servers)
+      if ('error' in result) {
+        skipped.push({ key, reason: result.error })
+        continue
       }
-      store.servers[normalized.id] = normalized.config
-      count++
+      const { id, config } = result
+      if (store.servers[id]) overwritten.add(id)
+      store.servers[id] = config
+      written.add(id)
     }
 
-    await this.persist()
-    this.deps.invalidate()
-    return { count }
+    // Nothing was written, so nothing changed: skip the pointless disk write.
+    if (written.size > 0) {
+      await this.persist()
+      this.deps.invalidate()
+    }
+
+    return {
+      count: written.size,
+      skipped,
+      overwritten: overwritten.size,
+    }
   }
 
   /**

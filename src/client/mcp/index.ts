@@ -10,9 +10,12 @@ import {
   type McpSettingsProps,
   type GlobalMcpServerConfig,
   type EnvEntry,
+  type McpImportSkip,
+  type McpImportResult,
   API_ENDPOINTS,
   API_METHODS,
 } from '../types/index.ts'
+import { toDocument } from '../../shared/mcpDocument.ts'
 import { EmptyState, ServerIcon } from '../components/index.ts'
 import { useMcpServers } from './hooks/useMcpServers.ts'
 import { McpServerCard } from './components/McpServerCard.ts'
@@ -79,6 +82,7 @@ export function McpServersSettingsTab({ t, close: _close }: McpSettingsProps) {
   const [importText, setImportText] = React.useState<string>('')
   const [importing, setImporting] = React.useState<boolean>(false)
   const [importError, setImportError] = React.useState<string>('')
+  const [importSkipped, setImportSkipped] = React.useState<McpImportSkip[]>([])
 
   // Tools modal state
   const [toolsModalOpen, setToolsModalOpen] = React.useState<boolean>(false)
@@ -543,36 +547,31 @@ export function McpServersSettingsTab({ t, close: _close }: McpSettingsProps) {
   }
 
   // Export JSON configuration
+  //
+  // Written as an `.mcp.json` document, so the file is usable by Claude Code
+  // as-is. `toDocument` is shared with the importer, which is what keeps the
+  // two from drifting apart again — the old exporter omitted `type`, so its own
+  // output lost every stdio server when read back.
   const handleExport = () => {
-    const mcpServersMap: Record<string, Record<string, unknown>> = {}
-    for (const s of servers) {
-      if (s.transport === 'stdio') {
-        mcpServersMap[s.id] = {
-          command: s.command,
-          args: s.args,
-          cwd: s.cwd,
-          env: s.env,
-        }
-      } else {
-        mcpServersMap[s.id] = {
-          url: s.url,
-          headers: s.headers,
-        }
-      }
-    }
-    const jsonStr = JSON.stringify({ mcpServers: mcpServersMap }, null, 2)
+    const jsonStr = JSON.stringify(toDocument(servers), null, 2)
     const blob = new Blob([jsonStr], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = 'mcp-servers.json'
+    a.download = 'mcp.json'
     a.click()
     URL.revokeObjectURL(url)
+    setSuccessMsg(t('mcpServers.exportNotice', { count: servers.length }))
   }
 
   // Import JSON configuration
+  //
+  // The server answers `ok` for "understood", and reports what it refused in
+  // `skipped`. The modal stays open when anything was skipped: closing it would
+  // throw away the list of entries the user still has to fix.
   const handleImportSubmit = async () => {
     setImportError('')
+    setImportSkipped([])
     setImporting(true)
     try {
       const parsed = JSON.parse(importText)
@@ -581,15 +580,38 @@ export function McpServersSettingsTab({ t, close: _close }: McpSettingsProps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ data: parsed }),
       })
-      const data = await res.json()
+      const data = (await res.json()) as McpImportResult & {
+        ok?: boolean
+        message?: string
+        error?: string
+      }
       if (res.ok && data.ok) {
         setServers(data.servers || [])
-        setImportOpen(false)
-        setSuccessMsg(
-          t('mcpServers.importModal.success', { count: data.count || 0 }),
-        )
+        const skipped = Array.isArray(data.skipped) ? data.skipped : []
+        if (skipped.length > 0) {
+          setImportSkipped(skipped)
+          setImportError(
+            t('mcpServers.importModal.partial', {
+              count: data.count || 0,
+              skipped: skipped.length,
+            }),
+          )
+        } else {
+          setImportOpen(false)
+          setSuccessMsg(
+            t('mcpServers.importModal.success', {
+              count: data.count || 0,
+              overwritten: data.overwritten || 0,
+            }),
+          )
+        }
       } else {
-        setImportError(data.message || t('mcpServers.importModal.error'))
+        // Both field names are read: the generic badRequest uses `error`, this
+        // route's own rejections use `message`, and the client used to know
+        // only one of them.
+        setImportError(
+          data?.message || data?.error || t('mcpServers.importModal.error'),
+        )
       }
     } catch (err: unknown) {
       setImportError(
@@ -599,6 +621,27 @@ export function McpServersSettingsTab({ t, close: _close }: McpSettingsProps) {
       )
     } finally {
       setImporting(false)
+    }
+  }
+
+  // Load a document from disk into the textarea. The textarea stays: it is the
+  // only way to paste a fragment, and a file picker cannot replace it.
+  const handleImportFile = async (evt: React.ChangeEvent<HTMLInputElement>) => {
+    const file = evt.target.files?.[0]
+    // Allow re-picking the same file after a failure.
+    evt.target.value = ''
+    if (!file) return
+    try {
+      const text = await file.text()
+      setImportText(text)
+      setImportError('')
+      setImportSkipped([])
+    } catch (err: unknown) {
+      setImportError(
+        t('mcpServers.importModal.error') +
+          ': ' +
+          (err instanceof Error ? err.message : String(err)),
+      )
     }
   }
 
@@ -639,6 +682,7 @@ export function McpServersSettingsTab({ t, close: _close }: McpSettingsProps) {
               onClick: () => {
                 setImportText('')
                 setImportError('')
+                setImportSkipped([])
                 setImportOpen(true)
               },
             },
@@ -891,6 +935,8 @@ export function McpServersSettingsTab({ t, close: _close }: McpSettingsProps) {
       onChange: setImportText,
       importing,
       error: importError,
+      skipped: importSkipped,
+      onPickFile: handleImportFile,
       onSubmit: handleImportSubmit,
       onClose: () => setImportOpen(false),
       t,

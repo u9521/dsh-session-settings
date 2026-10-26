@@ -684,6 +684,44 @@ export const GLOBAL_MCP_TAB_CSS = `
   outline: 2px solid var(--dsw-alias-brand-primary);
   outline-offset: 1px;
 }
+.dsh-mcp-import-file-row {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.dsh-mcp-import-file-input {
+  display: none;
+}
+.dsh-mcp-import-file-btn {
+  cursor: pointer;
+}
+.dsh-mcp-import-file-hint {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+}
+.dsh-mcp-import-skipped {
+  list-style: none;
+  margin: 10px 0 0;
+  max-height: 160px;
+  overflow-y: auto;
+  padding: 0;
+}
+.dsh-mcp-import-skip {
+  align-items: baseline;
+  color: var(--dsw-alias-state-error-primary, #da3633);
+  display: flex;
+  font-size: 12px;
+  gap: 8px;
+  line-height: 18px;
+  padding: 2px 0;
+}
+.dsh-mcp-import-skip code {
+  font-family: monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 /* Tools Management Modal & Tool Cards */
 .dsh-mcp-tools-modal {

@@ -1,5 +1,8 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
+import type { McpImportSkip } from './shared/mcpDocument.ts'
+
+export type { McpImportSkip }
 
 const API_BASE = '/api/session-settings'
 
@@ -156,7 +159,27 @@ export interface McpServerRequest {
 
 /** Body of `API_ENDPOINTS.mcpServersImport`. */
 export interface McpImportRequest {
+  /** A `.mcp.json` document: `{ "mcpServers": { <name>: <entry> } }`. */
   data: unknown
+}
+
+/**
+ * Outcome of one import.
+ *
+ * `skipped` is the point of this type: the old importer swallowed every
+ * per-entry failure and answered `ok: true` with a write count, so an import
+ * that dropped every stdio server still read as a success. An import now has to
+ * account for each entry it was handed.
+ */
+export interface McpImportResult {
+  /** Entries actually written (de-duplicated by id, not counting overwrites twice). */
+  count: number
+  /** Entries refused, each with the reason shown to the user. */
+  skipped: McpImportSkip[]
+  /** Entries that replaced an existing server with the same id. */
+  overwritten: number
+  /** The full list after the import, so a caller need not re-fetch. */
+  servers?: GlobalMcpServerConfig[]
 }
 
 /** Body of the MCP endpoints addressed by server id. */

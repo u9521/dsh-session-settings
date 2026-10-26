@@ -1,5 +1,6 @@
 import * as React from 'react'
 import { ModalDialog } from '../../components/index.ts'
+import type { McpImportSkip } from '../../types/index.ts'
 
 const e = React.createElement
 
@@ -9,6 +10,9 @@ export interface McpImportExportModalProps {
   onChange: (text: string) => void
   importing: boolean
   error?: string
+  /** Entries the server refused, shown as-is so the user can fix them. */
+  skipped?: McpImportSkip[]
+  onPickFile: (evt: React.ChangeEvent<HTMLInputElement>) => void
   onSubmit: () => void
   onClose: () => void
   t: (key: string, vars?: Record<string, string | number>) => string
@@ -20,11 +24,15 @@ export function McpImportExportModal({
   onChange,
   importing,
   error,
+  skipped,
+  onPickFile,
   onSubmit,
   onClose,
   t,
 }: McpImportExportModalProps) {
   if (!open) return null
+
+  const fileInputId = React.useId()
 
   return e(
     ModalDialog,
@@ -64,6 +72,32 @@ export function McpImportExportModal({
       ],
     },
     error ? e('div', { className: 'dsh-sam-notice error' }, error) : null,
+    // A file picker beside the textarea: the textarea alone is a paste box, and
+    // "import" that cannot open a file is a gap, not a design.
+    e(
+      'div',
+      { className: 'dsh-mcp-import-file-row' },
+      e(
+        'label',
+        {
+          className: 'dsh-sam-btn secondary dsh-mcp-import-file-btn',
+          htmlFor: fileInputId,
+        },
+        t('mcpServers.importModal.pickFile'),
+      ),
+      e('input', {
+        id: fileInputId,
+        type: 'file',
+        accept: '.json,application/json',
+        className: 'dsh-mcp-import-file-input',
+        onChange: onPickFile,
+      }),
+      e(
+        'span',
+        { className: 'dsh-mcp-import-file-hint' },
+        t('mcpServers.importModal.pickFileHint'),
+      ),
+    ),
     e('textarea', {
       className: 'dsh-mcp-import-textarea',
       rows: 10,
@@ -72,5 +106,22 @@ export function McpImportExportModal({
       onChange: (evt: React.ChangeEvent<HTMLTextAreaElement>) =>
         onChange(evt.target.value),
     }),
+    skipped && skipped.length > 0
+      ? e(
+          'ul',
+          { className: 'dsh-mcp-import-skipped' },
+          skipped.map((entry, index) =>
+            e(
+              'li',
+              {
+                key: `${entry.key}-${index}`,
+                className: 'dsh-mcp-import-skip',
+              },
+              e('code', null, entry.key),
+              e('span', null, entry.reason),
+            ),
+          ),
+        )
+      : null,
   )
 }
