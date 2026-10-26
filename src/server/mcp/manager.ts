@@ -16,6 +16,12 @@ export interface ToolMeta {
 export interface McpRefreshOutcome {
   /** True when the official client fork was actually remounted (not only torn down). */
   remounted: boolean
+  /**
+   * False when the rebuild happened but the fork is still finishing its
+   * handshake inside the settle budget. The connection is then live but its
+   * tools are not registered yet — a "still starting", not a failure.
+   */
+  settled: boolean
   /** Runtime status read after the remount settled. */
   status: McpServerRuntimeStatus
   /** Wall-clock duration of teardown + remount + settle. */
@@ -26,6 +32,9 @@ export interface McpRefreshOutcome {
 interface ToolRegistryProbe {
   schemas?: () => Array<{ name?: unknown }> | undefined
 }
+
+/** How often the remount path re-reads the tool registry while it settles. */
+const MCP_TOOL_POLL_INTERVAL_MS = 100
 
 const OFFICIAL_PLUGIN_MISSING =
   'Official @deepseek-ai/dsh-mcp-client plugin is not available in this Host.'
@@ -361,9 +370,13 @@ export class McpManager {
         this.serverToolMap.set(server.id, names)
       }
 
-      // Manual refresh waits for the fork to settle so the status it reports
-      // already reflects the freshly registered tools. Lazy mounts pass 0 and
-      // stay non-blocking.
+      // Manual refresh waits (bounded) for activation, so an activation-time
+      // rejection is already recorded when the caller reads the status. Lazy
+      // mounts pass 0 and stay non-blocking.
+      //
+      // NOTE: activation is not the handshake. fork.await() resolves once the
+      // plugin is applied, which is well before tools/list returns, so the
+      // tool count has to be polled separately — see waitForTools().
       const settleMs = opts.settleMs ?? 0
       if (settleMs > 0) {
         await Promise.race([settled, delay(settleMs)])
@@ -502,15 +515,22 @@ export class McpManager {
   /**
    * Tear down and remount the official client for a server, resetting the
    * bridge's reconnect budget — the only way to recover from "giving up after N
-   * consecutive failed reconnect attempts".
+   * consecutive failed reconnect attempts", and the only way to replace a
+   * streamable-HTTP session id the server has already forgotten (the SDK keeps
+   * that id private, and the Host bridge never calls `terminateSession()`).
    *
-   * Serialized against in-flight syncs; only mounts when the server is still
-   * wanted (or when `force` is set, used by the session card for toggles that
-   * have not been saved yet).
+   * Always rebuilds. The caller is an explicit user action, so there is nothing
+   * left to second-guess: the former `force` flag existed to bypass the
+   * "is this server enabled anywhere?" gate for a draft toggle that had not been
+   * saved yet, and every path that could have needed it now asks for a remount
+   * only from a card that is already enabled. A gate here would silently skip
+   * the rebuild and report the untouched status as if it had run.
+   *
+   * Serialized against in-flight syncs for the same server.
    */
   public async refreshServer(
     server: GlobalMcpServerConfig,
-    opts: { force?: boolean; settleMs?: number } = {},
+    opts: { settleMs?: number } = {},
   ): Promise<McpRefreshOutcome> {
     const serverId = server.id
     const startedAt = Date.now()
@@ -528,28 +548,32 @@ export class McpManager {
       await this.unmountOfficialClient(serverId)
 
       let remounted = false
-      const shouldMount = Boolean(opts.force) || this.isServerNeeded(serverId)
-      if (shouldMount) {
-        const liveServer = this.getMcpStore().servers[serverId] ?? server
-        const officialPlugin = await loadOfficialMcpClientPlugin(this.ctx)
-        if (officialPlugin) {
-          remounted = await this.mountOfficialClient(
-            liveServer,
-            officialPlugin,
-            { settleMs: opts.settleMs ?? 0 },
-          )
-        } else {
-          this.recordMountError(serverId, new Error(OFFICIAL_PLUGIN_MISSING))
-          console.error(
-            `[session-settings] [MCP-REFRESH] ${OFFICIAL_PLUGIN_MISSING} Skipping remount for "${serverId}".`,
-          )
+      let settled = false
+      const liveServer = this.getMcpStore().servers[serverId] ?? server
+      const officialPlugin = await loadOfficialMcpClientPlugin(this.ctx)
+      if (officialPlugin) {
+        remounted = await this.mountOfficialClient(liveServer, officialPlugin, {
+          settleMs: opts.settleMs ?? 0,
+        })
+        // Activation does not wait for the handshake, so the tool count is
+        // polled with its own budget: mounting already spent part of the wall
+        // clock, and the caller's bound covers the whole remount.
+        const remaining = (opts.settleMs ?? 0) - (Date.now() - startedAt)
+        if (remounted && remaining > 0) {
+          settled = await this.waitForTools(serverId, remaining)
         }
+      } else {
+        this.recordMountError(serverId, new Error(OFFICIAL_PLUGIN_MISSING))
+        console.error(
+          `[session-settings] [MCP-REFRESH] ${OFFICIAL_PLUGIN_MISSING} Skipping remount for "${serverId}".`,
+        )
       }
 
       this.lastRefreshAt.set(serverId, Date.now())
 
       return {
         remounted,
+        settled,
         status: this.getServerStatus(serverId),
         durationMs: Date.now() - startedAt,
       }
@@ -567,6 +591,33 @@ export class McpManager {
       if (this.activeSyncs.get(serverId) === entry) {
         this.activeSyncs.delete(serverId)
       }
+    }
+  }
+
+  /**
+   * Poll until the rebuilt fork has registered at least one tool, or the
+   * budget runs out.
+   *
+   * The bridge exposes no readiness promise: activation resolves before the
+   * handshake, and `registeredToolCount` on ctx.tools is the only observable
+   * that moves when tools/list comes back. A server that legitimately exposes
+   * no tools (resources-only) never settles, which is why the caller treats
+   * 'settled' as 'registered something', not as 'is healthy'.
+   *
+   * @returns whether tools appeared inside the budget.
+   */
+  private async waitForTools(
+    serverId: string,
+    budgetMs: number,
+  ): Promise<boolean> {
+    const deadline = Date.now() + budgetMs
+    for (;;) {
+      if (this.getServerStatus(serverId).registeredToolCount > 0) return true
+      // A recorded error is final: stop waiting and report it.
+      if (this.lastErrors.has(serverId)) return false
+      const remaining = deadline - Date.now()
+      if (remaining <= 0) return false
+      await delay(Math.min(MCP_TOOL_POLL_INTERVAL_MS, remaining))
     }
   }
 

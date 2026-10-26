@@ -238,11 +238,17 @@ export const en = {
         refreshHint:
           'Click to remount the official MCP client and refresh its status now',
       },
+      remountBtn: 'Remount',
+      remountHint:
+        "Disconnect and rebuild this server's connection, then report its new status. Use it when tool calls fail even though the server shows as connected.",
       notices: {
-        refreshSuccess: 'Remounted the MCP client for "{name}"',
-        refreshProbeOnly:
-          '"{name}" is reachable and needed no remount; its status was refreshed',
-        refreshFailed: 'The MCP client could not connect: {message}',
+        remountSuccess:
+          'Remounted the MCP client for "{name}" in {ms}ms ({tools} tools registered)',
+        remountPending:
+          'Remounted the MCP client for "{name}"; its tools are still registering',
+        remountFailed:
+          'Could not remount the MCP client for "{name}": {message}',
+        remountFailedUnknown: 'The MCP client could not be rebuilt',
       },
     },
     toolsModal: {

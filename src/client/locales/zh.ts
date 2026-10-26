@@ -233,10 +233,15 @@ export const zh = {
         refreshing: '重新挂载中...',
         refreshHint: '点击重新挂载官方 MCP 客户端并立即刷新状态',
       },
+      remountBtn: '重新挂载',
+      remountHint:
+        '断开并重建该服务器的连接，然后回报新状态。用于服务器显示已连接、但工具调用持续失败的情况。',
       notices: {
-        refreshSuccess: '已重新挂载「{name}」的 MCP 客户端',
-        refreshProbeOnly: '「{name}」连接正常，无需重挂载，状态已刷新',
-        refreshFailed: 'MCP 客户端连接失败：{message}',
+        remountSuccess:
+          '已重新挂载「{name}」的 MCP 客户端，耗时 {ms}ms（已注册 {tools} 个工具）',
+        remountPending: '已重新挂载「{name}」的 MCP 客户端，工具仍在注册中',
+        remountFailed: '无法重新挂载「{name}」的 MCP 客户端：{message}',
+        remountFailedUnknown: 'MCP 客户端未能重建',
       },
     },
     toolsModal: {

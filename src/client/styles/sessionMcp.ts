@@ -224,9 +224,14 @@ export const SESSION_MCP_CSS = `
 .dsh-session-mcp-footer {
   align-items: center;
   display: flex;
+  gap: 8px;
   justify-content: flex-end;
   margin-top: 2px;
   width: 100%;
+}
+.dsh-session-mcp-remount-btn:disabled {
+  cursor: progress;
+  opacity: 0.7;
 }
 .dsh-session-tools-btn {
   align-items: center;

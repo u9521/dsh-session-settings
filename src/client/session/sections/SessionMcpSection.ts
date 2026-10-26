@@ -1,5 +1,8 @@
 import * as React from 'react'
-import { IconChecklistOutlineMedium } from '@deepseek-ai/dsh-client-ui-primitives'
+import {
+  IconChecklistOutlineMedium,
+  IconRefreshOutlineMedium,
+} from '@deepseek-ai/dsh-client-ui-primitives'
 import type {
   SessionMcpConfig,
   SessionMcpMode,
@@ -418,11 +421,35 @@ export function SessionMcpSection({
                   ),
                 ),
 
-                // Footer Actions (Configure Tools)
+                // Footer Actions (Configure Tools / Remount)
                 isChecked
                   ? e(
                       'div',
                       { className: 'dsh-session-mcp-footer' },
+                      // The recovery action for a connection the server has
+                      // already forgotten: the client stays "connected" while
+                      // every call is rejected, so nothing else offers a way
+                      // back short of restarting the Host.
+                      e(
+                        'button',
+                        {
+                          type: 'button',
+                          className:
+                            'dsh-mcp-mini-btn dsh-session-tools-btn dsh-session-mcp-remount-btn',
+                          disabled: isRefreshingClient,
+                          title: t('sessionSettings.mcp.remountHint'),
+                          onClick: handleRefreshClientClick,
+                        },
+                        e(IconRefreshOutlineMedium, {
+                          size: 14,
+                          className: isRefreshingClient
+                            ? 'dsh-spin'
+                            : undefined,
+                        }),
+                        isRefreshingClient
+                          ? t('sessionSettings.mcp.clientStatus.refreshing')
+                          : t('sessionSettings.mcp.remountBtn'),
+                      ),
                       e(
                         'button',
                         {

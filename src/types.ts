@@ -376,15 +376,23 @@ export interface McpServerRuntimeStatus {
 export interface McpRefreshResult {
   id: string
   name: string
-  /** Connection probe succeeded (server reachable and tools/list returned). */
+  /**
+   * The remount itself succeeded — the fork was rebuilt and is usable.
+   *
+   * Deliberately NOT the probe's verdict: a probe opens its own short-lived
+   * connection, so it can reach a server whose long-lived client is dead (a
+   * stale HTTP session id does exactly that) and it can fail on a server whose
+   * client came back fine. Only the rebuilt fork answers "did the recovery
+   * work".
+   */
   ok: boolean
-  /** Human readable probe outcome, surfaced inline on the card when it fails. */
+  /** Human readable outcome, surfaced in the notice after a remount. */
   message: string
   /** Tool count reported by the probe (0 when the probe failed). */
   toolCount: number
   /** Wall-clock duration of the whole refresh (probe + remount settle). */
   durationMs: number
-  /** True when the official client fork was actually remounted (not just probed). */
+  /** True when the official client fork was actually rebuilt. */
   remounted: boolean
   /** Runtime status read after the remount settled. */
   status: McpServerRuntimeStatus
@@ -491,11 +499,13 @@ export interface McpTestResult {
  * `remount` is the recovery action for a bridge that exhausted its reconnect
  * budget, folded into this entry rather than living at its own path. It is
  * opt-in and defaults to off: a plain probe must never tear down a live client.
+ *
+ * When it IS asked for, it always rebuilds: the request names an explicit
+ * recovery action, so the server does not second-guess it against the saved
+ * scope lists. See `McpRefreshResult.remounted`.
  */
 export interface McpProbeRequest {
   server: Partial<GlobalMcpServerConfig>
-  /** Passed through to the remount path; ignored unless `remount` is set. */
-  force?: boolean
   /** Also rebuild the official client for this server after probing. */
   remount?: boolean
 }

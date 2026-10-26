@@ -18,7 +18,6 @@ import type {
   GlobalMcpServerConfig,
   McpCachedView,
   McpReconnectConfig,
-  McpServerRuntimeStatus,
   McpServerStore,
   McpTestResult,
   McpTransportType,
@@ -26,7 +25,7 @@ import type {
 } from '../../types.ts'
 
 import { renameServerIdInSessionStore } from '../session/storage.ts'
-import type { McpManager } from './manager.ts'
+import type { McpManager, McpRefreshOutcome } from './manager.ts'
 
 /** Official `dsh-mcp-client` namespacing contract for `mcp__<serverName>__<tool>`. */
 const SERVER_NAME_PATTERN = /^[A-Za-z0-9_-]{1,32}$/
@@ -454,11 +453,8 @@ export class McpServerRegistry {
    */
   public refreshClient(
     server: GlobalMcpServerConfig,
-    opts: { force?: boolean; settleMs?: number },
-  ): Promise<
-    | { remounted: boolean; status: McpServerRuntimeStatus; durationMs: number }
-    | undefined
-  > {
+    opts: { settleMs?: number },
+  ): Promise<McpRefreshOutcome | undefined> {
     return (
       this.deps.manager?.refreshServer(server, opts) ??
       Promise.resolve(undefined)

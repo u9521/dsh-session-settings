@@ -20,6 +20,14 @@ import {
  */
 const MCP_REFRESH_SETTLE_MS = 3000
 
+/**
+ * Outcome text for a rebuild that outlived its settle budget while its fork is
+ * still alive. Reported as success: the connection exists, the handshake is
+ * merely unfinished, and the caller can press the button again if it stalls.
+ */
+const STILL_SETTLING =
+  'The MCP client was rebuilt and its tools are still registering.'
+
 export function registerMcpRoutes(
   connection: ConnectionService,
   registry: McpServerRegistry,
@@ -196,25 +204,48 @@ export function registerMcpRoutes(
 
             // `settleMs` makes the response wait (bounded) for the rebuilt fork
             // to register its tools, so a caller can update its badge from this
-            // single response without polling.
+            // single response without polling. It is budgeted unconditionally:
+            // the rebuild must be judged on its own, never on whether the probe
+            // happened to succeed.
             const outcome = await registry.refreshClient(target, {
-              force: parsed.force === true,
-              settleMs: probe.ok ? MCP_REFRESH_SETTLE_MS : 0,
+              settleMs: MCP_REFRESH_SETTLE_MS,
             })
+
+            const status = outcome?.status ?? {
+              mountAttempted: false,
+              mounted: false,
+              registeredToolCount: 0,
+            }
+            const remounted = outcome?.remounted ?? false
+            const settled = outcome?.settled ?? false
+            // The probe's own verdict is NOT the remount's verdict: it opens a
+            // separate short-lived connection, so it can reach a server whose
+            // long-lived client is dead (a stale streamable-HTTP session id
+            // does exactly that) and it can fail on one whose client came back.
+            // `settled` means tools appeared inside the budget. A server that
+            // legitimately exposes none can never settle, so it is not judged by
+            // that signal — only a recorded activation error can condemn it.
+            const usable =
+              remounted && (settled || status.registeredToolCount > 0)
+            const ok = usable && !status.lastError
 
             remount = {
               id: targetId,
               name: target.name,
-              ok: probe.ok,
-              message: probe.message,
+              ok,
+              message: ok
+                ? settled
+                  ? ''
+                  : STILL_SETTLING
+                : (status.lastError ??
+                  (remounted
+                    ? 'The MCP client was rebuilt but registered no tools.'
+                    : probe.message) ??
+                  ''),
               toolCount: probe.tools?.length ?? 0,
               durationMs: outcome?.durationMs ?? Date.now() - startedAt,
-              remounted: outcome?.remounted ?? false,
-              status: outcome?.status ?? {
-                mountAttempted: false,
-                mounted: false,
-                registeredToolCount: 0,
-              },
+              remounted,
+              status,
             }
           }
 

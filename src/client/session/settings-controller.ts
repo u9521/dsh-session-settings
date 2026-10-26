@@ -581,6 +581,15 @@ export function useSessionCatalogs(
     }
   }, [sessionId])
 
+  /**
+   * Tear down and rebuild the official client for one server.
+   *
+   * Always asks for a rebuild: the server side no longer gates it on whether
+   * the server is enabled in some scope, so a card whose toggle is still an
+   * unsaved draft rebuilds exactly like a saved one. The verdict is the
+   * remount's own — the probe opens a separate connection and cannot speak for
+   * the long-lived client that is actually broken.
+   */
   const refreshClient = React.useCallback(
     async (server: GlobalMcpServerConfig) => {
       setRefreshingClientId(server.id)
@@ -591,32 +600,54 @@ export function useSessionCatalogs(
           body: JSON.stringify({ server: { id: server.id }, remount: true }),
         })
         const data = (await res.json()) as McpProbeResult & { error?: string }
-        const message = data?.error || data?.remount?.message
+        const remount = data?.remount
+        const ok = Boolean(remount?.ok)
+        const message =
+          data?.error ||
+          remount?.message ||
+          (ok ? '' : t('sessionSettings.mcp.notices.remountFailedUnknown'))
         setClientRefreshResults((prev) => ({
           ...prev,
-          [server.id]: { ok: Boolean(data?.ok), message: message ?? '' },
+          [server.id]: { ok, message },
         }))
         if (data?.server) {
           setServers((prev) =>
             prev.map((s) => (s.id === data.server?.id ? data.server : s)),
           )
         }
+        // A success that still carries a message is the "rebuilt, tools not
+        // registered yet" case; the server's own text is English, so the
+        // localized pending wording is chosen here instead.
         setNotice(
-          data?.ok
-            ? { kind: 'success', message: data.remount?.message ?? '' }
+          ok
+            ? remount?.message
+              ? {
+                  kind: 'success',
+                  message: t('sessionSettings.mcp.notices.remountPending', {
+                    name: remount?.name || server.name,
+                  }),
+                }
+              : {
+                  kind: 'success',
+                  message: t('sessionSettings.mcp.notices.remountSuccess', {
+                    name: remount?.name || server.name,
+                    ms: remount?.durationMs ?? 0,
+                    tools: remount?.status?.registeredToolCount ?? 0,
+                  }),
+                }
             : {
                 kind: 'error',
-                message:
-                  message ||
-                  t('sessionSettings.mcp.notices.refreshFailed', {
-                    message: 'Unknown error',
-                  }),
+                message: t('sessionSettings.mcp.notices.remountFailed', {
+                  name: server.name,
+                  message,
+                }),
               },
         )
       } catch (err: unknown) {
         setNotice({
           kind: 'error',
-          message: t('sessionSettings.mcp.notices.refreshFailed', {
+          message: t('sessionSettings.mcp.notices.remountFailed', {
+            name: server.name,
             message: err instanceof Error ? err.message : String(err),
           }),
         })
