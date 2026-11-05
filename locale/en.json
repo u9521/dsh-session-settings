@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Session Settings",
+    "description": "Configure subagent models and reasoning effort, MCP servers and per-session MCP tools, skills, and sandbox path templates from the Web GUI."
+  }
+}

@@ -3,6 +3,7 @@ import type {
   Agent,
   SessionSettingsStore,
   SkillDefinition,
+  SkillPolicyFailure,
   SkillsService,
 } from '../../types.ts'
 import { resolveEffectiveSkills } from '../session/storage.ts'
@@ -43,6 +44,8 @@ export class SkillPolicyProjection {
   private readonly installed = new Map<Agent, Map<string, () => void>>()
   /** agent -> serialized disabled sets currently installed, for idempotence. */
   private readonly installedKeys = new Map<Agent, string>()
+  /** agent -> policy entries the registry refused at the last refresh. */
+  private readonly failures = new Map<Agent, SkillPolicyFailure[]>()
 
   constructor(
     ctx: Context,
@@ -63,6 +66,7 @@ export class SkillPolicyProjection {
     this.agents.delete(agent)
     this.installed.delete(agent)
     this.installedKeys.delete(agent)
+    this.failures.delete(agent)
   }
 
   /** Re-apply every live agent after a settings change. */
@@ -106,6 +110,7 @@ export class SkillPolicyProjection {
     // back. It also keeps `register()` from warning about a duplicate name.
     this.clear(agent)
     this.installedKeys.set(agent, key)
+    this.failures.set(agent, [])
 
     const wanted = new Set([...disabledModel, ...disabledUser])
     if (wanted.size === 0) return
@@ -146,12 +151,42 @@ export class SkillPolicyProjection {
         })
         this.mapFor(agent).set(name, dispose)
       } catch (err: unknown) {
+        // A refused registration leaves the inherited declaration in force, so
+        // the session does NOT get what its settings say. Recorded rather than
+        // only logged: the panel reads this list and shows the entry as
+        // "policy not applied", which is the difference between a user fixing
+        // the skill file and a user believing a switch worked.
+        this.failuresFor(agent).push({
+          name,
+          reason: err instanceof Error ? err.message : String(err),
+        })
         console.warn(
           `[session-settings] [SKILL-POLICY] Failed to shadow skill "${name}":`,
           err instanceof Error ? err.message : String(err),
         )
       }
     }
+  }
+
+  /** Skill policy entries the registry refused for one agent's session. */
+  public failuresFor(agent: Agent): SkillPolicyFailure[] {
+    let list = this.failures.get(agent)
+    if (!list) {
+      list = []
+      this.failures.set(agent, list)
+    }
+    return list
+  }
+
+  /** Refusals recorded for the session an agent belongs to. */
+  public failuresForSession(sessionId?: string): SkillPolicyFailure[] {
+    if (!sessionId) return []
+    const out: SkillPolicyFailure[] = []
+    for (const agent of this.agents) {
+      if (resolveAgentSessionId(agent, this.ctx) !== sessionId) continue
+      out.push(...(this.failures.get(agent) ?? []))
+    }
+    return out
   }
 
   /**

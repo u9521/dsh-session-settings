@@ -182,6 +182,36 @@ function looksLikeSseDowngrade(err: Error): boolean {
   return /unexpected content|405|text\/event-stream/i.test(message)
 }
 
+/** Credential-shaped and stale `DSH_*` names the subprocess seam drops. */
+const SENSITIVE_ENV_PATTERN = /(?:key|token|secret|password|passwd|credential)/i
+const DSH_ENV_PREFIX = 'DSH_'
+
+/**
+ * The environment one stdio server child is started with.
+ *
+ * Mirrors `scrubbedParentEnv()` from `@deepseek-ai/dsh-subprocess`, which the
+ * official client uses: the ambient environment minus credential-shaped names
+ * and minus `DSH_*`, then the server's own configured entries on top. This is a
+ * copy rather than an import because the client half of this plugin is bundled
+ * independently and the server half must not take a value dependency on a host
+ * package for one regex; the test below is the seam that keeps it honest.
+ *
+ * @param extra - the server's configured environment entries.
+ * @returns the complete environment for the child.
+ */
+function childEnv(extra?: Record<string, string>): Record<string, string> {
+  const env: Record<string, string> = {}
+  for (const [name, value] of Object.entries(process.env)) {
+    if (value === undefined) continue
+    // Case-insensitive on both tests: Windows environment names are, so a
+    // parent `dsh_*` entry would otherwise survive and read back as `$env:DSH_*`.
+    if (name.toUpperCase().startsWith(DSH_ENV_PREFIX)) continue
+    if (SENSITIVE_ENV_PATTERN.test(name)) continue
+    env[name] = value
+  }
+  return { ...env, ...(extra ?? {}) }
+}
+
 async function connectStdio(
   server: Partial<GlobalMcpServerConfig>,
   opts: McpConnectOptions,
@@ -195,7 +225,12 @@ async function connectStdio(
   const transport = new StdioClientTransport({
     command,
     args: server.args ?? [],
-    env: server.env ?? {},
+    // The official client spawns stdio servers with the subprocess seam's
+    // scrubbed parent env plus the configured entries. Probing with the raw
+    // ambient environment would make "test OK" stop predicting "mount OK": a
+    // probe could connect with a credential the real client never passes, or
+    // leak one the host deliberately drops.
+    env: childEnv(server.env),
     cwd: server.cwd?.trim() || undefined,
     stderr: 'pipe',
   })

@@ -19,18 +19,31 @@ interface AgentPresetsService {
 }
 
 /**
- * Bucket a skill by its provider-declared {@link SkillSource}: `user-*` and
- * `project-*` are filesystem-backed, everything else (bundled, runtime, custom)
- * ships with the composition and is listed after them.
+ * The filesystem-backed sources the skill registry declares.
+ *
+ * `SkillSource` is a closed set, and these four are the ones whose bodies live
+ * on disk for one project or one user. Everything else — `runtime`, `custom`,
+ * `bundled`, or an unknown provider string — ships with the composition and is
+ * listed after them.
  */
-function classifySkillSource(skill: { source?: string }): {
-  isRuntime: boolean
-  source: string
-} {
+const FILESYSTEM_SKILL_SOURCES = new Set([
+  'project-dsh',
+  'project-agents',
+  'user-dsh',
+  'user-agents',
+])
+
+/**
+ * Whether a skill's body comes from a filesystem root.
+ *
+ * Compares whole source ids rather than substring-matching the string: a
+ * provider that names a custom root `my-project-tools` used to be classified as
+ * runtime by the `includes('project')` test, which put it in the group that
+ * cannot be disabled below session scope.
+ */
+function isFilesystemSkill(skill: { source?: string }): boolean {
   const source = (skill.source ?? '').toLowerCase()
-  if (source.includes('user')) return { isRuntime: false, source }
-  if (source.includes('project')) return { isRuntime: false, source }
-  return { isRuntime: true, source: source || 'runtime' }
+  return FILESYSTEM_SKILL_SOURCES.has(source)
 }
 
 function compareSkills(a: SkillItem, b: SkillItem): number {
@@ -175,7 +188,8 @@ export async function getAvailableSkills(
         const list = await registry.list({ cwd, scope })
         for (const skill of list ?? []) {
           if (map.has(skill.name)) continue
-          const { isRuntime, source } = classifySkillSource(skill)
+          const isRuntime = !isFilesystemSkill(skill)
+          const source = (skill.source ?? '').toLowerCase() || 'runtime'
           const modelInvocable =
             (skill.invocation?.modelInvocable ?? true) &&
             !policy.disabledModel.has(skill.name)
@@ -224,7 +238,8 @@ export async function getSkillDetail(
           scope,
         })
         if (!skill) continue
-        const { isRuntime, source } = classifySkillSource(skill)
+        const isRuntime = !isFilesystemSkill(skill)
+        const source = (skill.source ?? '').toLowerCase() || 'runtime'
         return {
           name: skill.name,
           description: skill.description ?? '',

@@ -8,6 +8,7 @@ import {
   type SettingsScopeId,
   type SettingsSnapshotResponse,
   type SkillItem,
+  type SkillPolicyFailure,
   isSettingsScopeId,
 } from '../../types.ts'
 import { normalizeSessionSettings, normalizeGlobalSettings } from './storage.ts'
@@ -66,6 +67,7 @@ export function registerSessionSettingsRoutes(
   invalidatePolicies?: () => void,
   sandboxCapability?: (sessionId?: string) => SandboxCapabilityInfo,
   sandboxSkipped?: (sessionId?: string) => SandboxSkippedEntry[],
+  skillsPolicyFailures?: (sessionId?: string) => SkillPolicyFailure[],
 ): () => Promise<void> {
   const unregisterGetSettings = connection.fetch.register(
     toFetchRoute({
@@ -111,6 +113,9 @@ export function registerSessionSettingsRoutes(
               : {}),
             ...(sandboxSkipped
               ? { sandboxSkipped: sandboxSkipped(querySessionId) }
+              : {}),
+            ...(skillsPolicyFailures
+              ? { skillsPolicyFailures: skillsPolicyFailures(querySessionId) }
               : {}),
           }
           return jsonResponse(body)

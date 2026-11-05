@@ -18,6 +18,7 @@
   "types": "lib/types/index.d.ts",
   "files": [
     "lib",
+    "locale",
     "cordis.patch.yml",
     "README.md",
     "README.zh.md",
@@ -27,7 +28,7 @@
     "node": "^22.19 || >=24"
   },
   "peerDependencies": {
-    "@deepseek-ai/dsh": ">=0.2.1-rc.2"
+    "@deepseek-ai/dsh": ">=0.2.2-rc.1"
   },
   "peerDependenciesMeta": {
     "@deepseek-ai/dsh": {
@@ -41,7 +42,6 @@
     "client": {
       "inject": [
         "@deepseek-ai/dsh-client-ui-renderer",
-        "@deepseek-ai/dsh-client-ui-settings",
         "@deepseek-ai/dsh-client-locale",
         "@deepseek-ai/dsh-api-remotes"
       ],
@@ -64,7 +64,7 @@
     "model"
   ],
   "devDependencies": {
-    "@deepseek-ai/cordis": "~4.0.5",
+    "@deepseek-ai/cordis": "~4.1.0",
     "@deepseek-ai/dsh-client-ui-primitives": "0.2.0-rc.1",
     "@eslint/js": "^9.39.5",
     "@types/node": "^26.6.2",
@@ -84,6 +84,7 @@
     },
     "./client": "./lib/client.js",
     "./cordis.patch.yml": "./cordis.patch.yml",
+    "./locale/*.json": "./locale/*.json",
     "./package.json": "./package.json"
   },
   "dependencies": {

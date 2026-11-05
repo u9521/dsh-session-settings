@@ -43,6 +43,21 @@ Configure per-session or global settings directly from the Web GUI with immediat
 - **Interoperable MCP Import & Export**: Server configuration is exported as an `.mcp.json` document — the same shape Claude Code reads — carrying `type`, `name` and every connection parameter, so a file round-trips without loss and can be handed to another tool as-is. Import validates each entry and reports every rejection with its reason instead of silently dropping it.
 - **Remount a Broken MCP Connection**: Each enabled server card in the session settings has a **Remount** button beside **Server Info**. It tears down and rebuilds that server's official client — the only recovery path when tool calls keep failing while the server still reports as connected (a streamable-HTTP session the server has already forgotten), so recovering no longer means restarting `dsh web`.
 - **Read-Only Resource & Prompt Browsing**: The MCP server modal offers **Resources** and **Prompts** tabs. Resources are grouped into resources and templates, and a template's parameters are expanded server-side before reading; prompts are shown per role with copy-full-text and a Raw JSON view. Lists are cache-first and content is never persisted — reads happen only on click, and the read-only views never change what the model can see (that stays a session policy decision).
+- **Extra Writable Directories**: The session sandbox panel grants directories the workspace-write policy does not cover, each with the purpose sentence the model reads beside its path. Built-in presets fill a whole toolchain's usual caches in one click; **Manage presets** stores your own deployment-wide, and **Export to clipboard** writes the current draft as `path | description` lines so a colleague can import them on their machine. Import never fails silently: every line it could not use is reported with its number.
+
+### Sharing sandbox directory lists
+
+**Export to clipboard** in the sandbox panel writes the current draft as plain text:
+
+```text
+# Sandbox extra writable directories
+~/Android/Sdk | Android SDK and platform tools
+~/.gradle | Gradle dependencies, wrapper and daemon caches
+```
+
+One `path | description` row per line; the first `#` line is an optional title; blank lines and further `#` lines are ignored. Everything after the first `|` belongs to the description, so a description may contain one. A row without `|` is a bare path.
+
+Paste that text into **Manage presets → Import from clipboard** to store it as a preset, or hand it to someone else. Readers accept the format by hand, so the shape above is what any tool producing it must emit.
 
 ---
 
@@ -50,9 +65,9 @@ Configure per-session or global settings directly from the Web GUI with immediat
 
 | Plugin Branch | Compatible DeepSeek Harness (DSH) Mainline | Architecture & Features |
 | :--- | :--- | :--- |
-| **`main` branch** | **`>= 0.2.1-rc.2`** | Native support for **Session Format V4**, **Cordis 4.0.5**, `@modelcontextprotocol/client` 2.2.0, the `subagent/descriptor` v3 contract, the `AgentPresetRegistry` scope API, and the `ui-primitives` icon set. |
+| **`main` branch** | **`>= 0.2.2-rc.1`** | Native support for **Session Format V4**, **Cordis 4.1**, `@modelcontextprotocol/client` 2.2.0, the `agent.model.select()` routing API, the `SandboxPolicy.additionalWritableRoots` channel, the `settings.section.icon` slot, and the `ui-primitives` icon set. |
 
-> **⚠️ Note**: The `main` branch targets DSH 0.2.1-rc.2 and above natively. It keeps **no backward-compatibility shims** and does not support earlier DSH lines. The host does not read `engines.dsh`; compatibility is enforced through the `peerDependencies` range on `@deepseek-ai/dsh`, so an incompatible host refuses the plugin instead of loading it half-broken.
+> **⚠️ Note**: The `main` branch targets DSH 0.2.2-rc.1 and above natively. It keeps **no backward-compatibility shims** and does not support earlier DSH lines. The host does not read `engines.dsh`; compatibility is enforced through the `peerDependencies` range on `@deepseek-ai/dsh`, so an incompatible host refuses the plugin instead of loading it half-broken.
 
 ---
 

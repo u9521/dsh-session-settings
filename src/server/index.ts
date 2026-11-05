@@ -10,6 +10,9 @@ import { registerSubagentModelInterceptor } from './subagent-model/interceptor.t
 import { registerMcpPolicyProjection } from './mcp/interceptor.ts'
 import { registerSkillsInterceptors } from './skills/interceptor.ts'
 import { registerSandboxInterceptor } from './sandbox/interceptor.ts'
+import { registerSandboxTemplateRoutes } from './sandbox/routes.ts'
+import { SandboxTemplateRegistry } from './sandbox/templates.ts'
+import { builtinTemplateNames } from '../shared/sandboxTemplateLabels.ts'
 import { PolicyBus } from './common/policy-bus.ts'
 export const name = 'session-settings'
 // `connection` is required rather than optional: it is the only carrier that
@@ -52,9 +55,10 @@ function mount(ctx: Context, stores: OpenStores): void {
     mcpManager,
   )
 
-  // Sandbox allow-list: widens `ctx.sandbox.confine` with the session's extra
-  // writable directories and contributes them to the model's runtime context.
-  // Registered BEFORE the routes so a settings save can invalidate it.
+  // Sandbox allow-list: stamps the session's extra writable directories onto
+  // every per-call policy `ctx.sandboxPolicy.resolve()` hands out, and
+  // contributes the same list to the model's runtime context. Registered BEFORE
+  // the routes so a settings save can invalidate it.
   const sandboxInterceptor = registerSandboxInterceptor(
     ctx,
     getSessionSettingsStore,
@@ -104,11 +108,24 @@ function mount(ctx: Context, stores: OpenStores): void {
       invalidatePolicies,
       (sessionId) => sandboxInterceptor.detectCapability(sessionId),
       (sessionId) => sandboxInterceptor.skippedFor(sessionId),
+      (sessionId) => skillPolicyProjection.failuresForSession(sessionId),
     )
     const unregisterSkills = registerSkillsRoutes(
       ctx,
       connection,
       getSessionSettingsStore,
+    )
+    const unregisterSandboxTemplates = registerSandboxTemplateRoutes(
+      connection,
+      new SandboxTemplateRegistry({
+        getStore: () => stores.sandboxTemplates,
+        persist: stores.persistSandboxTemplates,
+      }),
+      // Names the built-in presets render as, so a user preset cannot shadow
+      // one on the button row. Both languages are reserved: the panel renders
+      // in one language and the store is shared, so a name taken in the other
+      // language is still a collision waiting for a locale switch.
+      builtinTemplateNames,
     )
 
     ctx.effect(() => {
@@ -117,6 +134,7 @@ function mount(ctx: Context, stores: OpenStores): void {
         await unregisterMcp()
         await unregisterSessionSettings()
         await unregisterSkills()
+        await unregisterSandboxTemplates()
       }
     }, 'session-settings: authenticated api routes')
   }
@@ -146,5 +164,6 @@ export * from './skills/interceptor.ts'
 export * from './skills/routes.ts'
 export * from './sandbox/paths.ts'
 export * from './sandbox/interceptor.ts'
-export * from './sandbox/fs-proxy.ts'
+export * from './sandbox/templates.ts'
+export * from './sandbox/routes.ts'
 export * from './subagent-model/interceptor.ts'

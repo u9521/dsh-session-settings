@@ -19,8 +19,14 @@ import {
   type SettingsLayers,
 } from '../../shared/settings.ts'
 
-/** Longest description that survives normalization; keeps prompt text bounded. */
-const MAX_ALLOW_DESCRIPTION_CHARS = 200
+/**
+ * Longest description that survives normalization; keeps prompt text bounded.
+ *
+ * Exported because the sandbox template registry writes the same sentences into
+ * the same prompt text: a looser cap there would let a preset carry a
+ * description a hand-typed row could never have.
+ */
+export const MAX_ALLOW_DESCRIPTION_CHARS = 200
 
 /**
  * Normalize one allow entry, or drop it.

@@ -337,6 +337,10 @@ export class McpManager {
     const officialConfig = this.mountConfigOf(server)
 
     try {
+      // `ctx.plugin()` gives the official client its own fiber under this
+      // plugin's, so the resource registration, the prompt section, and the
+      // serverName reservation are all released by `fork.dispose()`. Ownership
+      // is therefore already per mount; no separate context is needed.
       const fork = this.ctx.plugin(officialPlugin, officialConfig)
       this.officialForks.set(server.id, fork)
       this.mountAttempted.add(server.id)

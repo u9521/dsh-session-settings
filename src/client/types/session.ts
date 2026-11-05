@@ -11,11 +11,19 @@ export interface ModelReasoning {
   defaultEffort?: string
 }
 
+/**
+ * One model the catalog offers.
+ *
+ * The host's `ModelCatalogModel` (`@deepseek-ai/dsh-api-session-controller`)
+ * carries `badge` besides these fields; this view is field-for-field
+ * compatible, and it is the minimum the selection UI reads.
+ */
 export interface ModelCatalogItem {
   id: string
   name: string
   description?: string
   reasoning?: ModelReasoning
+  badge?: unknown
 }
 
 export interface ModelProviderGroup {
@@ -24,18 +32,40 @@ export interface ModelProviderGroup {
   models: ModelCatalogItem[]
 }
 
+/**
+ * One provider whose catalog could not be read.
+ *
+ * The host types this as `ModelCatalogFailure` (provider id + message); the
+ * previous hand-rolled `unknown[]` discarded the reason, so a partially
+ * available catalog could not explain itself.
+ */
+export interface ModelCatalogFailure {
+  provider?: string
+  message?: string
+  [key: string]: unknown
+}
+
+/** The host's `ModelCatalog` value, as the selection UI consumes it. */
+export interface ModelCatalog {
+  default?: { provider?: string; model?: string; reasoningEffort?: string }
+  routableProviders?: string[]
+  groups: ModelProviderGroup[]
+  failures?: ModelCatalogFailure[]
+}
+
+/**
+ * The host's `RemoteResult<ModelCatalog>` envelope.
+ *
+ * `error` is a `RemoteError` instance on the wire, not a plain object: it
+ * carries `code`, `details`, and `isDSHRemoteError`. Reading only `message` is
+ * safe for either shape.
+ */
+export type ModelCatalogResult =
+  | { ok: true; value: ModelCatalog }
+  | { ok: false; error: { code?: string; message?: string; details?: unknown } }
+
 export interface ClientRemoteSessionService {
-  modelCatalog?: () => Promise<{
-    ok?: boolean
-    value?: {
-      groups?: ModelProviderGroup[]
-      failures?: unknown[]
-    }
-    error?: {
-      code?: string
-      message?: string
-    }
-  }>
+  modelCatalog?: () => Promise<ModelCatalogResult>
   [key: string]: unknown
 }
 

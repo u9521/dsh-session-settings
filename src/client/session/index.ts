@@ -19,6 +19,7 @@ import {
   useSessionCatalogs,
   useSessionSettings,
 } from './settings-controller.ts'
+import { useSandboxTemplates } from './useSandboxTemplates.ts'
 import { resolveEffectiveSandbox } from '../utils/config.ts'
 import { HeaderBar } from './sections/HeaderBar.ts'
 import { NavigationSidebar } from './sections/NavigationSidebar.ts'
@@ -46,6 +47,7 @@ export * from './sections/SessionMcpSection.ts'
 export * from './sections/SessionSandboxSection.ts'
 export * from './sections/SessionSkillsSection.ts'
 export * from './modals/SessionMcpToolsModal.ts'
+export * from './modals/SandboxTemplatesModal.ts'
 
 const e = React.createElement
 
@@ -54,6 +56,9 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
 
   const settings = useSessionSettings(props)
   const catalogs = useSessionCatalogs(props, sessionId)
+  // Stored presets are deployment-wide, so they load independently of the
+  // selected scope: switching scope must not reload or blank them.
+  const sandboxTemplates = useSandboxTemplates()
 
   const [activeNav, setActiveNav] = React.useState<NavSection>('model')
   const [sessionToolsReadonly, setSessionToolsReadonly] =
@@ -272,6 +277,7 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
 
   const handleSandboxSourceModeChange = (mode: SessionSandboxMode) => {
     if (mode === 'custom') {
+      // The panel records its own pushed signature; see SessionSandboxSection.
       const effective = resolveEffectiveSandbox(
         settings.scope === 'session'
           ? ({ sandbox: sandboxConfig } as SessionSettingsConfig)
@@ -630,6 +636,7 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
               onSkillsSearchChange: setSkillsSearch,
               onRefreshSkills: catalogs.reloadSkills,
               onOpenSessionSkillModal: handleOpenSessionSkillModal,
+              policyFailures: catalogs.skillsPolicyFailures,
               t,
             })
           : null,
@@ -647,6 +654,10 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
               activeSourceMode: sandboxSourceMode,
               onChange: handleSandboxChange,
               onSourceModeChange: handleSandboxSourceModeChange,
+              templates: sandboxTemplates.templates,
+              onCreateTemplate: sandboxTemplates.save,
+              onRemoveTemplate: sandboxTemplates.remove,
+              templatesError: sandboxTemplates.error,
               t,
             })
           : null,

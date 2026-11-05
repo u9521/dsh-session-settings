@@ -1205,10 +1205,10 @@ export const GLOBAL_MCP_TAB_CSS = `
   height: 32px;
 }
 .dsh-mcp-primitive-var .dsh-sam-select.invalid {
-  border-color: var(--dsw-alias-state-error, #f87171);
+  border-color: var(--dsw-alias-state-error-primary, #f87171);
 }
 .dsh-mcp-primitive-var .dsh-sam-select.invalid:focus-visible {
-  outline-color: var(--dsw-alias-state-error, #f87171);
+  outline-color: var(--dsw-alias-state-error-primary, #f87171);
 }
 .dsh-mcp-primitive-actions {
   align-items: center;

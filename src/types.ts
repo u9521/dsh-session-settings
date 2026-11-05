@@ -28,6 +28,9 @@ export const API_ENDPOINTS = {
   mcpServersPromptGet: `${API_BASE}/mcp-servers/prompt-get`,
   skills: `${API_BASE}/skills`,
   skillsContent: `${API_BASE}/skills/content`,
+  sandboxTemplatesList: `${API_BASE}/sandbox-templates/list`,
+  sandboxTemplatesSave: `${API_BASE}/sandbox-templates/save`,
+  sandboxTemplatesRemove: `${API_BASE}/sandbox-templates/remove`,
 } as const
 
 export type ApiEndpointKey = keyof typeof API_ENDPOINTS
@@ -63,6 +66,9 @@ export const API_METHODS: Record<ApiEndpointKey, ApiHttpMethod> = {
   mcpServersPromptGet: 'POST',
   skills: 'GET',
   skillsContent: 'GET',
+  sandboxTemplatesList: 'GET',
+  sandboxTemplatesSave: 'POST',
+  sandboxTemplatesRemove: 'POST',
 }
 
 /**
@@ -203,7 +209,22 @@ export interface SettingsSnapshotResponse {
   sandboxCapability?: SandboxCapabilityInfo
   /** Configured allow entries skipped at the last enforcement, with reasons. */
   sandboxSkipped?: SandboxSkippedEntry[]
+  /**
+   * Skill policy entries the registry REJECTED at the last enforcement.
+   *
+   * A rejected shadow leaves the session's catalog unchanged, so without this
+   * the panel would show a skill as disabled while the agent still sees it.
+   */
+  skillsPolicyFailures?: SkillPolicyFailure[]
   error?: string
+}
+
+/** One skill whose per-session policy the registry refused to apply. */
+export interface SkillPolicyFailure {
+  /** The skill name as configured. */
+  name: string
+  /** Why the registry refused the shadowing registration. */
+  reason: string
 }
 
 export interface SubagentModelTarget {
@@ -254,6 +275,47 @@ export interface SessionSandboxConfig {
    * would be a silent end-run around the wider mode's approval prompt.
    */
   allow?: SandboxAllowEntry[]
+}
+
+/**
+ * One user-authored fill-in preset for the sandbox panel.
+ *
+ * Deliberately NOT part of {@link SessionSandboxConfig}: a preset is a
+ * deployment-wide authoring asset shared by every session, while the allow list
+ * is a per-scope policy decision resolved through the three-layer ladder.
+ * Folding the two together would make "which layer owns this template?"
+ * unanswerable the moment a save ran under any single scope, and a global reset
+ * would take the user's own presets with it.
+ *
+ * The built-in presets are not stored anywhere — they ship with the client
+ * bundle and are read-only. Only what a user authors lives here, which is what
+ * keeps a built-in path fixable by a plugin upgrade.
+ */
+export interface SandboxTemplate {
+  /** Stable id; the storage key and the React key. Never shown to the user. */
+  id: string
+  /** Button label. Unique across the user's own presets and the built-in ones. */
+  name: string
+  /** Rows this preset fills, in the order they appear in the panel. */
+  entries: SandboxAllowEntry[]
+  /** Creation time, for a stable listing order independent of object keys. */
+  createdAt?: number
+}
+
+/** The sandbox template store, keyed by id. */
+export interface SandboxTemplateStore {
+  templates: Record<string, SandboxTemplate>
+}
+
+/** Body of `API_ENDPOINTS.sandboxTemplatesSave`. */
+export interface SandboxTemplateSaveRequest {
+  /** The preset to write; `id` is assigned server-side when absent. */
+  template: Partial<SandboxTemplate>
+}
+
+/** Body of `API_ENDPOINTS.sandboxTemplatesRemove`. */
+export interface SandboxTemplateRemoveRequest {
+  id: string
 }
 
 /**
@@ -827,6 +889,25 @@ export interface SessionsService {
   list(): Session[]
 }
 
+/**
+ * One complete provider/model/reasoning-effort route.
+ *
+ * The host appends a durable `model/selection` event for every choice, and step
+ * preparation reads the latest one before it fixes the route the model request
+ * must match.
+ */
+export interface ModelSelection {
+  provider: string
+  model: string
+  reasoningEffort?: string
+}
+
+/** Agent-owned access to the model choice for future steps. */
+export interface AgentModel {
+  current(): Readonly<ModelSelection> | undefined
+  select(selection: Readonly<ModelSelection>): void
+}
+
 export interface Agent {
   readonly id: string
   readonly options: {
@@ -838,6 +919,14 @@ export interface Agent {
   readonly session: Session
   readonly ctx: Context
   readonly status: 'idle' | 'running'
+  /**
+   * The agent's own model selection.
+   *
+   * This is the only supported way to change a route. `agent/request` is
+   * deprecated and the loop now rejects a request whose route differs from the
+   * selection captured during step preparation.
+   */
+  readonly model?: AgentModel
 }
 
 export interface AgentsService {
@@ -884,10 +973,22 @@ export interface SessionPersistenceService {
  * bundle. The shape below is the part of `DomainSpec` this plugin uses; the
  * host validates it at `open`.
  */
+/**
+ * One domain declaration, in the shape `defineDomain()` produces.
+ *
+ * The host helper validates a declaration at module load — the name against
+ * `UNIT_NAME_RE`, the version against the non-negative-integer rule, the layout,
+ * the compatible-version list, and that the global schema rejects `null` (a
+ * nullable global would be indistinguishable from "never written" on reopen).
+ * Passing a plain object to `open()` skips all of that and moves the same
+ * failure to plugin activation, where it reads like a storage fault.
+ */
 export interface StorageDomainSpec {
   readonly name: string
   readonly version: number
   readonly layout?: 'single' | 'per-record'
+  readonly compatibleVersions?: readonly number[]
+  readonly invalidRecords?: 'backup-and-skip'
   readonly global?: { readonly schema: unknown; readonly initial: unknown }
   readonly tables: Record<string, { readonly valueSchema: unknown }>
 }
@@ -1012,23 +1113,23 @@ export interface SandboxPolicyLike {
   readonly mode: 'read-only' | 'workspace-write' | 'danger-full-access'
   readonly workspaceRoot: string
   readonly sessionId?: string
+  /**
+   * Extra physical directories `workspace-write` may also write under.
+   *
+   * This is the host's documented widening channel: every enforcing backend
+   * (bwrap, landlock, seatbelt, windows-acl) folds it into its writable-root
+   * derivation, and the filesystem fence does the same. The plugin stamps the
+   * session's allow list HERE rather than editing a runner's argv.
+   */
+  readonly additionalWritableRoots?: readonly string[]
 }
 
 /**
- * What a provider's `confine()` resolves to.
+ * Minimal view of `ctx.sandboxPolicy`.
  *
- * `argv` is the only field this plugin rewrites; the classification facts
- * (enforcement, denial signatures, runner-failure rules) describe the runner
- * that produced them and stay exactly as returned.
+ * This service is the single owner of the per-call policy: consumers ask it for
+ * the session's mode and roots instead of deriving either themselves.
  */
-export interface ConfinedArgvLike {
-  readonly argv: string[]
-  readonly enforcement: 'full' | 'partial'
-  readonly denialSignatures: readonly string[]
-  readonly runnerFailureRules: readonly unknown[]
-}
-
-/** Minimal view of `ctx.sandboxPolicy`: only the session-mode read. */
 export interface SandboxPolicyServiceLike {
   /** The deployment default, the fallback beneath a session override. */
   readonly defaultMode: string
@@ -1037,66 +1138,15 @@ export interface SandboxPolicyServiceLike {
    * one — i.e. before the deployment default is applied.
    */
   overrideOf(session: unknown): string | undefined
-}
-
-/**
- * Minimal view of the `ctx.sandbox` provider seam.
- *
- * `confine` is the single method this plugin wraps. It is a service method
- * rather than a declared extension point, so the wrapper is installed on the
- * instance and the original restored on unload.
- */
-export interface SandboxProviderLike {
-  confine(
-    argv: readonly string[],
-    policy: SandboxPolicyLike,
-    signal?: AbortSignal,
-  ): Promise<ConfinedArgvLike>
-}
-
-/** The `sandboxPolicy` argument the fs seam receives on every mutation. */
-export interface FsSandboxPolicyLike extends SandboxPolicyLike {
-  /** Opaque session identity; the branded SessionId in the host's own types. */
-  readonly sessionId?: string
-}
-
-/**
- * Minimal view of one resolved filesystem target.
- *
- * `targetKey` is deliberately opaque and never parsed: containment is answered
- * by {@link FileSystemLike.contains}, which the provider owns.
- */
-export interface FsTargetLike {
-  readonly targetKey: string
-  readonly displayPath: string
-}
-
-/** Minimal view of `ctx.fs`: only the two mutations this plugin re-fences. */
-export interface FileSystemLike {
-  resolve(
-    path: string,
-    opts?: { cwd?: string; signal?: AbortSignal },
-  ): Promise<FsTargetLike>
   /**
-   * Canonical containment between two targets from THIS provider. Used instead
-   * of comparing paths, so the check stays correct for any backend rather than
-   * only host-backed ones.
+   * Resolve one complete per-call policy.
+   *
+   * This is where the plugin attaches the session's allow list: wrapping this
+   * method reaches every consumer at once (bash, the terminal, and the
+   * filesystem fence all stamp their policy from here), so one widening covers
+   * every enforcement side with no per-backend argv knowledge.
    */
-  contains(parent: FsTargetLike, child: FsTargetLike): boolean
-  writeText(
-    target: FsTargetLike,
-    content: string,
-    expected?: unknown,
-    signal?: AbortSignal,
-    sandboxPolicy?: FsSandboxPolicyLike,
-  ): Promise<unknown>
-  editText(
-    target: FsTargetLike,
-    edit: unknown,
-    expected?: unknown,
-    signal?: AbortSignal,
-    sandboxPolicy?: FsSandboxPolicyLike,
-  ): Promise<unknown>
+  resolve(request?: unknown): SandboxPolicyLike
 }
 
 export interface ToolExecution {
@@ -1117,7 +1167,11 @@ export type PreToolDecision =
 export interface PromptAssembly {
   sections: Array<{ name: string; text: string }>
   contexts: Array<{ name: string; text: string }>
-  tools: ToolSchema[]
+  /**
+   * Variables interpolated into section text. The host attaches TOOLS to the
+   * presentation after this waterfall runs, from the tool registry, so an
+   * assembly never carries a tool list.
+   */
   variables: Record<string, string | undefined>
 }
 
@@ -1125,22 +1179,6 @@ export interface AssembleContext {
   scope?: unknown
   agent?: Agent
   signal?: AbortSignal
-}
-
-export interface LlmCallConfig {
-  provider?: string
-  model?: string
-  reasoningEffort?: string
-  temperature?: number
-  maxTokens?: number
-  stop?: string[]
-}
-
-export interface AgentRequestPayload {
-  agent: Agent
-  turn: number
-  step: number
-  signal: AbortSignal
 }
 
 // --------------------------------------------------------------------------
@@ -1165,26 +1203,23 @@ declare module '@deepseek-ai/cordis' {
     systemPrompt?: SystemPromptService
     agent?: Agent
     /**
-     * The mounted filesystem provider. The sandbox allow-list re-fences its two
-     * mutations so extra directories apply to the `write` / `edit` tools as
-     * well as to confined subprocesses.
+     * The sandbox policy owner.
+     *
+     * The plugin wraps `resolve()` so the session's extra writable roots travel
+     * on every stamped policy; the same service supplies the effective mode.
      */
-    fs?: FileSystemLike
-    /** The sandbox policy owner, read for the session's effective mode. */
     sandboxPolicy?: SandboxPolicyServiceLike
     /**
-     * Schema-validated durable stores. The host mounts it in every base
-     * profile, rooted at `$DSH_HOME/storages`.
+     * Schema-validated durable stores.
+     *
+     * Required, not optional: the host mounts it in every base profile, rooted
+     * at `$DSH_HOME/storages`. Declaring it optional only hid the fact that a
+     * composition without it cannot serve this plugin at all.
      */
-    storageDomain?: StorageDomainFacility
+    storageDomain: StorageDomainFacility
   }
 
   interface Events {
-    'agent/request'(
-      payload: AgentRequestPayload,
-      next: () => Promise<LlmCallConfig>,
-    ): Promise<LlmCallConfig>
-
     'system-prompt/assemble'(
       assembly: PromptAssembly,
       context: AssembleContext,
@@ -1210,6 +1245,24 @@ declare module '@deepseek-ai/cordis' {
       source: unknown
       signal?: AbortSignal
     }): undefined | Promise<undefined>
+
+    /**
+     * Waterfall around one proposed step. The loop has ALREADY captured the
+     * step's model selection by the time this runs; a listener that wants to
+     * change the route must record it here and still only affects the next
+     * step unless it is prepended before preparation.
+     */
+    'agent/pre-step'(
+      payload: {
+        agent: Agent
+        messages: unknown[]
+        turn: number
+        step: number
+        signal: AbortSignal
+        modelSelection: Readonly<ModelSelection>
+      },
+      next: () => Promise<unknown>,
+    ): Promise<unknown>
 
     'agent/disposed'(payload: { agent: Agent }): void
   }

@@ -156,4 +156,128 @@ export const SANDBOX_SECTION_CSS = `
   color: var(--dsw-alias-label-secondary);
   font-size: 12px;
 }
+/*
+ * Preset groups. Two headed families in one block: the built-ins ship with the
+ * bundle, the custom ones are stored, and the headings are what says which is
+ * which before a user hunts for a delete button.
+ */
+.dsh-sandbox-template-group + .dsh-sandbox-template-group {
+  margin-top: 10px;
+}
+.dsh-sandbox-template-empty {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+}
+.dsh-sandbox-template-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+.dsh-sandbox-template-action {
+  background: transparent;
+  border: 1px dashed var(--dsw-alias-border-l2);
+  border-radius: 6px;
+  color: var(--dsw-alias-label-primary);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 4px 10px;
+}
+.dsh-sandbox-template-action:hover:not(:disabled) {
+  border-color: var(--dsw-alias-brand-primary);
+}
+.dsh-sandbox-template-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+/*
+ * An armed remove button. Border rather than a filled background: the panel is
+ * an editing surface, and a solid red block next to every row would read as
+ * "this row is wrong" rather than "your next click deletes it".
+ */
+.dsh-sandbox-remove-armed {
+  border: 1px solid var(--dsw-alias-state-error-primary, #f87171);
+  border-radius: 6px;
+  color: var(--dsw-alias-state-error-primary, #f87171);
+  padding: 2px 8px;
+}
+.dsh-sandbox-templates-modal .dsh-sam-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.dsh-sandbox-templates-modal-body {
+  display: flex;
+  gap: 16px;
+  min-height: 260px;
+}
+.dsh-sandbox-templates-list {
+  border-right: 1px solid var(--dsw-alias-border-l2);
+  display: flex;
+  flex: 0 0 220px;
+  flex-direction: column;
+  gap: 6px;
+  padding-right: 12px;
+}
+.dsh-sandbox-templates-list-row {
+  align-items: center;
+  border-radius: 6px;
+  display: flex;
+  gap: 6px;
+  padding: 2px 4px;
+}
+.dsh-sandbox-templates-list-row.active {
+  background: var(--dsw-alias-bg-layer-1);
+}
+.dsh-sandbox-templates-list-name {
+  background: transparent;
+  border: none;
+  color: var(--dsw-alias-label-primary);
+  cursor: pointer;
+  flex: 1 1 auto;
+  font-size: 12px;
+  overflow: hidden;
+  padding: 4px 2px;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dsh-sandbox-templates-list-count {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  margin-left: 6px;
+}
+.dsh-sandbox-templates-form {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+.dsh-sandbox-template-name {
+  width: 100%;
+}
+.dsh-sandbox-import {
+  border-top: 1px dashed var(--dsw-alias-border-l2);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 10px;
+}
+.dsh-sandbox-import-text {
+  background: var(--dsw-alias-bg-layer-1);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
+  color: var(--dsw-alias-label-primary);
+  font-family: monospace;
+  font-size: 12px;
+  padding: 8px 10px;
+  resize: vertical;
+  width: 100%;
+}
+.dsh-sandbox-error {
+  color: var(--dsw-alias-state-error-primary, #f87171);
+  font-size: 12px;
+  line-height: 18px;
+}
 `

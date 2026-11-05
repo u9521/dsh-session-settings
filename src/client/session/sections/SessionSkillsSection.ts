@@ -7,6 +7,7 @@ import type {
   SessionSkillsConfig,
   SessionSkillsMode,
   SkillItem,
+  SkillPolicyFailure,
   SessionSettingsConfig,
 } from '../../types/index.ts'
 import { EmptyState, SearchToolbar } from '../../components/index.ts'
@@ -30,6 +31,14 @@ export interface SessionSkillsSectionProps {
   onSkillsSearchChange: (search: string) => void
   onRefreshSkills: () => void
   onOpenSessionSkillModal: (skill: SkillItem, isReadonly?: boolean) => void
+  /**
+   * Skills whose per-session policy the registry refused to apply.
+   *
+   * An empty list is the normal case. A non-empty one means the switch shown
+   * here is NOT in force: the shadowing registration threw, the inherited
+   * declaration survived, and the agent still sees the skill.
+   */
+  policyFailures?: SkillPolicyFailure[]
   t: (key: string, vars?: Record<string, string | number>) => string
 }
 
@@ -46,6 +55,7 @@ export function SessionSkillsSection({
   onSkillsSearchChange,
   onRefreshSkills,
   onOpenSessionSkillModal,
+  policyFailures = [],
   t,
 }: SessionSkillsSectionProps) {
   const filteredSkills = availableSkills.filter((s) => {
@@ -172,6 +182,39 @@ export function SessionSkillsSection({
               t('sessionSettings.skills.refresh'),
             ),
           }),
+
+          // Policy entries the registry refused. Rendered above the list so a
+          // user sees that a switch did not take effect before trusting it.
+          policyFailures.length > 0
+            ? e(
+                'div',
+                { className: 'dsh-skills-policy-failures', role: 'alert' },
+                e(
+                  'div',
+                  { className: 'dsh-skills-policy-failures-title' },
+                  t('sessionSettings.skills.policyFailuresTitle'),
+                ),
+                ...policyFailures.map((failure) =>
+                  e(
+                    'div',
+                    {
+                      key: failure.name,
+                      className: 'dsh-skills-policy-failure-row',
+                    },
+                    e(
+                      'code',
+                      { className: 'dsh-skills-policy-failure-name' },
+                      failure.name,
+                    ),
+                    e(
+                      'span',
+                      { className: 'dsh-skills-policy-failure-reason' },
+                      failure.reason,
+                    ),
+                  ),
+                ),
+              )
+            : null,
 
           // Skill list
           filteredSkills.length === 0

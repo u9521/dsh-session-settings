@@ -3,6 +3,7 @@ import type {
   SandboxAllowEntry,
   SandboxCapabilityInfo,
   SandboxSkippedEntry,
+  SandboxTemplate,
   SessionSandboxConfig,
   SessionSandboxMode,
   SessionSettingsConfig,
@@ -13,13 +14,20 @@ import {
   resolveEffectiveSandbox,
   sourceModeFor,
 } from '../../utils/config.ts'
-import {
-  missingEntries,
-  sandboxPathTemplates,
-  type SandboxPathTemplate,
-} from '../sandboxTemplates.ts'
+import { missingEntries, sandboxPathTemplates } from '../sandboxTemplates.ts'
+import { formatSandboxEntries } from '../sandboxClipboard.ts'
+import { useCopyFeedback } from '../../mcp/hooks/useCopyFeedback.ts'
+import { SandboxTemplatesModal } from '../modals/SandboxTemplatesModal.ts'
 
 const e = React.createElement
+
+/**
+ * How long an armed remove button waits for its second click.
+ *
+ * Long enough to read the confirmation and press again, short enough that a
+ * button left armed does not silently delete on a much later click.
+ */
+const DELETE_CONFIRM_MS = 3000
 
 export interface SessionSandboxSectionProps {
   scope?: 'session' | 'workspace' | 'global'
@@ -44,6 +52,18 @@ export interface SessionSandboxSectionProps {
   onChange: (config: SessionSandboxConfig) => void
   /** Switch the source layer; `custom` starts from the currently effective rules. */
   onSourceModeChange?: (mode: SessionSandboxMode) => void
+  /**
+   * User-authored presets, shared by every session.
+   *
+   * Absent until the first list response lands; the panel then renders the
+   * built-in presets alone, which is exactly what a plugin with no stored
+   * presets looks like.
+   */
+  templates?: SandboxTemplate[]
+  onCreateTemplate?: (template: Partial<SandboxTemplate>) => Promise<boolean>
+  onRemoveTemplate?: (id: string) => Promise<boolean>
+  /** The last template write failure, from the catalog hook. */
+  templatesError?: string
   t: (key: string, vars?: Record<string, string | number>) => string
 }
 
@@ -62,6 +82,22 @@ let rowSeq = 0
 function nextKey(): string {
   rowSeq += 1
   return `allow-${rowSeq}`
+}
+
+/**
+ * One preset as the button row renders it, from either family.
+ *
+ * The built-in and user families differ in where they come from — a bundle
+ * table versus a stored record — and in nothing else the renderer cares about:
+ * both fill rows, both can be exhausted, both show a count. Collapsing them
+ * here is what keeps the button markup from growing a second copy per family.
+ */
+interface RenderGroup {
+  readonly id: string
+  readonly label: string
+  readonly entries: readonly SandboxAllowEntry[]
+  /** Present for a user preset, which can also be deleted. */
+  readonly template?: SandboxTemplate
 }
 
 function toDrafts(
@@ -107,6 +143,10 @@ export function SessionSandboxSection({
   activeSourceMode,
   onChange,
   onSourceModeChange,
+  templates: userTemplates = [],
+  onCreateTemplate,
+  onRemoveTemplate,
+  templatesError,
   t,
 }: SessionSandboxSectionProps) {
   /** The source ladder, shared with the model / MCP / skills panels. */
@@ -155,14 +195,30 @@ export function SessionSandboxSection({
   const [pathDraft, setPathDraft] = React.useState('')
   const [descDraft, setDescDraft] = React.useState('')
 
-  // Re-seed when what the panel DISPLAYS changes identity: a source switch, a
-  // scope switch, a reload, or a reset. Local edits keep their own state
-  // otherwise.
+  /**
+   * The signature this panel last rendered from, and the one it last pushed.
+   *
+   * The two refs are what keep typing usable. A row-level edit commits upward,
+   * the controller stores the config, and React hands the new `allow` array
+   * straight back as a prop — so any "props changed, re-seed the draft" rule
+   * rebuilds every row on every keystroke, which drops the caret to the body and
+   * renormalizes the value under the user (a trailing space disappears the
+   * instant it is typed, which makes a sentence impossible to finish).
+   *
+   * The local draft therefore OWNS the rows while editing, and the props are
+   * only a seed: a change is adopted only when it did not come from this panel.
+   */
   const signature = JSON.stringify(displayEntries ?? [])
   const lastSignature = React.useRef(signature)
+  const lastPushedSignature = React.useRef(signature)
+
   React.useEffect(() => {
     if (lastSignature.current === signature) return
     lastSignature.current = signature
+    // Our own echo: the parent is showing what this panel already shows.
+    // Adopting it would replace hand-typed rows with their normalized form on
+    // every commit, so the draft is left alone.
+    if (lastPushedSignature.current === signature) return
     setRows(toDrafts(isReadonly ? displayEntries : sandboxConfig?.allow))
   }, [signature, isReadonly, displayEntries, sandboxConfig?.allow])
 
@@ -178,6 +234,8 @@ export function SessionSandboxSection({
   const commit = (next: DraftRow[]) => {
     setRows(next)
     const allow = fromDrafts(next)
+    // Record what this commit will look like when it arrives back as a prop.
+    lastPushedSignature.current = JSON.stringify(allow)
     onChange(scope === 'global' ? { allow } : { mode: 'custom', allow })
   }
 
@@ -194,7 +252,9 @@ export function SessionSandboxSection({
       return
     }
     if (mode === 'custom') {
-      onChange({ mode: 'custom', allow: fromDrafts(toDrafts(effectiveAllow)) })
+      const allow = fromDrafts(toDrafts(effectiveAllow))
+      lastPushedSignature.current = JSON.stringify(allow)
+      onChange({ mode: 'custom', allow })
     } else {
       onChange({ mode })
     }
@@ -227,11 +287,14 @@ export function SessionSandboxSection({
    *
    * Paths already present are skipped rather than duplicated, so clicking a
    * preset twice, or one whose paths overlap another (Android and Java share
-   * `~/.m2/repository`), converges instead of piling up.
+   * `~/.m2/repository` and `~/.gradle`), converges instead of piling up.
    */
-  const applyTemplate = (template: SandboxPathTemplate) => {
-    const additions = missingEntries(rows, template.entries)
+  const applyTemplate = (group: {
+    readonly entries: readonly SandboxAllowEntry[]
+  }) => {
+    const additions = missingEntries(rows, group.entries)
     if (additions.length === 0) return
+    disarmRow()
     commit([
       ...rows,
       ...additions.map((entry) => ({ ...entry, key: nextKey() })),
@@ -248,13 +311,139 @@ export function SessionSandboxSection({
    * value would not.
    */
   const isEnglish = t('sessionSettings.sandbox.add') === 'Add'
-  const templates = sandboxPathTemplates(isEnglish ? 'en' : 'zh')
+  const locale = isEnglish ? 'en' : 'zh'
+  const templates = sandboxPathTemplates(locale)
+
+  // One row model for both families, so the button renderer does not branch.
+  const builtinGroups: RenderGroup[] = templates.map((template) => ({
+    id: template.id,
+    label: t(template.labelKey),
+    entries: template.entries,
+  }))
+  const userGroups: RenderGroup[] = userTemplates.map((template) => ({
+    id: template.id,
+    label: template.name,
+    entries: template.entries,
+    template,
+  }))
 
   const updateRow = (key: string, patch: Partial<SandboxAllowEntry>) => {
     commit(rows.map((row) => (row.key === key ? { ...row, ...patch } : row)))
   }
 
   const disabled = !supported || isReadonly
+
+  // ---- Two-step delete -----------------------------------------------------
+
+  /**
+   * The row whose remove button is armed, if any.
+   *
+   * A row's draft deletion is not destructive (it needs an explicit Save), so
+   * this guards a mis-click, not data loss: one click disarms to nothing, and
+   * the second within {@link DELETE_CONFIRM_MS} deletes. Rows are keyed rather
+   * than indexed so a commit that renumbers nothing can disarm the wrong row.
+   */
+  const [armedRowKey, setArmedRowKey] = React.useState<string | null>(null)
+  const armedTimer = React.useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined,
+  )
+
+  /**
+   * Clear the arm.
+   *
+   * Depends on nothing but a ref and the state setter, so the same callback can
+   * be handed to every row's `onFocus`/`onBlur` without capturing a stale key.
+   */
+  const disarmRow = React.useCallback(() => {
+    if (armedTimer.current !== undefined) clearTimeout(armedTimer.current)
+    armedTimer.current = undefined
+    setArmedRowKey(null)
+  }, [])
+
+  React.useEffect(
+    () => () => {
+      if (armedTimer.current !== undefined) clearTimeout(armedTimer.current)
+    },
+    [],
+  )
+
+  const handleRemoveClick = (key: string) => {
+    if (armedRowKey !== key) {
+      if (armedTimer.current !== undefined) clearTimeout(armedTimer.current)
+      setArmedRowKey(key)
+      armedTimer.current = setTimeout(() => {
+        armedTimer.current = undefined
+        setArmedRowKey(null)
+      }, DELETE_CONFIRM_MS)
+      return
+    }
+    disarmRow()
+    removeRow(key)
+  }
+
+  // ---- Clipboard export ----------------------------------------------------
+
+  const { copiedKey, copy } = useCopyFeedback()
+  const copiedDraft = copiedKey === 'sandbox-draft'
+  const templateTitle = t('sessionSettings.sandbox.templatesExportTitle')
+
+  /** The stored presets' manager; closed until asked for. */
+  const [templatesModalOpen, setTemplatesModalOpen] = React.useState(false)
+
+  /**
+   * One headed button row.
+   *
+   * A preset button is disabled once every path it carries is already in the
+   * draft, and says so in its title: the count is what keeps a preset that adds
+   * two of five paths from looking like it did nothing.
+   */
+  const presetGroup = (
+    key: string,
+    label: string,
+    groups: readonly RenderGroup[],
+  ) =>
+    e(
+      'div',
+      { key, className: 'dsh-sandbox-template-group' },
+      e('div', { className: 'dsh-sandbox-templates-label' }, label),
+      e(
+        'div',
+        { className: 'dsh-sandbox-templates-groups' },
+        groups.length === 0
+          ? e(
+              'span',
+              { className: 'dsh-sandbox-template-empty' },
+              key === 'custom'
+                ? t('sessionSettings.sandbox.templatesCustomEmpty')
+                : t('sessionSettings.sandbox.templatesBuiltinEmpty'),
+            )
+          : groups.map((group) => {
+              const additions = missingEntries(rows, group.entries)
+              const exhausted = additions.length === 0
+              return e(
+                'button',
+                {
+                  key: group.id,
+                  type: 'button',
+                  className: `dsh-sandbox-template-btn ${exhausted ? 'added' : ''}`,
+                  disabled: disabled || exhausted,
+                  title: exhausted
+                    ? t('sessionSettings.sandbox.templatesApplied')
+                    : `+${additions.length}`,
+                  onClick: () => applyTemplate(group),
+                },
+                group.label,
+                exhausted
+                  ? e(
+                      'span',
+                      { className: 'dsh-sandbox-template-mark' },
+                      t('sessionSettings.sandbox.templatesApplied'),
+                    )
+                  : null,
+              )
+            }),
+      ),
+    )
 
   /**
    * The source picker, matching the model / MCP / skills panels.
@@ -418,8 +607,13 @@ export function SessionSandboxSection({
                   value: row.path,
                   disabled,
                   placeholder: t('sessionSettings.sandbox.pathPlaceholder'),
-                  onChange: (ev: React.ChangeEvent<HTMLInputElement>) =>
-                    updateRow(row.key, { path: ev.target.value }),
+                  onFocus: disarmRow,
+                  onChange: (ev: React.ChangeEvent<HTMLInputElement>) => {
+                    // Editing a row changes the subject of any standing
+                    // confirmation, so the arm does not survive it.
+                    disarmRow()
+                    updateRow(row.key, { path: ev.target.value })
+                  },
                 }),
                 e('input', {
                   type: 'text',
@@ -427,21 +621,41 @@ export function SessionSandboxSection({
                   value: row.description ?? '',
                   disabled,
                   placeholder: t('sessionSettings.sandbox.descPlaceholder'),
-                  onChange: (ev: React.ChangeEvent<HTMLInputElement>) =>
-                    updateRow(row.key, { description: ev.target.value }),
+                  onFocus: disarmRow,
+                  onChange: (ev: React.ChangeEvent<HTMLInputElement>) => {
+                    disarmRow()
+                    updateRow(row.key, { description: ev.target.value })
+                  },
                 }),
                 // The remove control is an editing affordance; a view-only row
-                // renders without it.
+                // renders without it. Two clicks: the first arms, the second
+                // deletes, and leaving the button (or editing anything)
+                // disarms. A draft deletion is reversible by not saving, but a
+                // single mis-click on a row of typed paths is still a bad
+                // trade for one click saved.
                 !isReadonly
                   ? e(
                       'button',
                       {
                         type: 'button',
-                        className: 'dsh-mcp-text-btn',
+                        className:
+                          armedRowKey === row.key
+                            ? 'dsh-mcp-text-btn dsh-sandbox-remove-armed'
+                            : 'dsh-mcp-text-btn',
                         disabled,
-                        onClick: () => removeRow(row.key),
+                        'aria-label':
+                          armedRowKey === row.key
+                            ? t('sessionSettings.sandbox.removeConfirm')
+                            : t('sessionSettings.sandbox.remove'),
+                        onClick: () => handleRemoveClick(row.key),
+                        // Leaving a button disarms it. Blur only fires on the
+                        // button that actually had focus, so another row's
+                        // blur cannot cancel the confirmation in progress.
+                        onBlur: disarmRow,
                       },
-                      t('sessionSettings.sandbox.remove'),
+                      armedRowKey === row.key
+                        ? t('sessionSettings.sandbox.removeConfirm')
+                        : t('sessionSettings.sandbox.remove'),
                     )
                   : null,
               ),
@@ -454,50 +668,74 @@ export function SessionSandboxSection({
       // Placed above the add row because it is the faster path to the same
       // outcome: someone adding three cache directories should see the shortcut
       // before the manual controls, not after.
+      //
+      // Two families in one block. The built-ins ship with the bundle and are
+      // read-only; the user's own are stored deployment-wide. They are headed
+      // separately because "can I delete this?" is otherwise a per-button
+      // question, and because a user edit to a built-in would be undone by the
+      // next plugin upgrade.
       !isReadonly
         ? e(
             'div',
             { className: 'dsh-sandbox-templates' },
-            e(
-              'div',
-              { className: 'dsh-sandbox-templates-label' },
-              t('sessionSettings.sandbox.templatesLabel'),
+            presetGroup(
+              'builtin',
+              t('sessionSettings.sandbox.templatesBuiltin'),
+              builtinGroups,
             ),
+            presetGroup(
+              'custom',
+              t('sessionSettings.sandbox.templatesCustom'),
+              userGroups,
+            ),
+
+            // Actions: manage the stored presets, or hand this draft to another
+            // machine by way of the clipboard.
             e(
               'div',
-              { className: 'dsh-sandbox-templates-groups' },
-              templates.map((template) => {
-                const additions = missingEntries(rows, template.entries)
-                const exhausted = additions.length === 0
-                return e(
-                  'button',
-                  {
-                    key: template.id,
-                    type: 'button',
-                    className: `dsh-sandbox-template-btn ${exhausted ? 'added' : ''}`,
-                    disabled: disabled || exhausted,
-                    // The count is the honest label: a preset that adds two of
-                    // its five paths should not look like it did nothing.
-                    title: exhausted
-                      ? t('sessionSettings.sandbox.templatesApplied')
-                      : `+${additions.length}`,
-                    onClick: () => applyTemplate(template),
+              { className: 'dsh-sandbox-template-actions' },
+              onCreateTemplate
+                ? e(
+                    'button',
+                    {
+                      type: 'button',
+                      className: 'dsh-sandbox-template-action',
+                      disabled,
+                      onClick: () => setTemplatesModalOpen(true),
+                    },
+                    t('sessionSettings.sandbox.templatesManage'),
+                  )
+                : null,
+              e(
+                'button',
+                {
+                  type: 'button',
+                  className: 'dsh-sandbox-template-action',
+                  disabled: rows.length === 0 || copiedDraft,
+                  onClick: () => {
+                    // Export the DRAFT, not the stored rules: the point is to
+                    // take the rows the user is looking at, including the ones
+                    // a template just filled in and the ones not saved yet.
+                    copy(
+                      formatSandboxEntries(fromDrafts(rows), templateTitle),
+                      'sandbox-draft',
+                    )
                   },
-                  t(template.labelKey),
-                  exhausted
-                    ? e(
-                        'span',
-                        { className: 'dsh-sandbox-template-mark' },
-                        t('sessionSettings.sandbox.templatesApplied'),
-                      )
-                    : null,
-                )
-              }),
+                },
+                copiedDraft
+                  ? t('sessionSettings.sandbox.templatesCopied')
+                  : t('sessionSettings.sandbox.templatesExport'),
+              ),
             ),
             e(
               'div',
               { className: 'dsh-sandbox-hint' },
               t('sessionSettings.sandbox.templatesHint'),
+            ),
+            e(
+              'div',
+              { className: 'dsh-sandbox-hint' },
+              t('sessionSettings.sandbox.templatesExportHint'),
             ),
           )
         : null,
@@ -514,8 +752,11 @@ export function SessionSandboxSection({
               value: pathDraft,
               disabled,
               placeholder: t('sessionSettings.sandbox.pathPlaceholder'),
-              onChange: (ev: React.ChangeEvent<HTMLInputElement>) =>
-                setPathDraft(ev.target.value),
+              onFocus: disarmRow,
+              onChange: (ev: React.ChangeEvent<HTMLInputElement>) => {
+                disarmRow()
+                setPathDraft(ev.target.value)
+              },
               onKeyDown: (ev: React.KeyboardEvent<HTMLInputElement>) => {
                 if (ev.key === 'Enter') addRow()
               },
@@ -526,8 +767,11 @@ export function SessionSandboxSection({
               value: descDraft,
               disabled,
               placeholder: t('sessionSettings.sandbox.descPlaceholder'),
-              onChange: (ev: React.ChangeEvent<HTMLInputElement>) =>
-                setDescDraft(ev.target.value),
+              onFocus: disarmRow,
+              onChange: (ev: React.ChangeEvent<HTMLInputElement>) => {
+                disarmRow()
+                setDescDraft(ev.target.value)
+              },
               onKeyDown: (ev: React.KeyboardEvent<HTMLInputElement>) => {
                 if (ev.key === 'Enter') addRow()
               },
@@ -580,6 +824,20 @@ export function SessionSandboxSection({
           ),
         )
       : null,
+
+    // The preset manager. Rendered outside the view-only gate because it is
+    // already closed there: its trigger lives in the editing block, so the
+    // modal cannot be open in a state that has no trigger.
+    e(SandboxTemplatesModal, {
+      open: templatesModalOpen && !isReadonly,
+      templates: userTemplates,
+      builtinNames: builtinGroups.map((group) => group.label),
+      error: templatesError,
+      onClose: () => setTemplatesModalOpen(false),
+      onCreate: onCreateTemplate,
+      onRemove: onRemoveTemplate,
+      t,
+    }),
 
     // Scope note: a relative path needs a workspace to resolve against, and a
     // page that cannot establish one must say so rather than silently

@@ -11,6 +11,7 @@ import type {
   SessionSettingsConfig,
   SessionSkillsConfig,
   SkillItem,
+  SkillPolicyFailure,
   SubagentModelConfig,
 } from '../types/index.ts'
 import { API_ENDPOINTS, API_METHODS } from '../types/index.ts'
@@ -516,6 +517,8 @@ export interface SessionCatalogs {
   refreshingSkills: boolean
   sandboxCapability?: SandboxCapabilityInfo
   sandboxSkipped: SandboxSkippedEntry[]
+  /** Skill policy entries the registry refused to apply for this session. */
+  skillsPolicyFailures: SkillPolicyFailure[]
   notice: SettingsNotice | null
   setNotice: (notice: SettingsNotice | null) => void
 }
@@ -549,6 +552,9 @@ export function useSessionCatalogs(
   >(undefined)
   const [sandboxSkipped, setSandboxSkipped] = React.useState<
     SandboxSkippedEntry[]
+  >([])
+  const [skillsPolicyFailures, setSkillsPolicyFailures] = React.useState<
+    SkillPolicyFailure[]
   >([])
   const [notice, setNotice] = React.useState<SettingsNotice | null>(null)
 
@@ -690,11 +696,17 @@ export function useSessionCatalogs(
           ok?: boolean
           sandboxCapability?: SandboxCapabilityInfo
           sandboxSkipped?: SandboxSkippedEntry[]
+          skillsPolicyFailures?: SkillPolicyFailure[]
         }
         if (data?.ok && mounted) {
           setSandboxCapability(data.sandboxCapability)
           setSandboxSkipped(
             Array.isArray(data.sandboxSkipped) ? data.sandboxSkipped : [],
+          )
+          setSkillsPolicyFailures(
+            Array.isArray(data.skillsPolicyFailures)
+              ? data.skillsPolicyFailures
+              : [],
           )
         }
       } catch {
@@ -731,6 +743,7 @@ export function useSessionCatalogs(
     refreshingSkills,
     sandboxCapability,
     sandboxSkipped,
+    skillsPolicyFailures,
     notice,
     setNotice,
   }

@@ -1,13 +1,10 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type {
   Agent,
-  AssembleContext,
-  LlmCallConfig,
-  PromptAssembly,
+  ModelSelection,
   SessionSettingsStore,
   SubagentModelConfig,
   SubagentModelTarget,
-  ToolExecution,
 } from '../../types.ts'
 import { resolveEffectiveSubagentModel } from '../session/storage.ts'
 import {
@@ -70,7 +67,7 @@ function parentRoute(
  * deliberate choice is worse than missing one.
  *
  * This is also why the interceptor must never write `agent.options`: doing so
- * would destroy the signal it depends on.
+ * would destroy the signal it depends on. It records a model selection instead.
  */
 function hasExplicitChildModel(ctx: Context, agent?: Agent): boolean {
   const options = agent?.options
@@ -94,68 +91,48 @@ function isForkSubagent(agent?: Agent): boolean {
   return header?.origin === 'subagent' && header.isSeeded === true
 }
 
-/** Remove the child-model-selection surface from one assembly. */
-function withoutModelSelection(
-  assembly: PromptAssembly,
-  config: SubagentModelConfig,
-): PromptAssembly {
-  if (
-    config.allowAgentSelectModel !== false ||
-    !Array.isArray(assembly.tools)
-  ) {
-    return assembly
+/** Whether two routes name the same provider/model/effort. */
+function sameSelection(
+  a: ModelSelection | undefined,
+  b: SubagentModelTarget | undefined,
+): boolean {
+  if (!a || !b) return false
+  return (
+    a.provider === b.provider &&
+    a.model === b.model &&
+    a.reasoningEffort === b.reasoningEffort
+  )
+}
+
+/**
+ * Record a forced route as the child's next model selection.
+ *
+ * `agent.model.select()` is the host's only supported way to change a model
+ * route: it appends a durable `model/selection` event, and step preparation
+ * reads it before fixing the selection the request must match. Writing
+ * `agent.options` instead would corrupt the explicit-choice signal this module
+ * depends on, and rewriting the request waterfall is now a hard error.
+ *
+ * The selection is recorded only when it differs from what the child would use
+ * anyway, because `select()` appends an event and an unchanged route would add
+ * noise to the session log.
+ */
+function applyRoute(agent: Agent, target: SubagentModelTarget): void {
+  const current = agent.model?.current()
+  const selection: ModelSelection = {
+    provider: target.provider,
+    model: target.model,
+    ...(target.reasoningEffort === undefined
+      ? {}
+      : { reasoningEffort: target.reasoningEffort }),
   }
+  if (sameSelection(current, target)) return
+  agent.model?.select(selection)
+}
 
-  const stripped = new Set(['model', 'provider', 'reasoning_effort'])
-
-  const tools = assembly.tools
-    .filter((tool) => tool.name !== 'list_subagent_models')
-    .map((tool) => {
-      const isDelegation =
-        tool.name === 'subagent' || tool.name.startsWith('subagent_')
-      if (
-        !isDelegation ||
-        !tool.parameters ||
-        typeof tool.parameters !== 'object'
-      ) {
-        return tool
-      }
-
-      const parameters = tool.parameters as {
-        properties?: Record<string, unknown>
-        required?: unknown
-      }
-      const properties = parameters.properties
-      if (!properties || typeof properties !== 'object') return tool
-
-      const required = Array.isArray(parameters.required)
-        ? parameters.required.filter(
-            (name: unknown) => typeof name === 'string' && !stripped.has(name),
-          )
-        : parameters.required
-
-      return {
-        ...tool,
-        parameters: {
-          ...parameters,
-          properties: Object.fromEntries(
-            Object.entries(properties).filter(([name]) => !stripped.has(name)),
-          ),
-          ...(required === undefined ? {} : { required }),
-        },
-        description:
-          typeof tool.description === 'string'
-            ? tool.description
-                .replace(
-                  /Child LLM selection is optional\..*?default effort\./g,
-                  '',
-                )
-                .trim()
-            : tool.description,
-      }
-    })
-
-  return { ...assembly, tools }
+/** The part of the `agent/pre-step` payload this module reads. */
+interface PreStepPayload {
+  agent: Agent
 }
 
 export function registerSubagentModelInterceptor(
@@ -199,77 +176,52 @@ export function registerSubagentModelInterceptor(
     return target
   }
 
-  // 1. Monotonic guard: refuse list_subagent_models while the agent is barred
-  //    from choosing a child model.
-  ctx.inject(['tools'], (toolsCtx: Context) => {
-    const guard = (
-      toolsCtx as {
-        tools?: {
-          guard?: (
-            check: (exec: ToolExecution) => string | undefined,
-          ) => unknown
-        }
-      }
-    ).tools?.guard
-    if (typeof guard !== 'function') return
-    guard((exec) => {
-      if (exec?.name !== 'list_subagent_models') return undefined
-      return resolveEffectiveSubagentModel(
-        getSessionSettingsStore(),
-        resolveAgentSessionId(exec.agent, ctx),
-      ).allowAgentSelectModel === false
-        ? 'list_subagent_models is disabled by user settings for this session'
-        : undefined
-    })
+  /** Record the forced route when the child has one. */
+  const applyForcedRoute = async (agent?: Agent): Promise<void> => {
+    if (!agent) return
+    const target = await forcedRouteFor(agent)
+    if (target) applyRoute(agent, target)
+  }
+
+  // 1. Enforcement: hide the model-selection surface from the child while the
+  //    session forbids it from choosing.
+  //
+  //    This used to be a prompt-assembly rewrite that stripped the selection
+  //    parameters off `list_subagent_models`/`subagent`. That seam no longer
+  //    exists: the host assembles sections and variables, then attaches tools
+  //    from the registry AFTER the waterfall, so an assembly never carries a
+  //    tool list to rewrite. The registry's own scope layer is the seam that
+  //    survives, and it is per-agent, which is exactly the granularity wanted.
+  ctx.on('agent/created', async ({ agent }) => {
+    if (!agent) return
+    await applyForcedRoute(agent)
+
+    const config = await configFor(agent)
+    if (config.allowAgentSelectModel !== false) return
+    // The agent's own scope, not the plugin's: a restriction declared here
+    // applies to this child alone and unwinds with its context.
+    const tools = agent.ctx?.get?.('tools')
+    if (typeof tools?.restrict !== 'function') return
+    tools.restrict({ deny: ['list_subagent_models'] })
   })
 
-  // 2. Prompt assembly: hide the selection surface in forced mode, and keep the
-  //    child's {{provider}}/{{model}} variables in step with the routed call.
+  // 2. Keep the recorded route current when the setting changes mid-session.
+  //
+  //    The loop captures a step's selection BEFORE dispatching `agent/pre-step`,
+  //    so nothing recorded here can change the step already being prepared; it
+  //    applies from the following step. That is the best a listener can do, and
+  //    the first step is already covered by `agent/created`. The listener is
+  //    prepended so other pre-step observers read the forced route rather than
+  //    the stale one.
   ctx.on(
-    'system-prompt/assemble',
+    'agent/pre-step',
     async (
-      _assembly: PromptAssembly,
-      context: AssembleContext,
-      next: () => Promise<PromptAssembly>,
-    ): Promise<PromptAssembly> => {
-      const agent = context?.agent
-      const assembled = await next()
-      if (!agent) return assembled
-
-      const themed = withoutModelSelection(assembled, await configFor(agent))
-      const target = await forcedRouteFor(agent)
-      if (!target) return themed
-
-      return {
-        ...themed,
-        variables: {
-          ...themed.variables,
-          provider: target.provider,
-          model: target.model,
-        },
-      }
+      { agent }: PreStepPayload,
+      next: () => Promise<unknown>,
+    ): Promise<unknown> => {
+      await applyForcedRoute(agent)
+      return next()
     },
-  )
-
-  // 3. Route the child's actual LLM call.
-  ctx.on(
-    'agent/request',
-    async (
-      payload: { agent: Agent },
-      next: () => Promise<LlmCallConfig>,
-    ): Promise<LlmCallConfig> => {
-      const proposal = await next()
-      const target = await forcedRouteFor(payload?.agent)
-      if (!target) return proposal
-
-      return {
-        ...proposal,
-        provider: target.provider,
-        model: target.model,
-        ...(target.reasoningEffort
-          ? { reasoningEffort: target.reasoningEffort }
-          : {}),
-      }
-    },
+    { prepend: true },
   )
 }

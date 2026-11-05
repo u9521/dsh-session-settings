@@ -73,8 +73,11 @@ const TEMPLATE_SHAPE: readonly {
     id: 'android',
     paths: [
       '~/Android/Sdk',
-      '~/.gradle/caches',
-      '~/.gradle/wrapper',
+      // One grant for the whole Gradle user home. Splitting it into `caches`
+      // and `wrapper` (as it used to) left the daemon registry, `jdks/` and
+      // `native/` outside the grant, and a build that populates any of them
+      // failed on a path the preset had appeared to cover.
+      '~/.gradle',
       '~/.android',
       '~/.m2/repository',
     ],
@@ -101,7 +104,9 @@ const TEMPLATE_SHAPE: readonly {
     ],
   },
   { id: 'go', paths: ['~/go/pkg/mod', '~/.cache/go-build'] },
-  { id: 'java', paths: ['~/.m2/repository', '~/.gradle/caches'] },
+  // The same single `~/.gradle` grant as Android: a narrower one here would
+  // hand a Java user less than the Android preset already gives them.
+  { id: 'java', paths: ['~/.m2/repository', '~/.gradle'] },
   {
     id: 'generic',
     paths: ['~/.cache', '~/.docker'],
@@ -131,8 +136,7 @@ function buildTemplates(
 
 const ZH_DESCRIPTIONS: Readonly<Record<string, string>> = {
   '~/Android/Sdk': 'Android SDK 与平台工具',
-  '~/.gradle/caches': 'Gradle 依赖与构建缓存',
-  '~/.gradle/wrapper': 'Gradle 发行版 wrapper',
+  '~/.gradle': 'Gradle 依赖、wrapper 与守护进程缓存',
   '~/.android': 'Android 调试与 AVD 元数据',
   '~/.m2/repository': 'Maven 本地仓库（Java 依赖）',
   '~/.cargo': 'Cargo 下载源与 registry 缓存',
@@ -155,8 +159,7 @@ const ZH_DESCRIPTIONS: Readonly<Record<string, string>> = {
 
 const EN_DESCRIPTIONS: Readonly<Record<string, string>> = {
   '~/Android/Sdk': 'Android SDK and platform tools',
-  '~/.gradle/caches': 'Gradle dependency and build caches',
-  '~/.gradle/wrapper': 'Gradle distribution wrapper',
+  '~/.gradle': 'Gradle dependencies, wrapper and daemon caches',
   '~/.android': 'Android debug and AVD metadata',
   '~/.m2/repository': 'Maven local repository (Java dependencies)',
   '~/.cargo': 'Cargo download and registry cache',

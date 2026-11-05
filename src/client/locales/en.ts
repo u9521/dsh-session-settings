@@ -151,6 +151,8 @@ export const en = {
       empty:
         'No available skills found in the current workspace. Add skills in the workspace root or ~/.dsh/skills.',
       noMatch: 'No matching skills found.',
+      policyFailuresTitle:
+        'Invocation policy could not be applied to these skills:',
       searchPlaceholder: 'Search skill name or description...',
       refresh: 'Refresh',
       refreshing: 'Fetching skills list...',
@@ -195,6 +197,7 @@ export const en = {
       emptyInherited: 'The inherited source grants no extra directories.',
       add: 'Add',
       remove: 'Remove',
+      removeConfirm: 'Confirm delete',
       pathPlaceholder: 'Path, e.g. ~/.cache/uv or ./vendor',
       descPlaceholder: 'Purpose, e.g. uv package cache',
       pathHint:
@@ -210,7 +213,43 @@ export const en = {
       templatesLabel: 'Quick fill',
       templatesHint:
         'Fill common directories for a toolchain in one click. This only fills the current draft; press Save to apply, and edit or remove any row afterwards.',
+      templatesBuiltin: 'Built-in presets',
+      templatesCustom: 'Custom presets',
+      templatesBuiltinEmpty: '(none)',
+      templatesCustomEmpty: 'No custom presets yet.',
       templatesApplied: 'Added',
+      templatesManage: 'Manage presets',
+      templatesExport: 'Export to clipboard',
+      templatesCopied: 'Copied',
+      templatesExportTitle: 'Sandbox extra writable directories',
+      templatesExportHint:
+        'One "path | purpose" row per line, with an optional # heading first. Paste it into a conversation to share it, or into Manage presets to import it.',
+      templatesModalTitle: 'Custom sandbox presets',
+      templatesModalSubtitle:
+        'Presets live in deployment-level storage and are available to every session, workspace and the global defaults. Built-in presets are read-only and not listed here.',
+      templatesStored: 'Saved presets',
+      templatesNew: 'New preset',
+      templatesClose: 'Close',
+      templatesSave: 'Save preset',
+      templatesSaving: 'Saving...',
+      templatesNamePlaceholder: 'Preset name, e.g. Android',
+      templatesNameRequired: 'A preset name is required.',
+      templatesRowsRequired: 'At least one directory is required.',
+      templatesNameTaken:
+        'A preset named "{name}" already exists (or collides with a built-in).',
+      templatesRowCount: '({count} rows)',
+      templatesImport: 'Import from clipboard',
+      templatesImportPlaceholder:
+        'One "path | purpose" row per line; # heading lines are allowed. Blank lines and # comments are ignored.',
+      templatesImportApply: 'Import',
+      templatesImportCancel: 'Cancel',
+      templatesImportEmpty: 'No directories could be parsed.',
+      templatesImportAdded: 'Imported {count} directories.',
+      templatesImportSkipped:
+        'Line(s) {lines} could not be parsed and were skipped.',
+      templatesReadClipboard: 'Read clipboard',
+      templatesClipboardDenied:
+        'The browser refused clipboard access; paste into the box below instead.',
       templates: {
         android: 'Android',
         rust: 'Rust',

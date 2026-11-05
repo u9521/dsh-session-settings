@@ -36,6 +36,34 @@ export const SESSION_SKILLS_CSS = `
   flex-direction: column;
   gap: 8px;
 }
+/* Invocation policy the registry refused to apply */
+.dsh-skills-policy-failures {
+  background: var(--dsw-alias-state-error-secondary);
+  border: 1px solid var(--dsw-alias-state-error-primary);
+  border-radius: 6px;
+  color: var(--dsw-alias-label-primary);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+}
+.dsh-skills-policy-failures-title {
+  font-size: 12px;
+  font-weight: 600;
+}
+.dsh-skills-policy-failure-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.dsh-skills-policy-failure-name {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+.dsh-skills-policy-failure-reason {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+}
 
 /* Skill Badges */
 .dsh-skill-badge {

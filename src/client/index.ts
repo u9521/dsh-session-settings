@@ -1,12 +1,7 @@
 import * as React from 'react'
 import type { Context } from '@deepseek-ai/cordis'
 import * as locales from './locales/index.ts'
-import {
-  LOCALE_NS,
-  type ClientRemoteServiceRef,
-  type SessionsState,
-  type WorkspacesState,
-} from './types/index.ts'
+import { LOCALE_NS, type ClientRemoteServiceRef } from './types/index.ts'
 import { SessionSettingsViewPage } from './session/index.ts'
 import { McpServersSettingsTab } from './mcp/index.ts'
 import { SessionSettingsHeroChip } from './hero/index.ts'
@@ -45,6 +40,31 @@ interface ClientLocaleService {
     ns: string,
   ) => (key: string, vars?: Record<string, string | number>) => string
   subscribe: (callback: () => void) => () => void
+}
+
+/**
+ * The MCP glyph the settings navigation shows for this plugin's section.
+ *
+ * Drawn here rather than taken from the primitives package because the product
+ * icon set has no MCP mark; it is the same path the sidebar decoration used
+ * before the shell grew `settings.section.icon`.
+ */
+function McpSectionIcon({ size }: { size: number }): React.ReactElement {
+  return e(
+    'svg',
+    {
+      width: size,
+      height: size,
+      viewBox: '0 0 16 16',
+      'aria-hidden': 'true',
+      fill: 'currentColor',
+    },
+    e('path', {
+      fillRule: 'evenodd',
+      clipRule: 'evenodd',
+      d: 'M12.3368 1.53569L11.931 4.43172H14.8086V5.79673H11.7404L11.1962 9.67859H14.2839V11.0436H11.0056L10.4994 14.6529L9.14873 14.4643L9.62731 11.0436H5.75876L5.25252 14.6529L3.90186 14.4643L4.38043 11.0436H1.69141V9.67859H4.57104L5.11417 5.79673H2.21609V4.43172H5.30581L5.73724 1.34713L7.08995 1.53569L6.68414 4.43172H10.5527L10.9841 1.34713L12.3368 1.53569ZM5.94937 9.67859H9.81791L10.361 5.79673H6.49353L5.94937 9.67859Z',
+    }),
+  )
 }
 
 class SessionSettingsErrorBoundary extends React.Component<
@@ -190,7 +210,11 @@ export function apply(ctx: Context) {
         order: 10,
         label: () => translator('sessionSettings.title'),
       },
-      function SessionSettingsHeroSeat() {
+      // The seat is session-scoped, so the framework hands the chip the live
+      // `sessionId` plus the `useSessions`/`useWorkspaces` selectors. Reading
+      // `ctx.get('sessions')` instead re-derived identity from the store on
+      // every render and duplicated the host's own "current session" rule.
+      function SessionSettingsHeroSeat(props: Record<string, unknown>) {
         return e(SessionSettingsHeroChip, {
           remote,
           locale: ctx.get('locale') as unknown as {
@@ -198,68 +222,29 @@ export function apply(ctx: Context) {
               ns: string,
             ) => (key: string, vars?: Record<string, string | number>) => string
           },
-          sessions: ctx.get('sessions') as unknown as {
-            list?: {
-              subscribe: (cb: () => void) => () => void
-              getSnapshot: () => SessionsState
-            }
-          },
-          workspaces: ctx.get('workspaces') as unknown as {
-            list?: {
-              subscribe: (cb: () => void) => () => void
-              getSnapshot: () => WorkspacesState
-            }
-          },
+          ...props,
         })
       },
     ),
   )
 
-  // 6. Decorate the Settings sidebar nav icon for the MCP section.
+  // 6. Supply the Settings nav glyph through the shell's own icon seat.
   //
-  // This is the one DOM operation left: the settings shell hardcodes a glyph per
-  // section id and falls back to a gear for unknown ids, with no slot for an
-  // icon. The anchor is this plugin's own localized label rather than a
-  // hardcoded pair of strings, so a third locale keeps working.
-  ctx.effect(() => {
-    let frame = 0
-    const mcpLabel = translator('mcpServers.tabLabel')
-    const updateNavIcons = () => {
-      // Only execute when a dialog is open (e.g. Settings dialog)
-      if (document.querySelector('[role="dialog"]') === null) return
-
-      const navButtons = document.querySelectorAll('button[class*="navCell"]')
-      for (const btn of Array.from(navButtons)) {
-        const label = btn.querySelector('span[class*="navLabel"]')
-        if (!label) continue
-
-        if (label.textContent === mcpLabel) {
-          const iconSvg = btn.querySelector('svg[class*="navIcon"]')
-          if (iconSvg && !iconSvg.getAttribute('data-mcp-official-icon')) {
-            iconSvg.setAttribute('data-mcp-official-icon', 'true')
-            iconSvg.setAttribute('viewBox', '0 0 16 16')
-            iconSvg.innerHTML = `
-              <path fill="currentColor" fill-rule="evenodd" clip-rule="evenodd" d="M12.3368 1.53569L11.931 4.43172H14.8086V5.79673H11.7404L11.1962 9.67859H14.2839V11.0436H11.0056L10.4994 14.6529L9.14873 14.4643L9.62731 11.0436H5.75876L5.25252 14.6529L3.90186 14.4643L4.38043 11.0436H1.69141V9.67859H4.57104L5.11417 5.79673H2.21609V4.43172H5.30581L5.73724 1.34713L7.08995 1.53569L6.68414 4.43172H10.5527L10.9841 1.34713L12.3368 1.53569ZM5.94937 9.67859H9.81791L10.361 5.79673H6.49353L5.94937 9.67859Z" />
-            `
-          }
-        }
-      }
-    }
-
-    const scheduleUpdate = () => {
-      if (frame !== 0) return
-      frame = requestAnimationFrame(() => {
-        frame = 0
-        updateNavIcons()
-      })
-    }
-
-    const observer = new MutationObserver(scheduleUpdate)
-    observer.observe(document.body, { childList: true, subtree: true })
-
-    return () => {
-      if (frame !== 0) cancelAnimationFrame(frame)
-      observer.disconnect()
-    }
-  }, 'session-settings: official sidebar nav icons')
+  // The registration id MUST equal the section id: the shell renders
+  // `settings.section.icon` with `{ only: row.id, fallback: navIcon(row.id) }`.
+  // This used to be a MutationObserver that walked hashed class names
+  // (navCell/navLabel/navIcon) and rewrote the shell's SVG; the seat exists
+  // precisely so a section can paint its own glyph without touching the DOM.
+  slots.inject('settings.section.icon', () =>
+    slots.register(
+      {
+        name: 'settings.section.icon',
+        id: 'mcp-servers',
+      },
+      function McpSettingsSectionIcon(props: Record<string, unknown>) {
+        const size = typeof props.size === 'number' ? props.size : 16
+        return e(McpSectionIcon, { size })
+      },
+    ),
+  )
 }

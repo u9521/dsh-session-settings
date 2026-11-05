@@ -9,12 +9,11 @@ import {
   type SessionsState,
   type WorkspacesState,
   type SessionSettingsConfig,
+  type UseSessionsHook,
+  type UseWorkspacesHook,
 } from '../types/index.ts'
 import { isSessionCustomized } from '../utils/config.ts'
-import {
-  resolveMainSessionId,
-  resolvePageWorkspace,
-} from '../utils/sessionScope.ts'
+import { resolvePageWorkspace } from '../utils/sessionScope.ts'
 
 const e = React.createElement
 
@@ -29,13 +28,34 @@ const e = React.createElement
 const EMPTY_SESSIONS: SessionsState = { byId: {} }
 const EMPTY_WORKSPACES: WorkspacesState = { items: [] }
 
+/**
+ * Props the chip receives.
+ *
+ * `conversation.hero.options` is a session-scoped list slot, so the framework
+ * delivers the live session identity and the session/workspace selector hooks.
+ * Reading them from here is what keeps the chip on the same identity the
+ * surrounding conversation shows; the previous version reached into
+ * `ctx.get('sessions')` and re-derived the "current session" rule itself.
+ */
 export interface SessionSettingsHeroChipProps {
   remote?: ClientRemoteServiceRef
+  /**
+   * Translator namespace source.
+   *
+   * Locale is a process-wide service, not session identity, so it is still
+   * resolved once at registration and handed down; only the session/workspace
+   * identity moved to the slot's standard props.
+   */
   locale?: {
     bind?: (
       ns: string,
     ) => (key: string, vars?: Record<string, string | number>) => string
   }
+  /** The slot's own session — the conversation this chip sits in. */
+  sessionId?: string
+  useSessions?: UseSessionsHook
+  useWorkspaces?: UseWorkspacesHook
+  /** Legacy fallback: a directly supplied store, used when no slot props exist. */
   sessions?: {
     list?: {
       subscribe: (cb: () => void) => () => void
@@ -53,8 +73,9 @@ export interface SessionSettingsHeroChipProps {
 export function SessionSettingsHeroChip({
   remote,
   locale,
-  sessions,
-  workspaces,
+  sessionId,
+  useSessions,
+  useWorkspaces,
 }: SessionSettingsHeroChipProps) {
   const [modalOpen, setModalOpen] = React.useState<boolean>(false)
   const [hasOverride, setHasOverride] = React.useState<boolean>(false)
@@ -64,35 +85,23 @@ export function SessionSettingsHeroChip({
     [locale],
   )
 
-  // Subscribe to sessions list state to reactively track current session
-  const sessionsState = React.useSyncExternalStore<SessionsState>(
-    sessions?.list?.subscribe
-      ? sessions.list.subscribe.bind(sessions.list)
-      : () => () => {},
-    sessions?.list?.getSnapshot
-      ? sessions.list.getSnapshot.bind(sessions.list)
-      : () => EMPTY_SESSIONS,
-  )
+  // The framework's own selectors, handed to every session-scoped slot. There
+  // is deliberately no direct-store fallback: the seat always provides them,
+  // and a second identity path is what let the chip disagree with the
+  // conversation it sits in.
+  const sessionsState = (useSessions ?? (() => undefined))() as
+    SessionsState | undefined
+  const workspacesState = (useWorkspaces ?? (() => undefined))() as
+    WorkspacesState | undefined
 
-  // Subscribe to workspaces list state to reactively track workspace
-  const workspacesState = React.useSyncExternalStore<WorkspacesState>(
-    workspaces?.list?.subscribe
-      ? workspaces.list.subscribe.bind(workspaces.list)
-      : () => () => {},
-    workspaces?.list?.getSnapshot
-      ? workspaces.list.getSnapshot.bind(workspaces.list)
-      : () => EMPTY_WORKSPACES,
-  )
-
-  // The hero page always has a session: picking a workspace connects its blank
-  // one, and that session is what the main view retains. Resolving it is what
-  // lets a session-scope save land on the conversation about to start, and what
-  // makes the workspace follow a switch.
-  const currentSessionId = resolveMainSessionId(sessionsState)
+  // The slot's own session is the identity. Deriving it from the store instead
+  // re-implemented the host's "current session" rule next to the framework's.
+  const currentSessionId = sessionId
 
   const currentWorkspace = resolvePageWorkspace({
     sessions: sessionsState,
     workspaces: workspacesState,
+    sessionId: currentSessionId,
   })
   const currentWorkspaceId =
     currentWorkspace?.workspaceId ?? currentWorkspace?.id
@@ -193,10 +202,14 @@ export function SessionSettingsHeroChip({
                 sessionId: currentSessionId,
                 workspaceId: currentWorkspaceId,
                 workspaceTitle: currentWorkspaceTitle,
-                useSessions: (selector) =>
-                  selector ? selector(sessionsState) : sessionsState,
-                useWorkspaces: (selector) =>
-                  selector ? selector(workspacesState) : workspacesState,
+                useSessions: (selector) => {
+                  const state = sessionsState ?? EMPTY_SESSIONS
+                  return selector ? selector(state) : state
+                },
+                useWorkspaces: (selector) => {
+                  const state = workspacesState ?? EMPTY_WORKSPACES
+                  return selector ? selector(state) : state
+                },
                 onClose: () => setModalOpen(false),
                 onSave: () => {
                   checkOverride()

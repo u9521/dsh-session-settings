@@ -13,7 +13,7 @@ DSH Web 的会话级配置能力（子代理模型、MCP 服务器、技能开�
 **Node 半（cordis 插件）**：入口 `src/server/index.ts`，`name = 'session-settings'`，`inject = ['connection', 'loader']`，暴露单个 `apply(ctx)`。内部按领域切成 `mcp/`、`session/`、`skills/`、`subagent-model/` 四个目录；`mcp/`、`session/`、`skills/` 各有 `routes.ts`（HTTP），`mcp/`、`skills/`、`subagent-model/` 各有 `interceptor.ts`（运行时装配），共用 `common/paths.ts` 定位落盘文件。
 
 - HTTP 面统一挂在前缀 `/api/session-settings` 下，路径常量只在 `API_ENDPOINTS` 定义一次，客户端与服务端都从这里取；路由经 `ctx.connection.fetch.register()` 注册并在 `ctx.effect` 的清理函数里注销，因此 Host/Origin fence 与浏览器鉴权先于 handler 生效，理由见 [HTTP 接口契约与官方鉴权闸门](../bug-fix/2026-10-01-http-contract-and-auth-fence.md)。
-- 策略不靠事件过滤，而是装配到每个 agent 自己的 scope 层：`agent/created` 装 `tools.restrict()` / `tools.guard()` / `systemPrompt.section()` / `skills.register()`，`agent/disposed` 撤销，`tools/change` 触发重绘；`system-prompt/assemble` 只作挂载触发，`agent/request` 改写子代理路由。理由见 [用 scope 层声明取代全局拦截器](2026-09-30-scope-native-mcp-and-skills.md)。
+- 策略不靠事件过滤，而是装配到每个 agent 自己的 scope 层：`agent/created` 装 `tools.restrict()` / `tools.guard()` / `systemPrompt.section()` / `skills.register()`，`agent/disposed` 撤销，`tools/change` 触发重绘；`system-prompt/assemble` 只作挂载触发，子代理路由经 `agent.model.select()` 记录（`agent/request` 已废弃，改写路由会被宿主判为错误）。理由见 [用 scope 层声明取代全局拦截器](2026-09-30-scope-native-mcp-and-skills.md)。
 - 状态落盘在 `$DSH_HOME/storages/`（`mcp_servers.json`、`session_settings.json`），store 惰性加载、目录延迟创建：只有真正读写时才触碰磁盘，避免启动期副作用。
 - MCP 客户端生命周期由 `McpManager` 持有，随会话策略动态装载/卸载，不需要重启 `dsh web`。
 
