@@ -1210,8 +1210,8 @@ declare module '@deepseek-ai/cordis' {
     /**
      * The sandbox policy owner.
      *
-     * The plugin wraps `resolve()` so the session's extra writable roots travel
-     * on every stamped policy; the same service supplies the effective mode.
+     * The plugin registers the session's extra writable roots on it and reads
+     * the effective mode back; it never wraps the service.
      */
     sandboxPolicy?: SandboxPolicyServiceLike
     /**

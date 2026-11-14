@@ -55,10 +55,9 @@ function mount(ctx: Context, stores: OpenStores): void {
     mcpManager,
   )
 
-  // Sandbox allow-list: stamps the session's extra writable directories onto
-  // every per-call policy `ctx.sandboxPolicy.resolve()` hands out, and
-  // contributes the same list to the model's runtime context. Registered BEFORE
-  // the routes so a settings save can invalidate it.
+  // Sandbox allow-list: registers the session's extra writable directories on
+  // `ctx.sandboxPolicy` and contributes their purposes to the model's runtime
+  // context. Registered BEFORE the routes so a settings save can invalidate it.
   const sandboxInterceptor = registerSandboxInterceptor(
     ctx,
     getSessionSettingsStore,
