@@ -1,0 +1,3 @@
+- insert:
+    - id: session-settings
+      name: '@local/dsh-session-settings'
