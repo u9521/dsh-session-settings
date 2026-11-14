@@ -202,10 +202,7 @@ export interface SettingsSnapshotResponse {
   sessionConfig?: SessionSettingsConfig
   workspaceConfig?: SessionSettingsConfig
   globalConfig?: SessionSettingsConfig
-  /**
-   * What the mounted sandbox backend can do, so the sandbox panel can disable
-   * itself with a reason instead of saving a grant nothing will honor.
-   */
+  /** The target session's resolved sandbox facts, for the panel's notices. */
   sandboxCapability?: SandboxCapabilityInfo
   /** Configured allow entries skipped at the last enforcement, with reasons. */
   sandboxSkipped?: SandboxSkippedEntry[]
@@ -319,37 +316,20 @@ export interface SandboxTemplateRemoveRequest {
 }
 
 /**
- * Whether the mounted sandbox backend can accept extra writable roots at all.
+ * What the sandbox panel may state about the target session.
  *
- * Reported by the host half because the answer is a runtime fact of the
- * provider that is only known after it selects and probes a runner — a client
- * guessing from `process.platform` would enable a control that silently does
- * nothing on some hosts and not others.
+ * The policy service is a required part of this plugin's composition, so this
+ * carries resolved facts rather than a capability verdict.
  */
 export interface SandboxCapabilityInfo {
-  /** A provider is mounted and its backend accepts appended writable roots. */
-  readonly canAllowExtraRoots: boolean
   /**
-   * Why it cannot, for display. `undefined` when {@link canAllowExtraRoots}.
-   * Either no `ctx.sandbox` provider is composed, or the selected backend
-   * expresses its policy in a form that cannot be extended argument-wise
-   * (macOS Seatbelt's single SBPL profile string).
-   */
-  readonly reason?: string
-  /**
-   * The backend the provider selected, when it is knowable without forcing a
-   * probe. Present for diagnostics and for the client's own wording.
-   */
-  readonly backend?: string
-  /**
-   * The file-effect mode the target session actually runs under, when the
-   * policy service could resolve it.
+   * The file-effect mode the target session actually runs under.
    *
    * Carried here rather than derived client-side because only the host can read
    * the session's `sandbox/mode` projection; the panel needs it to say that an
    * allow list does nothing outside `workspace-write`.
    */
-  readonly effectiveMode?: string
+  readonly effectiveMode: string
 }
 
 /**
@@ -427,34 +407,77 @@ export interface GlobalMcpServerConfig {
 }
 
 /**
+ * One connection state the official client publishes for a server.
+ *
+ * Mirrors `McpConnectionStatus` from `@deepseek-ai/dsh-mcp-client/types`. Copied
+ * structurally rather than imported because the client half of this plugin is
+ * bundled independently and must not take a value dependency on a host package;
+ * the host half reads these values from `connectionStatusOf()` at runtime.
+ */
+export type McpConnectionStatusLike =
+  | {
+      readonly state: 'closed'
+      readonly result: McpCloseLike
+    }
+  | { readonly state: 'waiting-credentials'; readonly lastError: string }
+  | { readonly state: 'connecting'; readonly attempt: number }
+  | {
+      readonly state: 'connected'
+      readonly toolCount: number
+      readonly connectedAt: number
+    }
+  | {
+      readonly state: 'reconnecting'
+      readonly attempt: number
+      readonly maxAttempts: number
+      readonly nextRetryAtMs: number
+      readonly lastError: string
+    }
+  | {
+      readonly state: 'failed'
+      readonly reason: 'gave-up' | 'reconnect-disabled' | 'unclosed-generation'
+      readonly lastError?: string
+    }
+
+/** Whether a generation's transport closed, and whether its cleanup finished. */
+export interface McpCloseLike {
+  /** Transport closure confirmed, or no transport was ever created. */
+  readonly closeConfirmed: boolean
+  /** Cleanup failed or exceeded its budget, including after confirmed closure. */
+  readonly cleanupError?: string
+}
+
+/**
  * Live status of the official @deepseek-ai/dsh-mcp-client fork for one server.
  *
- * The official bridge exposes no status API, so this is inferred from four
- * observable facts:
- *  - whether we ever attempted to mount the official client in this process,
- *  - whether a (not yet disposed) Cordis fork exists,
- *  - how many `mcp__<serverId>__*` tools are currently registered on ctx.tools,
- *  - when the current mount attempt began.
- *
- * The bridge unregisters every tool once its reconnect budget is exhausted
- * ("giving up"), while the fork itself stays alive — hence `mounted` alone
- * cannot tell a healthy server from a permanently disabled one. A zero tool
- * count is likewise ambiguous on its own, since a fork still completing its
- * handshake looks identical; `mountStartedAt` is what separates the two.
+ * Every connection fact here is the host's own: `connectionStatusOf(fiber)`
+ * publishes the state, the attempt counters, and the last failure. Nothing is
+ * inferred from a tool count or a mount timestamp.
  */
 export interface McpServerRuntimeStatus {
-  /** True once this process attempted to mount the official client for the server. */
-  mountAttempted: boolean
-  /** True while the Cordis fork exists and has not been disposed (fork.uid !== null). */
+  /** True while this plugin holds a live, undisposed fork for the server. */
   mounted: boolean
-  /** Number of currently registered `mcp__<serverId>__*` tools on ctx.tools. */
-  registeredToolCount: number
-  /** Wall clock when the current mount attempt began; absent when never attempted. */
-  mountStartedAt?: number
-  /** Activation/mount error (invalid config, fork startup rejection). Not set for plain connection failures. */
+  /**
+   * The host's connection state for that instance.
+   *
+   * Absent in two real windows: before the instance publishes its first state,
+   * and after activation failed so no instance exists.
+   */
+  connection?: McpConnectionStatusLike
+  /**
+   * The latest generation's cleanup result, independent of connection state.
+   *
+   * `closeConfirmed: false` means the bridge could not prove the transport
+   * closed; the host then refuses to replace the instance, so the panel must
+   * tell the user to restart rather than offer a remount that cannot work.
+   */
+  cleanup?: McpCloseLike
+  /**
+   * Why the fork could not be activated at all (invalid configuration, a
+   * startup rejection). Distinct from a connection failure: activation failing
+   * means no instance exists to have a connection state.
+   */
   lastError?: string
-  /** Timestamp of the last manual client refresh for this server. */
-  lastRefreshAt?: number
 }
 
 /** Result of a manual "remount the official MCP client" refresh request. */
@@ -866,14 +889,13 @@ export interface Session {
   readonly header: SessionHeader
   /**
    * The route this Session last requested, as the host folds it from the log's
-   * request-header events. Optional because a Session that has not requested
-   * anything yet has none, and because not every host surface exposes it.
+   * request-header events.
    *
-   * This is how the subagent-model interceptor recovers the route a delegation
-   * would have inherited: the host's own `resolveChildAgentOptions` uses the
-   * very same fold as its baseline.
+   * Returns `undefined` until the Session has requested anything. This is how
+   * the subagent-model interceptor recovers the route a delegation would have
+   * inherited: the host's own child-option resolution uses the very same fold.
    */
-  requestHeader?():
+  requestHeader():
     | {
         config?: {
           provider?: string
@@ -1027,9 +1049,11 @@ export interface LoaderEntry {
 
 export interface LoaderService {
   entries?: Map<string, LoaderEntry>
-  locate?(fiber?: unknown): string | undefined
-  import?(name: string): Promise<unknown>
-  unwrapExports?(exports: unknown): unknown
+  locate(fiber?: unknown): string | undefined
+  /** Import one plugin module by specifier, resolved against the profile. */
+  import(name: string): Promise<unknown>
+  /** Normalize an ESM/CJS/default export shape into the plugin value. */
+  unwrapExports(exports: unknown): unknown
 }
 
 // --------------------------------------------------------------------------
@@ -1099,29 +1123,8 @@ export interface PromptContextInput {
 export interface SystemPromptService {
   section(section: PromptSectionInput): () => void
   getSectionOrder(name: string): number
-  context?(context: PromptContextInput): () => void
-  getContextOrder?(name: string): number
-}
-
-/**
- * The confined-execution policy a consumer stamps onto one capability call.
- *
- * Only the fields this plugin reads are declared; the provider treats the value
- * as fully specified, so the wrapper passes it through untouched.
- */
-export interface SandboxPolicyLike {
-  readonly mode: 'read-only' | 'workspace-write' | 'danger-full-access'
-  readonly workspaceRoot: string
-  readonly sessionId?: string
-  /**
-   * Extra physical directories `workspace-write` may also write under.
-   *
-   * This is the host's documented widening channel: every enforcing backend
-   * (bwrap, landlock, seatbelt, windows-acl) folds it into its writable-root
-   * derivation, and the filesystem fence does the same. The plugin stamps the
-   * session's allow list HERE rather than editing a runner's argv.
-   */
-  readonly additionalWritableRoots?: readonly string[]
+  context(context: PromptContextInput): () => void
+  getContextOrder(name: string): number
 }
 
 /**
@@ -1129,8 +1132,14 @@ export interface SandboxPolicyLike {
  *
  * This service is the single owner of the per-call policy: consumers ask it for
  * the session's mode and roots instead of deriving either themselves.
+ *
+ * The plugin reads the mode and registers writable roots; it does NOT wrap
+ * `resolve()`. The host folds active registrations into every policy it hands
+ * out, so wrapping would add a second, competing copy of the same decision.
  */
 export interface SandboxPolicyServiceLike {
+  /** The absolute fallback root for calls without a session cwd. */
+  readonly workspaceRoot: string
   /** The deployment default, the fallback beneath a session override. */
   readonly defaultMode: string
   /**
@@ -1139,14 +1148,10 @@ export interface SandboxPolicyServiceLike {
    */
   overrideOf(session: unknown): string | undefined
   /**
-   * Resolve one complete per-call policy.
-   *
-   * This is where the plugin attaches the session's allow list: wrapping this
-   * method reaches every consumer at once (bash, the terminal, and the
-   * filesystem fence all stamp their policy from here), so one widening covers
-   * every enforcement side with no per-backend argv knowledge.
+   * Permit writes under one directory in THIS Session's future
+   * `workspace-write` operations, until the returned disposer runs.
    */
-  resolve(request?: unknown): SandboxPolicyLike
+  registerWritableRoot(session: Session, directory: string): () => void
 }
 
 export interface ToolExecution {

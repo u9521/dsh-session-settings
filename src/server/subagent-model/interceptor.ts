@@ -32,7 +32,7 @@ function parentRoute(
   const parent = ctx.get('agents')?.get(parentId)
   if (!parent) return undefined
 
-  const logged = parent.session?.requestHeader?.()?.config
+  const logged = parent.session.requestHeader()?.config
   if (logged?.provider && logged?.model) {
     return {
       provider: logged.provider,
@@ -130,6 +130,24 @@ function applyRoute(agent: Agent, target: SubagentModelTarget): void {
   agent.model?.select(selection)
 }
 
+/**
+ * Whether the global tool layer currently exposes a tool by this name.
+ *
+ * `schemas()` with no scope is the global layer, which is exactly the set
+ * `restrict()` may legally name.
+ */
+function hasGlobalTool(
+  tools: { schemas?: () => Array<{ name?: unknown }> },
+  name: string,
+): boolean {
+  if (typeof tools.schemas !== 'function') return false
+  try {
+    return tools.schemas().some((schema) => schema.name === name)
+  } catch {
+    return false
+  }
+}
+
 /** The part of the `agent/pre-step` payload this module reads. */
 interface PreStepPayload {
   agent: Agent
@@ -200,8 +218,18 @@ export function registerSubagentModelInterceptor(
     if (config.allowAgentSelectModel !== false) return
     // The agent's own scope, not the plugin's: a restriction declared here
     // applies to this child alone and unwinds with its context.
-    const tools = agent.ctx?.get?.('tools')
+    const tools = agent.ctx?.get?.('tools') as
+      | {
+          schemas?: () => Array<{ name?: unknown }>
+          restrict?: (filter: { deny: string[] }) => () => void
+        }
+      | undefined
     if (typeof tools?.restrict !== 'function') return
+    // Naming a tool that is not registered THROWS, so the gate has to ask the
+    // registry first. This is reachable: `list_subagent_models` is only mounted
+    // when the delegation tool instance enables `modelDiscovery`, and a preset
+    // that leaves it off would otherwise fail every agent creation here.
+    if (!hasGlobalTool(tools, 'list_subagent_models')) return
     tools.restrict({ deny: ['list_subagent_models'] })
   })
 

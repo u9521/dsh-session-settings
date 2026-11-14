@@ -10,13 +10,8 @@ import { resolveSessionCwd } from '../session/resolution.ts'
 import { resolveEffectiveSkills } from '../session/storage.ts'
 import { resolveWorkspaceForSession } from '../session/resolution.ts'
 
-/** The preset registry slice this plugin consumes. */
-interface AgentPresetsService {
-  acquireScope?: (
-    id?: string,
-  ) => Promise<{ key?: unknown; [Symbol.asyncDispose]?: () => Promise<void> }>
-  serviceFor?: (agent: { ctx: Context }, name: string) => unknown
-}
+/** The preset registry slice this plugin consumes beyond `ctx.agentPresets`. */
+type AgentPresetsService = NonNullable<Context['agentPresets']>
 
 /**
  * The filesystem-backed sources the skill registry declares.
@@ -97,25 +92,23 @@ async function resolveScopes(
   if (liveAgent) return { scopes: [liveAgent], release: async () => {} }
 
   const presets = ctx.get('agentPresets') as AgentPresetsService | undefined
-  if (typeof presets?.acquireScope === 'function') {
+  if (presets) {
     try {
       const lease = await presets.acquireScope(
         await resolvePresetId(ctx, sessionId),
       )
-      if (lease?.key) {
-        return {
-          scopes: [lease.key],
-          release: async () => {
-            try {
-              await lease[Symbol.asyncDispose]?.()
-            } catch {
-              // The lease is best-effort; a failed release must not fail a read.
-            }
-          },
-        }
+      return {
+        scopes: [lease.key],
+        release: async () => {
+          try {
+            await lease[Symbol.asyncDispose]?.()
+          } catch {
+            // The lease is best-effort; a failed release must not fail a read.
+          }
+        },
       }
     } catch {
-      // Unknown preset or unusable composition: fall back to the global layer.
+      // Unknown preset or unusable composition: read the global layer.
     }
   }
   return { scopes: [undefined], release: async () => {} }
@@ -151,18 +144,10 @@ function skillRegistryFor(
   scope: unknown,
 ): SkillsService | undefined {
   const presets = ctx.get('agentPresets') as AgentPresetsService | undefined
-  if (
-    scope &&
-    typeof scope === 'object' &&
-    'ctx' in scope &&
-    typeof presets?.serviceFor === 'function'
-  ) {
+  if (scope && typeof scope === 'object' && 'ctx' in scope && presets) {
     try {
-      const service = presets.serviceFor(
-        scope as { ctx: Context },
-        'skills',
-      ) as SkillsService | undefined
-      if (service) return service
+      const service = presets.serviceFor(scope as { ctx: Context }, 'skills')
+      if (service) return service as SkillsService
     } catch {
       // Fall through to the global registry.
     }

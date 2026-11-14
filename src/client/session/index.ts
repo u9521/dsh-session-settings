@@ -648,7 +648,6 @@ export function SessionSettingsViewPage(props: ClientPageProps) {
               currentWorkspaceId,
               workspaceSettings,
               globalConfig,
-              capability: catalogs.sandboxCapability,
               skipped: catalogs.sandboxSkipped,
               effectiveMode: catalogs.sandboxCapability?.effectiveMode,
               activeSourceMode: sandboxSourceMode,

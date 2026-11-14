@@ -16,7 +16,9 @@ Node 侧是普通 ESM 库，`tsc` 已产出 `lib/types`，`tsdown` 只做打包�
 
 ## 依赖变更的连带义务
 
-改依赖必须同次提交 `pnpm-lock.yaml`，否则 CI 的 `--frozen-lockfile` 失败。改 `package.json` 的 `peerDependencies` 等于改宿主兼容门槛，按 [服务端与宿主生命周期](server.md) 那一节处理。
+改依赖必须同次提交 `pnpm-lock.yaml`，否则 CI 的 `--frozen-lockfile` 失败。改 `peerDependencies` 或 `engines.dsh` 等于改宿主兼容门槛，按 [服务端与宿主生命周期](server.md) 那一节处理。
+
+`dsh-client-ui-primitives` 的版本是**运行时的反射**，不是可以随便钉的值：它只有类型与图标，真正执行的是 shell 静态模块表里那一份，所以依赖版本必须与宿主主线的构建对齐（升级宿主时重读 `dsh-web-frontend/dist/assets/index-*.js` 的 `getStaticModules()` 与图标导出清单）。
 
 ## 构建不感知框架
 

@@ -638,7 +638,10 @@ export function useSessionCatalogs(
                   message: t('sessionSettings.mcp.notices.remountSuccess', {
                     name: remount?.name || server.name,
                     ms: remount?.durationMs ?? 0,
-                    tools: remount?.status?.registeredToolCount ?? 0,
+                    tools:
+                      remount?.status?.connection?.state === 'connected'
+                        ? remount.status.connection.toolCount
+                        : 0,
                   }),
                 }
             : {

@@ -1,50 +1,45 @@
 import type { GlobalMcpServerConfig } from '../types/index.ts'
 
 /**
- * How long a fresh mount may sit at zero tools before it counts as failed.
+ * Whether the official client for this server looks broken, and why.
  *
- * A stdio handshake is normally well under a second, but `listTools` against a
- * large catalogue is not, and a status snapshot taken inside that window is not
- * a failure. Without this the badge fired on every save, because saving
- * remounted every enabled server and the client read the status immediately.
+ * Reads the host's published connection state. There is no inference layer: the
+ * official client owns the truth about its own connection, including which
+ * terminal failure it hit, and a second guess derived from a tool count could
+ * only disagree with it.
  */
-export const MCP_CLIENT_SETTLE_GRACE_MS = 10_000
 
-/**
- * Tool count cached by the last probe.
- *
- * The server list reduces the persisted `tools` array to a number for the
- * client, so this is how many tools the server is known to expose.
- */
-export function expectedToolCount(server: GlobalMcpServerConfig): number {
-  if (typeof server.tools === 'number') return server.tools
-  return Array.isArray(server.tools) ? server.tools.length : 0
+/** The reason to show beside a broken server, or undefined when healthy. */
+export function mcpClientFailureReason(
+  server: GlobalMcpServerConfig,
+): string | undefined {
+  const runtime = server.runtime
+  if (!runtime) return undefined
+  // An activation failure means no instance exists to have a connection state.
+  if (runtime.lastError) return runtime.lastError
+  const connection = runtime.connection
+  if (!connection) return undefined
+  switch (connection.state) {
+    case 'failed':
+      return connection.reason === 'unclosed-generation'
+        ? "This server's previous connection could not be confirmed closed; the host blocks replacement until it restarts."
+        : (connection.lastError ?? `Connection stopped (${connection.reason}).`)
+    case 'waiting-credentials':
+      return connection.lastError
+    case 'closed':
+      return 'The connection is closed.'
+    default:
+      return undefined
+  }
 }
 
 /**
  * Whether the official client for this server looks broken.
  *
- * `registeredToolCount === 0` is ambiguous on its own: it means either that the
- * handshake has not finished or that the bridge exhausted its reconnect budget
- * and unregistered everything. The mount timestamp separates the two, and a
- * server that exposes no tools at all (resources-only) is never accused.
- *
- * `now` is injected so the decision is deterministically testable.
+ * Only the states that mean "not connected and not getting there" count:
+ * `connecting` and `reconnecting` are progress, and a server whose tools have
+ * not registered yet is not accused of being broken.
  */
-export function isMcpClientUnavailable(
-  server: GlobalMcpServerConfig,
-  now: number = Date.now(),
-): boolean {
-  const runtime = server.runtime
-  if (!runtime) return false
-  // An activation/config error does not self-heal, so it never waits.
-  if (runtime.lastError) return true
-  if (!runtime.mountAttempted) return false
-  if (runtime.registeredToolCount > 0) return false
-  // Zero tools registered: nothing to expect from a resources-only server.
-  if (expectedToolCount(server) === 0) return false
-  const startedAt = runtime.mountStartedAt
-  // Age unknown: do not accuse a mount we cannot date.
-  if (startedAt === undefined) return false
-  return now - startedAt > MCP_CLIENT_SETTLE_GRACE_MS
+export function isMcpClientUnavailable(server: GlobalMcpServerConfig): boolean {
+  return mcpClientFailureReason(server) !== undefined
 }

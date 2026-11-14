@@ -203,9 +203,6 @@ export const en = {
       pathHint:
         'Relative paths resolve against the workspace, where "." is the workspace root; a leading ~ is supported. A directory must already exist or it is skipped.',
       skippedTitle: 'Saved but not in effect',
-      unsupportedBadge: 'Unsupported by this backend',
-      unsupportedHint:
-        'The active sandbox backend cannot accept extra directories, so this configuration has no effect.',
       modeHint:
         'Extra directories apply only under workspace-write; the current mode does not widen writes.',
       noWorkspaceHint:

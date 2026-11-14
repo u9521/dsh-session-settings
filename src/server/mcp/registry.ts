@@ -386,7 +386,6 @@ export class McpServerRegistry {
 
   /** The client-facing list: heavy fields reduced to counts, runtime attached. */
   public list(): GlobalMcpServerConfig[] {
-    const registeredNames = this.deps.manager?.collectRegisteredToolNames()
     return Object.values(this.current().servers).map((s) => {
       const {
         toolDetails: _toolDetails,
@@ -414,10 +413,7 @@ export class McpServerRegistry {
         capabilities,
       } as GlobalMcpServerConfig
       if (this.deps.manager) {
-        server.runtime = this.deps.manager.getServerStatus(
-          s.id,
-          registeredNames,
-        )
+        server.runtime = this.deps.manager.getServerStatus(s.id)
       }
       return server
     })

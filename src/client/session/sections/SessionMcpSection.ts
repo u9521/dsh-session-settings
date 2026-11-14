@@ -11,7 +11,10 @@ import type {
 } from '../../types/index.ts'
 import { EmptyState, Badge, ServerIcon } from '../../components/index.ts'
 import { formatProtocolTitle } from '../../utils/string.ts'
-import { isMcpClientUnavailable } from '../../utils/mcpRuntime.ts'
+import {
+  isMcpClientUnavailable,
+  mcpClientFailureReason,
+} from '../../utils/mcpRuntime.ts'
 import { isSourceReadonly, sourceModeFor } from '../../utils/config.ts'
 
 const e = React.createElement
@@ -215,7 +218,7 @@ export function SessionMcpSection({
               const isRefreshingClient = refreshingClientId === server.id
               const clientResult = clientRefreshResults?.[server.id]
               const clientMessage =
-                clientResult?.message || server.runtime?.lastError
+                clientResult?.message || mcpClientFailureReason(server)
               const handleRefreshClientClick = (evt: React.MouseEvent) => {
                 evt.stopPropagation()
                 if (isRefreshingClient) return

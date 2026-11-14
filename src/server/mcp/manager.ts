@@ -1,6 +1,9 @@
 import type { Context, Fiber, Plugin } from '@deepseek-ai/cordis'
 import type {
   GlobalMcpServerConfig,
+  LoaderService,
+  McpCloseLike,
+  McpConnectionStatusLike,
   McpServerRuntimeStatus,
   McpServerStore,
   SessionSettingsStore,
@@ -16,30 +19,34 @@ export interface ToolMeta {
 export interface McpRefreshOutcome {
   /** True when the official client fork was actually remounted (not only torn down). */
   remounted: boolean
-  /**
-   * False when the rebuild happened but the fork is still finishing its
-   * handshake inside the settle budget. The connection is then live but its
-   * tools are not registered yet — a "still starting", not a failure.
-   */
-  settled: boolean
-  /** Runtime status read after the remount settled. */
+  /** Runtime status read after the remount. */
   status: McpServerRuntimeStatus
   /** Wall-clock duration of teardown + remount + settle. */
   durationMs: number
 }
 
-/** Minimal view of the ctx.tools registry needed for a registration probe. */
-interface ToolRegistryProbe {
-  schemas?: () => Array<{ name?: unknown }> | undefined
+/**
+ * The part of the official mcp-client module this plugin reads besides `apply`.
+ *
+ * `connectionStatusOf` is the authoritative source for a live instance's
+ * connection state. Typed structurally because the plugin does not depend on
+ * the package: it is resolved through `ctx.loader` at runtime.
+ */
+type OfficialMcpClientModule = Plugin & {
+  connectionStatusOf: (fiber: unknown) => ConnectionStatusHandle | undefined
 }
 
-/** How often the remount path re-reads the tool registry while it settles. */
-const MCP_TOOL_POLL_INTERVAL_MS = 100
+/** Read-and-observe handle over one instance's published connection state. */
+interface ConnectionStatusHandle {
+  current(): McpConnectionStatusLike
+  closure(): McpCloseLike
+}
+
+/** The official module, remembered with its optional status reader. */
+let cachedOfficialModule: OfficialMcpClientModule | null = null
 
 const OFFICIAL_PLUGIN_MISSING =
   'Official @deepseek-ai/dsh-mcp-client plugin is not available in this Host.'
-
-let cachedOfficialPlugin: Plugin | null = null
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => {
@@ -55,61 +62,22 @@ function delay(ms: number): Promise<void> {
  */
 async function loadOfficialMcpClientPlugin(
   ctx: Context,
-): Promise<Plugin | null> {
-  if (cachedOfficialPlugin) return cachedOfficialPlugin
+): Promise<OfficialMcpClientModule | null> {
+  if (cachedOfficialModule) return cachedOfficialModule
 
-  const loader =
-    (
-      ctx as {
-        loader?: {
-          import?: (name: string) => Promise<unknown>
-          unwrapExports?: (exports: unknown) => unknown
-        }
-      }
-    ).loader ?? (typeof ctx.get === 'function' ? ctx.get('loader') : undefined)
-
-  if (!loader) {
-    console.warn(
-      '[session-settings] [MCP-LOADER] Cordis loader service is not available on context.',
-      {
-        hasCtx: Boolean(ctx),
-        availableServices:
-          typeof (ctx as { reflect?: { store?: Record<string, unknown> } })
-            .reflect?.store === 'object'
-            ? Object.keys(
-                (ctx as { reflect?: { store?: Record<string, unknown> } })
-                  .reflect?.store ?? {},
-              )
-            : undefined,
-      },
-    )
-    return null
-  }
-
-  if (typeof loader.import !== 'function') {
-    console.warn(
-      '[session-settings] [MCP-LOADER] Loader service exists but does not have .import() method.',
-      {
-        loaderType: typeof loader,
-        loaderKeys: Object.keys(loader),
-      },
-    )
-    return null
-  }
+  // `inject` lists both `connection` and `loader`, so the Loader is live by the
+  // time any mount path runs.
+  const loader = ctx.get('loader') as LoaderService
 
   try {
-    const raw = await loader.import('@deepseek-ai/dsh-mcp-client')
-    const mod = (
-      typeof loader.unwrapExports === 'function'
-        ? loader.unwrapExports(raw)
-        : raw
-    ) as Plugin | null
+    const raw = (await loader.import('@deepseek-ai/dsh-mcp-client')) as unknown
+    const mod = loader.unwrapExports(raw) as OfficialMcpClientModule | null
     if (
       mod &&
       (typeof mod === 'function' ||
         typeof (mod as { apply?: unknown }).apply === 'function')
     ) {
-      cachedOfficialPlugin = mod
+      cachedOfficialModule = mod
       return mod
     } else {
       console.warn(
@@ -151,6 +119,16 @@ export class McpManager {
   /** Map of serverId -> active Cordis Plugin Fork instance of @deepseek-ai/dsh-mcp-client */
   private officialForks = new Map<string, Fiber>()
 
+  /**
+   * serverId -> the official module the live fork was mounted from.
+   *
+   * Kept per mount rather than read from the module-level cache so that status
+   * lookup asks the SAME module instance that created the fiber: a host that
+   * reloads mcp-client would otherwise get its status queried through a stale
+   * module whose fiber table does not contain this fork.
+   */
+  private officialModules = new Map<string, OfficialMcpClientModule>()
+
   /** Map of publicToolName -> { serverId, rawName } metadata */
   private toolMeta = new Map<string, ToolMeta>()
 
@@ -160,18 +138,6 @@ export class McpManager {
   /** Map of serverId -> last activation/mount error message (cleared on refresh/unmount) */
   private lastErrors = new Map<string, string>()
 
-  /** serverIds whose current mount lifecycle we attempted to mount */
-  private mountAttempted = new Set<string>()
-
-  /**
-   * serverId -> wall clock when the current mount attempt began.
-   *
-   * Runtime status is a TRANSIENT observation: a freshly started fork reports
-   * zero tools until its handshake completes, which is indistinguishable from a
-   * permanent failure without knowing how long it has been that way.
-   */
-  private mountStartedAt = new Map<string, number>()
-
   /**
    * serverId -> fingerprint of the config the live fork was mounted with.
    *
@@ -180,9 +146,6 @@ export class McpManager {
    * connection even when it touched no server config at all.
    */
   private mountedConfigKeys = new Map<string, string>()
-
-  /** Map of serverId -> timestamp of the last manual client refresh */
-  private lastRefreshAt = new Map<string, number>()
 
   /** Active sync promises to prevent race conditions */
   private activeSyncs = new Map<string, Promise<void>>()
@@ -329,7 +292,7 @@ export class McpManager {
    */
   public async mountOfficialClient(
     server: GlobalMcpServerConfig,
-    officialPlugin: Plugin,
+    officialPlugin: OfficialMcpClientModule,
     opts: { settleMs?: number } = {},
   ): Promise<boolean> {
     await this.unmountOfficialClient(server.id)
@@ -343,8 +306,7 @@ export class McpManager {
       // is therefore already per mount; no separate context is needed.
       const fork = this.ctx.plugin(officialPlugin, officialConfig)
       this.officialForks.set(server.id, fork)
-      this.mountAttempted.add(server.id)
-      this.mountStartedAt.set(server.id, Date.now())
+      this.officialModules.set(server.id, officialPlugin)
       this.mountedConfigKeys.set(server.id, this.canonical(officialConfig))
 
       // Surface activation errors (invalid config, startup rejection, ...).
@@ -418,6 +380,7 @@ export class McpManager {
   public async unmountOfficialClient(serverId: string): Promise<void> {
     const fork = this.officialForks.get(serverId)
     this.officialForks.delete(serverId)
+    this.officialModules.delete(serverId)
 
     const existingNames = this.serverToolMap.get(serverId)
     if (existingNames) {
@@ -428,8 +391,6 @@ export class McpManager {
     }
 
     this.lastErrors.delete(serverId)
-    this.mountAttempted.delete(serverId)
-    this.mountStartedAt.delete(serverId)
     this.mountedConfigKeys.delete(serverId)
 
     if (!fork) return
@@ -456,64 +417,43 @@ export class McpManager {
   }
 
   /**
-   * Snapshot of every tool name currently registered on ctx.tools.
+   * Runtime status of the official client for one server.
    *
-   * `tools.schemas()` is presentation-agnostic and restriction-aware, which is
-   * exactly what a registration probe needs.
+   * Everything about the connection comes from the host's own status cell; this
+   * only adds what the host cannot know, which is whether OUR mount exists.
    */
-  public collectRegisteredToolNames(): Set<string> {
-    const names = new Set<string>()
-    try {
-      const registry =
-        typeof this.ctx.get === 'function'
-          ? (this.ctx.get('tools') as ToolRegistryProbe | undefined)
-          : undefined
-      const schemas = registry?.schemas?.()
-      if (Array.isArray(schemas)) {
-        for (const schema of schemas) {
-          if (schema && typeof schema.name === 'string') {
-            names.add(schema.name)
-          }
-        }
-      }
-    } catch {
-      // Tools service unavailable (e.g. plugin unloading) — report an empty registry.
-    }
-    return names
-  }
-
-  /**
-   * Inferred runtime status of the official client for one server.
-   *
-   * Pass a pre-collected `registeredNames` set when computing status for many
-   * servers at once to avoid re-walking the registry per server.
-   */
-  public getServerStatus(
-    serverId: string,
-    registeredNames?: Set<string>,
-  ): McpServerRuntimeStatus {
-    const names = registeredNames ?? this.collectRegisteredToolNames()
-    const prefix = `mcp__${serverId}__`
-    let registeredToolCount = 0
-    for (const name of names) {
-      if (name.startsWith(prefix)) registeredToolCount++
-    }
-
+  public getServerStatus(serverId: string): McpServerRuntimeStatus {
     const status: McpServerRuntimeStatus = {
-      mountAttempted: this.mountAttempted.has(serverId),
       mounted: this.isMounted(serverId),
-      registeredToolCount,
     }
-
-    const mountStartedAt = this.mountStartedAt.get(serverId)
-    if (mountStartedAt !== undefined) status.mountStartedAt = mountStartedAt
 
     const lastError = this.lastErrors.get(serverId)
     if (lastError) status.lastError = lastError
-    const lastRefreshAt = this.lastRefreshAt.get(serverId)
-    if (lastRefreshAt) status.lastRefreshAt = lastRefreshAt
+
+    // Read through the module that created THIS fork: a host that reloaded
+    // mcp-client would otherwise be asked through a stale module whose fiber
+    // table does not contain it.
+    const connection = this.connectionOf(serverId)
+    if (connection) {
+      status.connection = connection.current()
+      status.cleanup = connection.closure()
+    }
 
     return status
+  }
+
+  /**
+   * The official client's status handle for a server's live fork.
+   *
+   * @param serverId - the stored server whose instance is asked about.
+   * @returns the handle, or undefined before the fork exists or before the
+   *   instance published its first state.
+   */
+  private connectionOf(serverId: string): ConnectionStatusHandle | undefined {
+    const module = this.officialModules.get(serverId)
+    const fork = this.officialForks.get(serverId)
+    if (!module || !fork) return undefined
+    return module.connectionStatusOf(fork)
   }
 
   /**
@@ -552,20 +492,12 @@ export class McpManager {
       await this.unmountOfficialClient(serverId)
 
       let remounted = false
-      let settled = false
       const liveServer = this.getMcpStore().servers[serverId] ?? server
       const officialPlugin = await loadOfficialMcpClientPlugin(this.ctx)
       if (officialPlugin) {
         remounted = await this.mountOfficialClient(liveServer, officialPlugin, {
           settleMs: opts.settleMs ?? 0,
         })
-        // Activation does not wait for the handshake, so the tool count is
-        // polled with its own budget: mounting already spent part of the wall
-        // clock, and the caller's bound covers the whole remount.
-        const remaining = (opts.settleMs ?? 0) - (Date.now() - startedAt)
-        if (remounted && remaining > 0) {
-          settled = await this.waitForTools(serverId, remaining)
-        }
       } else {
         this.recordMountError(serverId, new Error(OFFICIAL_PLUGIN_MISSING))
         console.error(
@@ -573,11 +505,8 @@ export class McpManager {
         )
       }
 
-      this.lastRefreshAt.set(serverId, Date.now())
-
       return {
         remounted,
-        settled,
         status: this.getServerStatus(serverId),
         durationMs: Date.now() - startedAt,
       }
@@ -595,33 +524,6 @@ export class McpManager {
       if (this.activeSyncs.get(serverId) === entry) {
         this.activeSyncs.delete(serverId)
       }
-    }
-  }
-
-  /**
-   * Poll until the rebuilt fork has registered at least one tool, or the
-   * budget runs out.
-   *
-   * The bridge exposes no readiness promise: activation resolves before the
-   * handshake, and `registeredToolCount` on ctx.tools is the only observable
-   * that moves when tools/list comes back. A server that legitimately exposes
-   * no tools (resources-only) never settles, which is why the caller treats
-   * 'settled' as 'registered something', not as 'is healthy'.
-   *
-   * @returns whether tools appeared inside the budget.
-   */
-  private async waitForTools(
-    serverId: string,
-    budgetMs: number,
-  ): Promise<boolean> {
-    const deadline = Date.now() + budgetMs
-    for (;;) {
-      if (this.getServerStatus(serverId).registeredToolCount > 0) return true
-      // A recorded error is final: stop waiting and report it.
-      if (this.lastErrors.has(serverId)) return false
-      const remaining = deadline - Date.now()
-      if (remaining <= 0) return false
-      await delay(Math.min(MCP_TOOL_POLL_INTERVAL_MS, remaining))
     }
   }
 
@@ -749,10 +651,7 @@ export class McpManager {
     this.toolMeta.clear()
     this.serverToolMap.clear()
     this.lastErrors.clear()
-    this.mountAttempted.clear()
-    this.mountStartedAt.clear()
     this.mountedConfigKeys.clear()
-    this.lastRefreshAt.clear()
     this.activeSyncs.clear()
 
     await Promise.allSettled(

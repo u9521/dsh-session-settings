@@ -200,8 +200,6 @@ export const zh = {
       pathHint:
         '相对路径以工作区为基准，「.」表示工作区根；支持 ~ 前缀。目录必须已存在，否则会被跳过。',
       skippedTitle: '以下目录已保存但未生效',
-      unsupportedBadge: '当前后端不支持',
-      unsupportedHint: '当前沙箱后端无法接受额外目录，配置不会生效。',
       modeHint:
         '额外目录仅在 workspace-write 模式下生效；当前模式下不会放宽写入范围。',
       noWorkspaceHint: '当前未解析到工作区，相对路径暂无法确定基准。',

@@ -65,9 +65,9 @@
 
 | 插件分支 | 兼容的 DeepSeek Harness (DSH) 主线版本 | 架构与机制支持 |
 | :--- | :--- | :--- |
-| **`main` 分支** | **`>= 0.2.2-rc.1`** | 原生对齐 **Session Format V4**、**Cordis 4.1**、`@modelcontextprotocol/client` 2.2.0、`agent.model.select()` 路由 API、`SandboxPolicy.additionalWritableRoots` 通道、`settings.section.icon` 插槽，以及 `ui-primitives` 图标集。 |
+| **`main` 分支** | **`>= 0.2.2-rc.3`** | 原生对齐 **Session Format V4**、**Cordis 4.1**、`@modelcontextprotocol/client` 2.2.0、`agent.model.select()` 路由 API、`sandboxPolicy.registerWritableRoot()` 通道、`connectionStatusOf()` MCP 连接状态、`settings.section.icon` 插槽，以及 `ui-primitives` 图标集。 |
 
-> **⚠️ 注意**：本插件的 `main` 分支仅针对 DSH 0.2.2-rc.1 及以上主线版本原生对齐，**不保留任何向下兼容垫片**，不支持更早的 DSH 版本线。宿主不读取 `engines.dsh`，兼容性由 `peerDependencies` 中的 `@deepseek-ai/dsh` 区间强制，因此不兼容的宿主会直接拒绝加载本插件，而不是加载出半可用状态。
+> **⚠️ 注意**：本插件的 `main` 分支仅针对 DSH 0.2.2-rc.3 及以上主线版本原生对齐，**不保留任何向下兼容垫片**，不支持更早的 DSH 版本线。兼容性在两处声明：宿主优先读 `engines.dsh`（自 DSH 0.2.1-alpha.3 起，自身声明了 `engines.dsh` 时它单独裁决，`@deepseek-ai/dsh` peer 区间被忽略），`peerDependencies` 则是包管理器的后备。因此不兼容的宿主会直接拒绝加载本插件，而不是加载出半可用状态。
 
 ---
 

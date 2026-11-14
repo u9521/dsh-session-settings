@@ -19,6 +19,11 @@ import type { SandboxAllowEntry } from '../../types.ts'
  *    to build the profile at all — one stale cache path would fail every command
  *    in the session with an error that reads nothing like a sandbox problem.
  *    Dropping it keeps the failure local to the rule that caused it.
+ * 3. **The grant is the physical path.** The host's `additionalRoot()` rejects
+ *    any entry whose spelling differs from its `realpathSync.native()` result,
+ *    and it rejects it by THROWING on every confined call. A symlinked spelling
+ *    therefore has to be resolved here rather than forwarded; a symlink the user
+ *    meant is a directory they can still write to.
  *
  * @module session-settings/sandbox/paths
  */
@@ -28,7 +33,7 @@ const MAX_PATH_CHARS = 4096
 
 /** One configured entry after resolution, with the display text the prompt uses. */
 export interface ResolvedAllowRoot {
-  /** Absolute directory to grant. */
+  /** Absolute PHYSICAL directory to grant (symlinks resolved). */
   readonly path: string
   /** Description to render beside the path; absent renders the path alone. */
   readonly description?: string
@@ -123,14 +128,24 @@ export function resolveAllowSet(
       rejected.push({ path: entry.path, reason: resolved.reason })
       continue
     }
-    if (seen.has(resolved.path)) continue
-
     // Existence is checked HERE rather than at enforcement time so the reason is
     // reported once, against the configured spelling, instead of surfacing as a
     // provider failure on an unrelated command.
+    //
+    // The path granted is the PHYSICAL one, not the spelling. That is the host's
+    // contract, not a preference: `additionalRoot()` in `dsh-sandbox` compares
+    // `relative(path, realpathSync.native(path))` and THROWS
+    // `SandboxInvalidRootError` when they differ, which fails every confined
+    // call in the session over one symlinked entry. Granting the resolved target
+    // keeps the user's meaning — "this directory, wherever it really lives" — and
+    // satisfies the comparison.
+    let physical: string
     let stats: fs.Stats
     try {
-      stats = fs.statSync(resolved.path)
+      // `native` for the same canonical spelling the host uses, so
+      // case-insensitive filesystems dedupe the way enforcement will.
+      physical = fs.realpathSync.native(resolved.path)
+      stats = fs.statSync(physical)
     } catch {
       rejected.push({ path: entry.path, reason: 'directory does not exist' })
       continue
@@ -139,10 +154,11 @@ export function resolveAllowSet(
       rejected.push({ path: entry.path, reason: 'not a directory' })
       continue
     }
+    if (seen.has(physical)) continue
 
-    seen.add(resolved.path)
+    seen.add(physical)
     roots.push({
-      path: resolved.path,
+      path: physical,
       ...(entry.description ? { description: entry.description } : {}),
     })
   }

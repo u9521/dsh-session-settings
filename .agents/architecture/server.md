@@ -18,28 +18,28 @@ Node 侧是 ordinary cordis 插件，按 `mcp/`、`session/`、`skills/`、`suba
 
 ## 宿主兼容是硬门槛
 
-`peerDependencies["@deepseek-ai/dsh"]` 声明最低宿主版本（宿主不读 `engines.dsh`）。不写兼容垫片：不兼容时由宿主拒绝加载，而不是运行中途抛错。
+`engines.dsh` 与 `peerDependencies["@deepseek-ai/dsh"]` 同写一个区间：宿主优先读 `engines.dsh`，包管理器只认 peer。不写兼容垫片——不兼容时由宿主拒绝加载。升级宿主先改这两处，再跑构建与冒烟。
 
-升级宿主时先改这一个字段，再跑构建与 GUI 冒烟。理由见 [DSH 0.2.2 对齐](../../.agents/notes/implemented/architecture/2026-11-05-dsh-0-2-2-alignment.md)。
+理由见 [DSH 0.2.3 对齐](../../.agents/notes/implemented/architecture/2026-11-14-dsh-0-2-3-alignment.md)。
 
 ## 状态是观测，不是结论
 
-`mountAttempted`、`registeredToolCount` 描述此刻而非结论：派生呈现须带时间维度或自清，零工具的健康服务器不得判为故障，挂载与可见性同源。
+连接态只读宿主的 `connectionStatusOf()`：本插件不再从工具计数或挂载时间戳推断，两个来源必然分歧。状态是此刻的观测而非结论，`connecting`/`reconnecting` 不算故障；只有 `failed`、`waiting-credentials`、`closed` 与激活失败才呈现为不可用。
 
 理由见 [挂载判定与状态呈现的一致化](../../.agents/notes/implemented/bug-fix/2026-10-01-mcp-mount-state-consistency.md)。
 
 ## 子代理自选路由按差异判别
 
-`agent.options` 对每个子代理都含直接父代理的路由（宿主无条件合并），不能当作"自选"信号，判据只能是有效路由 ≠ 直接父代理路由。强制路由只经 `agent.model.select()` 记录——`agent/request` 已废弃，步进准备后提出不同路由会被判错。
+`agent.options` 对每个子代理都含父代理路由（宿主无条件合并），不能当作"自选"信号，判据只能是有效路由 ≠ 父代理路由。强制路由只经 `agent.model.select()` 记录。
 
-## 沙箱加宽走策略，不改 argv
+## 沙箱加宽走注册，不包装 resolve
 
-额外可写目录只经 `SandboxPolicy.additionalWritableRoots` 传给 `ctx.sandboxPolicy.resolve()` 的返回值；不得改 `confine()` 产出的 argv（后端语法各异，runner 的参数表边界不属于本插件）。同一通道覆盖 bash、终端与文件系统 fence。
+额外可写目录按 Session 经 `ctx.sandboxPolicy.registerWritableRoot()` 注册，随 `agent/created` 装、随 `agent/disposed` 与卸载撤。`resolve()` 由宿主折入注册，插件不得包装它，也不得改 `confine()` 的 argv。注册以 Session 对象为键，子代理与无会话调用不继承根会话授权；授予必须是物理路径。
 
-理由见 [DSH 0.2.2 对齐](../../.agents/notes/implemented/architecture/2026-11-05-dsh-0-2-2-alignment.md)。
+理由见 [DSH 0.2.3 对齐](../../.agents/notes/implemented/architecture/2026-11-14-dsh-0-2-3-alignment.md)。
 
 ## 发现面只读
 
-资源的列举与读取永不改变模型可见面；发现类可缓存，内容类不可持久化。能力位与空列表须区分——SDK 对未声明能力返回空列表而非错误。
+资源列举与读取永不改变模型可见面；发现类可缓存，内容类不可持久化。能力位与空列表须区分。
 
 理由见 [MCP 资源与提示词面板](../../.agents/notes/implemented/feature/2026-10-02-mcp-resources-and-prompts-panel.md)。

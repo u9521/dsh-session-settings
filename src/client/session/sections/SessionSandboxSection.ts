@@ -1,7 +1,6 @@
 import * as React from 'react'
 import type {
   SandboxAllowEntry,
-  SandboxCapabilityInfo,
   SandboxSkippedEntry,
   SandboxTemplate,
   SessionSandboxConfig,
@@ -36,8 +35,7 @@ export interface SessionSandboxSectionProps {
   /** The workspace row, so an inherited source can render its actual rules. */
   workspaceSettings?: SessionSettingsConfig
   globalConfig?: SessionSettingsConfig
-  /** What the mounted backend can do; absent until the settings response lands. */
-  capability?: SandboxCapabilityInfo
+
   /** Configured entries the host skipped at its last resolution. */
   skipped?: SandboxSkippedEntry[]
   /** The session's sandbox mode, when the panel can read it. */
@@ -125,11 +123,6 @@ function fromDrafts(rows: readonly DraftRow[]): SandboxAllowEntry[] {
  * general licence — the sentence is what keeps an allow-list entry scoped to the
  * thing it was granted for, and it is injected into the runtime context beside
  * the path for exactly that reason.
- *
- * The panel disables itself from the host's capability report rather than from
- * a platform check: whether appended roots work is a runtime fact of the backend
- * the provider selected, so a guess here would offer a control that silently
- * does nothing.
  */
 export function SessionSandboxSection({
   scope = 'session',
@@ -137,7 +130,6 @@ export function SessionSandboxSection({
   currentWorkspaceId,
   workspaceSettings,
   globalConfig,
-  capability,
   skipped = [],
   effectiveMode,
   activeSourceMode,
@@ -221,8 +213,6 @@ export function SessionSandboxSection({
     if (lastPushedSignature.current === signature) return
     setRows(toDrafts(isReadonly ? displayEntries : sandboxConfig?.allow))
   }, [signature, isReadonly, displayEntries, sandboxConfig?.allow])
-
-  const supported = capability?.canAllowExtraRoots !== false
 
   /**
    * Commit an edit.
@@ -331,7 +321,7 @@ export function SessionSandboxSection({
     commit(rows.map((row) => (row.key === key ? { ...row, ...patch } : row)))
   }
 
-  const disabled = !supported || isReadonly
+  const disabled = isReadonly
 
   // ---- Two-step delete -----------------------------------------------------
 
@@ -526,24 +516,6 @@ export function SessionSandboxSection({
                 tab.label,
               ),
             ),
-          ),
-        )
-      : null,
-
-    // Capability notice: stated before the controls so a disabled panel is
-    // explained rather than merely inert.
-    !supported
-      ? e(
-          'div',
-          { className: 'dsh-sandbox-notice' },
-          e(Badge, {
-            label: t('sessionSettings.sandbox.unsupportedBadge'),
-            variant: 'timeout',
-          }),
-          e(
-            'span',
-            { className: 'dsh-sandbox-notice-text' },
-            capability?.reason || t('sessionSettings.sandbox.unsupportedHint'),
           ),
         )
       : null,

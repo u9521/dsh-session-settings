@@ -16,18 +16,17 @@ import {
 } from '../common/http.ts'
 
 /**
- * How long a manual refresh waits for the freshly mounted official client to
- * settle before reading its runtime status. Bounded so the request stays snappy.
+ * How long a manual refresh waits for the freshly mounted plug-in to activate
+ * before reading its runtime status. Bounded so the request stays snappy.
  */
 const MCP_REFRESH_SETTLE_MS = 3000
 
 /**
- * Outcome text for a rebuild that outlived its settle budget while its fork is
- * still alive. Reported as success: the connection exists, the handshake is
- * merely unfinished, and the caller can press the button again if it stalls.
+ * Outcome text for a rebuild whose connection has not finished coming up.
+ * Reported as success: the instance exists and is working on it, so the caller
+ * can press the button again if it stalls.
  */
-const STILL_SETTLING =
-  'The MCP client was rebuilt and its tools are still registering.'
+const STILL_STARTING = 'The MCP client was rebuilt and is still connecting.'
 
 export function registerMcpRoutes(
   connection: ConnectionService,
@@ -212,22 +211,21 @@ export function registerMcpRoutes(
               settleMs: MCP_REFRESH_SETTLE_MS,
             })
 
-            const status = outcome?.status ?? {
-              mountAttempted: false,
-              mounted: false,
-              registeredToolCount: 0,
-            }
+            const status = outcome?.status ?? { mounted: false }
             const remounted = outcome?.remounted ?? false
-            const settled = outcome?.settled ?? false
             // The probe's own verdict is NOT the remount's verdict: it opens a
             // separate short-lived connection, so it can reach a server whose
-            // long-lived client is dead (a stale streamable-HTTP session id
-            // does exactly that) and it can fail on one whose client came back.
-            // `settled` means tools appeared inside the budget. A server that
-            // legitimately exposes none can never settle, so it is not judged by
-            // that signal — only a recorded activation error can condemn it.
-            const usable =
-              remounted && (settled || status.registeredToolCount > 0)
+            // long-lived client is dead (a stale streamable-HTTP session id does
+            // exactly that) and it can fail on one whose client came back. Only
+            // the rebuilt instance's own connection state answers "did recovery
+            // work".
+            const state = status.connection?.state
+            const usable = remounted && state === 'connected'
+            const starting =
+              remounted &&
+              (state === undefined ||
+                state === 'connecting' ||
+                state === 'reconnecting')
             const ok = usable && !status.lastError
 
             remount = {
@@ -235,14 +233,13 @@ export function registerMcpRoutes(
               name: target.name,
               ok,
               message: ok
-                ? settled
-                  ? ''
-                  : STILL_SETTLING
-                : (status.lastError ??
-                  (remounted
-                    ? 'The MCP client was rebuilt but registered no tools.'
-                    : probe.message) ??
-                  ''),
+                ? ''
+                : starting
+                  ? STILL_STARTING
+                  : (status.lastError ??
+                    (remounted
+                      ? `The rebuilt MCP client is ${state ?? 'not connected'}.`
+                      : probe.message)),
               toolCount: probe.tools?.length ?? 0,
               durationMs: outcome?.durationMs ?? Date.now() - startedAt,
               remounted,

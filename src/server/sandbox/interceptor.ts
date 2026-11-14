@@ -1,89 +1,97 @@
 import os from 'node:os'
 import type { Context } from '@deepseek-ai/cordis'
 import type {
+  Agent,
   SandboxCapabilityInfo,
-  SandboxPolicyLike,
   SandboxPolicyServiceLike,
   SandboxSkippedEntry,
+  Session,
   SessionSettingsStore,
   SystemPromptService,
 } from '../../types.ts'
 import { resolveEffectiveSandbox } from '../session/storage.ts'
-import {
-  resolveAgentSessionId,
-  resolveWorkspaceForSession,
-} from '../session/resolution.ts'
+import { resolveWorkspaceForSession } from '../session/resolution.ts'
 import { resolveAllowSet, type ResolvedAllowRoot } from './paths.ts'
 
 /**
- * Widening the session's writable roots with its configured extra directories,
- * and telling the model what it was given.
+ * Granting the session's configured extra directories, and telling the model
+ * what it was given.
  *
- * ## Where the widening happens
+ * ## The channel
  *
- * The host stamps ONE complete policy per call from `ctx.sandboxPolicy.resolve()`
- * — the bash tool, the persistent terminal, and the filesystem mutation fence
- * all ask that same service — and that policy carries a documented
- * `additionalWritableRoots` field which every enforcing backend already folds
- * into its writable-root derivation.
+ * The host owns ONE policy per session and stamps its mode, workspace root, and
+ * extra writable roots onto every confined capability call — the bash tool, the
+ * persistent terminal, and the filesystem fence all ask `ctx.sandboxPolicy`.
  *
- * So the plugin wraps `resolve()`. Editing the runner argv instead (the
- * previous approach) was wrong in two ways that only became visible after the
- * field existed: the provider composes the argv as `[...runnerArgv, '--', …]`,
- * so an inserted `--rw`/`--bind` lands inside the runner's own argument list
- * AFTER the grant block rather than as another grant, and a backend that cannot
- * accept extra roots (windows-acl) throws instead of ignoring them.
+ * `registerWritableRoot(session, directory)` registers a grant against ONE live
+ * Session for the lifetime of the calling effect, and `resolve()` folds active
+ * registrations into the policy it hands out. That is exactly this feature's
+ * shape, so it is the channel used here.
  *
- * ## Why the wrapper is installed on the service instance
+ * - No own-property patch on a shared host service, so an unload cannot leave a
+ *   disposed wrapper behind and a reload needs no restore bookkeeping.
+ * - No cache to prime. A registration IS the state: adding or removing a grant
+ *   takes effect on the next resolution with no invalidation seam.
+ * - Isolation is the host's. A grant belongs to one Session object, so a
+ *   subagent Session and an agentless call cannot inherit the root session's
+ *   grants by id the way an id-keyed cache could.
  *
- * `ctx.get(name)` returns a traced Proxy, and reading a FUNCTION property
- * through it hands back a fresh shadow wrapper on every access. The write still
- * forwards to the one shared target, but an identity comparison against a
- * previously-read function can never hold — hence {@link installed} rather than
- * a live-function check.
+ * Registrations are runtime-only and must be repeated after a resume or fork,
+ * which is why they are installed from `agent/created` (a fresh Agent, whether
+ * new or resumed) rather than from a settings save.
  *
  * @module session-settings/sandbox/interceptor
  */
 
+/** One live Session's installed grants, keyed by the exact Session object. */
+interface SessionGrants {
+  /** Disposers for the currently registered directories. */
+  disposers: Array<() => void>
+  /** The directories currently registered, for a cheap no-op check. */
+  paths: Set<string>
+  /**
+   * The same directories as resolved entries, descriptions included.
+   *
+   * Kept here rather than rebuilt while rendering the prompt: a context text
+   * provider is SYNCHRONOUS, and resolving the settings ladder for a session is
+   * async (it may have to read the workspace registry). This is the same data
+   * the installation pass already computed.
+   */
+  described: ResolvedAllowRoot[]
+  /** Configured entries dropped at the last installation, for the panel. */
+  skipped: SandboxSkippedEntry[]
+}
+
 /**
- * Owns the `resolve` widening, the per-session resolution cache, and the
- * capability report the settings UI reads.
+ * Owns the per-session writable-root registrations and the mode report the
+ * settings UI reads.
  */
 export class SandboxInterceptor {
   private readonly ctx: Context
   private readonly getSessionSettingsStore: () => SessionSettingsStore
 
-  /** The policy service whose `resolve` was replaced; the restore target. */
-  private patchedService: SandboxPolicyServiceLike | undefined
-  /** The wrapper installed on the service, or `undefined` before installation. */
-  private wrapper: ((request?: unknown) => SandboxPolicyLike) | undefined
   /**
-   * Whether this interceptor's wrapper is installed and live.
+   * Live grants, keyed by the Session object the host will hand to `resolve()`.
    *
-   * The honest capability signal. It is cleared by {@link restore} — including
-   * the restore that a scope disposal triggers — so a reload or unload that
-   * removes the patch also removes the claim, rather than reporting a
-   * capability nothing implements.
+   * The key is the object because that is the host's own key: `registerWritableRoot`
+   * stores grants in a `WeakMap<Session, …>` and `resolve({ session })` looks
+   * them up by identity, so a registration made with one Session instance is
+   * invisible to a lookup made with another one of the same id.
    */
-  private installed = false
+  private readonly grants = new WeakMap<Session, SessionGrants>()
   /**
-   * Why the wrapper is not installed, when it is not.
+   * The sessions currently holding grants.
    *
-   * Distinguishes "the service has not activated yet" from "the service cannot
-   * be extended", so {@link detectCapability} can report which one the user is
-   * actually looking at instead of collapsing both into "unsupported".
+   * A WeakMap cannot be iterated, and every registration must be disposed
+   * explicitly: `registerWritableRoot` creates its Cordis effect on the POLICY
+   * SERVICE's context, not on this plugin's scope, so an unload of this plugin
+   * does not unwind them. Dropping the strong references on release keeps the
+   * set bounded by the number of live Agents.
    */
-  private patchFailure: string | undefined
+  private readonly tracked = new Set<Session>()
 
-  /**
-   * sessionId -> resolved roots. Keyed by the ROOT session, so a child inherits
-   * its parent's grants without a second lookup.
-   */
-  private readonly cache = new Map<string, ResolvedAllowRoot[]>()
-  /** sessionId -> the workspace its roots were resolved against. */
-  private readonly cacheWorkspace = new Map<string, string | undefined>()
-  /** Configured entries dropped at the last resolution, by session. */
-  private readonly skipped = new Map<string, SandboxSkippedEntry[]>()
+  /** The policy service, resolved once its injection scope is live. */
+  private service: SandboxPolicyServiceLike | undefined
 
   constructor(
     ctx: Context,
@@ -94,38 +102,21 @@ export class SandboxInterceptor {
   }
 
   /**
-   * Install the `resolve` widening and the prompt contribution.
+   * Bind to the policy service.
    *
-   * The widening must be installed through `ctx.inject(['sandboxPolicy'], …)`.
-   * `apply` runs once when this plugin loads, and composition row order carries
-   * no load semantics — a row activates when its own services become available.
-   * A synchronous `ctx.get('sandboxPolicy')` in `apply` therefore returns
-   * `undefined` whenever the policy row activates later, leaving every
-   * configured directory unenforced.
+   * A composition that mounts this plugin without mounting `sandboxPolicy` has
+   * no way to enforce anything, so the injection never fires and the plugin
+   * simply contributes no grants — the panel reports the mode it can resolve.
    */
   public start(): void {
     this.ctx.inject(['sandboxPolicy'], (scope: Context) => {
-      const service = scope.get('sandboxPolicy') as
-        SandboxPolicyServiceLike | undefined
-      if (!service || typeof service.resolve !== 'function') {
-        this.patchFailure =
-          'The mounted sandbox policy service exposes no resolve() method.'
-        return
-      }
-      const original = service.resolve.bind(service)
-      this.patchedService = service
-      this.patchFailure = undefined
-      const wrapper = (request?: unknown) =>
-        this.withExtraRoots(original(request), request)
-      this.wrapper = wrapper
-      this.installed = true
-      service.resolve = wrapper
-
-      // Restore on scope disposal, so a reload or unload cannot leave the
-      // service wrapped by a disposed interceptor.
+      this.service = scope.get('sandboxPolicy') as SandboxPolicyServiceLike
+      // Cover Agents created before the service activated: `agent/created` ran
+      // while it was absent and could not register anything.
+      void this.applyToLiveSessions().catch(() => {})
       scope.effect(
-        () => () => this.restore(),
-        'session-settings: sandbox policy wrapper',
+        () => () => this.releaseAll(),
+        'session-settings: sandbox writable roots',
       )
     })
 
@@ -133,116 +124,128 @@ export class SandboxInterceptor {
   }
 
   /**
-   * Attach this session's extra roots to one resolved policy.
+   * Bring one Session's registrations in line with its settings.
    *
-   * The session is re-derived from the request the caller passed rather than
-   * from the policy, because a policy's `sessionId` is stamped only after the
-   * host resolves it and a caller may legitimately ask for a policy that names
-   * no session (agentless calls, which get no grants).
+   * Idempotent and diff-based: a call whose resolved paths match what is already
+   * registered does nothing, so the frequent caller (`agent/created` plus each
+   * settings change) does not churn the host's registration store.
    *
-   * Resolution is synchronous on purpose: `resolve()` is called on the hot path
-   * of every subprocess and every filesystem mutation, so it must not await.
-   * The cache is populated ahead of time by {@link prime} — called from the
-   * prompt-assembly path, which is the only place a session's settings can
-   * change between turns.
+   * @param session - the exact live Session the grants apply to.
+   * @param workspaceRoot - the session's workspace boundary, for `.` resolution.
    */
-  private withExtraRoots(
-    policy: SandboxPolicyLike,
-    request?: unknown,
-  ): SandboxPolicyLike {
-    const sessionId = this.sessionIdOf(request) ?? policy.sessionId
-    if (!sessionId) return policy
-
-    const roots = this.cache.get(sessionId)
-    if (!roots || roots.length === 0) return policy
-
-    return {
-      ...policy,
-      additionalWritableRoots: [
-        ...(policy.additionalWritableRoots ?? []),
-        ...roots.map((root) => root.path),
-      ],
-    }
-  }
-
-  /** The session a `resolve()` request names, if any. */
-  private sessionIdOf(request?: unknown): string | undefined {
-    if (!request || typeof request !== 'object') return undefined
-    const session = (request as { session?: { id?: unknown } }).session
-    const id = session?.id
-    return typeof id === 'string' ? id : undefined
-  }
-
-  /**
-   * Resolve a session's allow list into the cache, ahead of any `resolve()` call
-   * that would need it.
-   *
-   * @param sessionId - the session whose settings are being read.
-   * @param workspaceRoot - the session's workspace boundary.
-   */
-  public async prime(
-    sessionId: string | undefined,
+  public async applyForSession(
+    session: Session | undefined,
     workspaceRoot: string,
   ): Promise<void> {
-    if (!sessionId) return
-    if (this.cache.has(sessionId) || this.priming.has(sessionId)) return
-    this.priming.add(sessionId)
-    try {
-      const workspaceId = await resolveWorkspaceForSession(this.ctx, sessionId)
-      const { allow } = resolveEffectiveSandbox(
-        this.getSessionSettingsStore(),
-        sessionId,
-        workspaceId,
-      )
-      const { roots, rejected } = resolveAllowSet(
-        allow,
-        workspaceRoot,
-        os.homedir(),
-      )
-      this.cacheWorkspace.set(sessionId, workspaceId)
-      this.cache.set(sessionId, roots)
-      this.skipped.set(
-        sessionId,
-        rejected.map((entry) => ({ path: entry.path, reason: entry.reason })),
-      )
-    } finally {
-      this.priming.delete(sessionId)
+    if (!session) return
+    const service = this.service
+    if (!service) return
+
+    const sessionId = session.id
+    const workspaceId = await resolveWorkspaceForSession(this.ctx, sessionId)
+    const { allow } = resolveEffectiveSandbox(
+      this.getSessionSettingsStore(),
+      sessionId,
+      workspaceId,
+    )
+    const { roots, rejected } = resolveAllowSet(
+      allow,
+      workspaceRoot,
+      os.homedir(),
+    )
+    const skipped = rejected.map((entry) => ({
+      path: entry.path,
+      reason: entry.reason,
+    }))
+
+    const current = this.grants.get(session)
+    const nextPaths = new Set(roots.map((root) => root.path))
+    if (current && samePathSet(current.paths, nextPaths)) {
+      // Same directories: keep the registrations, refresh only the report.
+      current.described = roots
+      current.skipped = skipped
+      return
+    }
+
+    // Replace wholesale rather than diffing individual roots. A changed entry is
+    // usually a changed description or a re-spelled path, and the host keeps
+    // duplicate registrations independent — reusing one here would leave a
+    // stale directory registered when the user replaced it.
+    this.releaseSession(session)
+    const next: SessionGrants = {
+      disposers: [],
+      paths: nextPaths,
+      described: roots,
+      skipped,
+    }
+    for (const root of roots) {
+      try {
+        next.disposers.push(service.registerWritableRoot(session, root.path))
+      } catch {
+        // A directory the host refuses (vanished, swapped for a symlink, a
+        // permission problem) must not fail the agent: record it as skipped so
+        // the panel can say "saved but not in effect" instead of claiming
+        // success.
+        nextPaths.delete(root.path)
+        skipped.push({
+          path: root.path,
+          reason: 'the sandbox policy rejected this directory',
+        })
+      }
+    }
+    this.grants.set(session, next)
+    this.tracked.add(session)
+  }
+
+  /** Drop every registration installed for one Session. */
+  public releaseSession(session: Session): void {
+    const grants = this.grants.get(session)
+    this.tracked.delete(session)
+    if (!grants) return
+    this.grants.delete(session)
+    for (const dispose of grants.disposers) {
+      try {
+        dispose()
+      } catch {
+        // A disposer that throws has already removed its registration (Cordis
+        // effects are idempotent); swallowing keeps the remaining ones running.
+      }
     }
   }
 
-  /** Sessions whose resolution is in flight, so `prime` is idempotent. */
-  private readonly priming = new Set<string>()
+  /**
+   * Drop every registration this plugin installed.
+   *
+   * Required on unload: the host's disposer belongs to the policy service's own
+   * context, so without this an unloaded plugin would leave grants in force for
+   * Sessions that outlive it.
+   */
+  public releaseAll(): void {
+    for (const session of [...this.tracked]) this.releaseSession(session)
+    this.tracked.clear()
+  }
+
+  /** The live Session with this id, when one is tracked. */
+  private trackedSession(sessionId: string): Session | undefined {
+    for (const session of this.tracked) {
+      if (session.id === sessionId) return session
+    }
+    return undefined
+  }
 
   /**
-   * What the mounted backend can do, for the settings UI.
+   * The target session's resolved sandbox facts, for the settings UI.
    *
-   * Reads the policy service's own facts rather than the plugin's patch state:
-   * the `additionalWritableRoots` channel is the host's, so the capability
-   * exists whenever the service is mounted. The plugin only supplies the roots.
+   * @param sessionId - the session the panel is showing.
+   * @returns the mode the session would run under.
    */
-  public detectCapability(sessionId?: string): SandboxCapabilityInfo {
-    const mode = this.effectiveModeFor(sessionId)
-    const withMode = mode ? { effectiveMode: mode } : {}
-    const service = this.ctx.get('sandboxPolicy') as
-      SandboxPolicyServiceLike | undefined
-    if (!service || typeof service.resolve !== 'function') {
-      return {
-        canAllowExtraRoots: false,
-        reason:
-          'No sandbox policy service is mounted in this composition, so extra directories cannot take effect.',
-        ...withMode,
-      }
+  public capabilityFor(sessionId?: string): SandboxCapabilityInfo {
+    return {
+      effectiveMode:
+        this.effectiveModeFor(sessionId) ??
+        this.service?.defaultMode ??
+        'workspace-write',
     }
-    if (!this.installed) {
-      return {
-        canAllowExtraRoots: false,
-        reason:
-          this.patchFailure ??
-          'The sandbox policy service has not been extended by this plugin, so extra directories would not take effect.',
-        ...withMode,
-      }
-    }
-    return { canAllowExtraRoots: true, ...withMode }
   }
 
   /**
@@ -257,14 +260,10 @@ export class SandboxInterceptor {
    * @returns the mode, or undefined when no policy service is mounted.
    */
   private effectiveModeFor(sessionId?: string): string | undefined {
-    const policy = this.ctx.get('sandboxPolicy') as
-      SandboxPolicyServiceLike | undefined
+    const policy = this.service
     if (!policy) return undefined
     const session = sessionId
-      ? (
-          this.ctx.get('sessions') as
-            { get?: (id: string) => unknown } | undefined
-        )?.get?.(sessionId)
+      ? (this.trackedSession(sessionId) ?? this.sessionById(sessionId))
       : undefined
     if (!session) return policy.defaultMode
     try {
@@ -274,34 +273,48 @@ export class SandboxInterceptor {
     }
   }
 
-  /** Configured entries skipped at the last resolution for one session. */
-  public skippedFor(sessionId?: string): SandboxSkippedEntry[] {
-    if (!sessionId) return []
-    return this.skipped.get(sessionId) ?? []
+  /** The live Session with this id, from the host's own registry. */
+  private sessionById(sessionId: string): Session | undefined {
+    return (
+      this.ctx.get('sessions') as
+        { get?: (id: string) => Session | undefined } | undefined
+    )?.get?.(sessionId)
   }
 
-  /** Drop every cached resolution; the next call re-reads the settings store. */
-  public notifyPolicyChanged(): void {
-    this.cache.clear()
-    this.cacheWorkspace.clear()
-    this.skipped.clear()
+  /** Configured entries dropped at the last installation for one session. */
+  public skippedFor(sessionId?: string): SandboxSkippedEntry[] {
+    if (!sessionId) return []
+    const session = this.trackedSession(sessionId)
+    if (!session) return []
+    return this.grants.get(session)?.skipped ?? []
+  }
+
+  /** Re-apply grants for every live Session after a settings change. */
+  public notifyPolicyChanged(): Promise<void> {
+    return this.applyToLiveSessions()
   }
 
   /**
-   * Restore the service's own `resolve`.
+   * Re-apply grants for every live Session.
    *
-   * `resolve` is a prototype method, so the patch is an own property shadowing
-   * it and removal is a `delete` — assigning the bound original back would
-   * leave an own property that outlives the plugin.
+   * Reads `ctx.sessions` rather than {@link tracked} so a Session that was
+   * skipped earlier — created before the policy service activated, or before
+   * this plugin mounted at all — is picked up instead of staying unenforced
+   * forever. The store hands back the same Session objects its callers pass to
+   * `resolve()`, which is the key the host registers against.
    */
-  public restore(): void {
-    const service = this.patchedService
-    if (service && this.wrapper) {
-      delete (service as { resolve?: unknown }).resolve
+  private async applyToLiveSessions(): Promise<void> {
+    const sessions = this.ctx.get('sessions') as
+      { list?: () => Session[] } | undefined
+    if (typeof sessions?.list !== 'function') return
+    for (const session of sessions.list()) {
+      const workspaceRoot = session.header.cwd ?? process.cwd()
+      try {
+        await this.applyForSession(session, workspaceRoot)
+      } catch {
+        // One Session's resolution failing must not strand the others.
+      }
     }
-    this.wrapper = undefined
-    this.installed = false
-    this.patchedService = undefined
   }
 
   /**
@@ -309,36 +322,28 @@ export class SandboxInterceptor {
    *
    * Registered as its OWN context entry immediately after the host's
    * `sandbox:policy` rather than by editing that text: the host's section is
-   * written by `@deepseek-ai/dsh-sandbox-policy` and is not ours to reword, and
-   * an appended entry keeps the mode statement and the grants stated
-   * separately, which is how they are actually decided.
-   *
-   * The same assembly callback primes the cache: it is the one point per turn
-   * where the agent and its settings are both at hand, and `resolve()` cannot
-   * await.
+   * written by `@deepseek-ai/dsh-sandbox-policy` and is not ours to reword. The
+   * host already names the granted paths; this entry adds the one thing it
+   * cannot know, which is what each directory is FOR.
    */
   private registerPromptSection(): void {
     this.ctx.inject(['systemPrompt'], (scope: Context) => {
-      const systemPrompt = scope.get('systemPrompt') as
-        SystemPromptService | undefined
-      if (!systemPrompt || typeof systemPrompt.context !== 'function') return
+      const systemPrompt = scope.get('systemPrompt') as SystemPromptService
+      if (!systemPrompt) return
 
-      const order =
-        typeof systemPrompt.getContextOrder === 'function'
-          ? systemPrompt.getContextOrder('SANDBOX_POLICY') + 1
-          : undefined
+      const order = systemPrompt.getContextOrder('SANDBOX_POLICY') + 1
 
       scope.effect(() => {
-        const dispose = systemPrompt.context!({
+        const dispose = systemPrompt.context({
           name: 'session-settings:sandbox-allow',
-          ...(order === undefined ? {} : { order }),
+          order,
           text: (context) => {
-            const agent = context?.agent
-            const sessionId = resolveAgentSessionId(agent, this.ctx)
-            if (!sessionId) return ''
-            const roots = this.cache.get(sessionId)
-            if (!roots || roots.length === 0) return ''
-            return renderAllowContext(roots)
+            const session = context?.agent?.session
+            if (!session) return ''
+            // Synchronous by contract: everything needed was resolved when the
+            // grants were installed, so this reads a snapshot and does no I/O.
+            const grants = this.grants.get(session)
+            return grants ? renderAllowContext(grants.described) : ''
           },
         })
         return () => dispose()
@@ -347,39 +352,44 @@ export class SandboxInterceptor {
   }
 }
 
+/** Whether two path sets hold the same directories. */
+function samePathSet(left: Set<string>, right: Set<string>): boolean {
+  if (left.size !== right.size) return false
+  for (const value of left) if (!right.has(value)) return false
+  return true
+}
+
 /**
  * Render the granted-directory paragraph.
  *
- * Mirrors the host's own `sandbox:policy` wording so the two read as one
- * policy statement: the paths are JSON-quoted for the same reason, and the
- * sentence that keeps the boundary honest — everything else outside the
- * workspace stays unwritable — is stated rather than implied, because a list of
- * grants with no boundary invites the model to treat them as the whole rule.
+ * The host's own `sandbox:policy` entry already lists the paths — that list is
+ * derived from the policy, which now includes these registrations. Repeating the
+ * paths here would say the same thing twice in one runtime-context snapshot, so
+ * this entry carries only the purpose text, which the host cannot know.
  *
- * @param roots - resolved, existing directories.
+ * @param roots - resolved, registered directories that have a description.
  * @returns the context text, or an empty string when there is nothing to say.
  */
 export function renderAllowContext(
   roots: readonly ResolvedAllowRoot[],
 ): string {
-  if (roots.length === 0) return ''
-  const lines = roots.map((root) =>
-    root.description
-      ? `- ${JSON.stringify(root.path)} — ${root.description}`
-      : `- ${JSON.stringify(root.path)}`,
+  const described = roots.filter((root) => root.description)
+  if (described.length === 0) return ''
+  const lines = described.map(
+    (root) => `- ${JSON.stringify(root.path)} — ${root.description}`,
   )
   return [
-    'This session is additionally allowed to write these directories outside the session workspace:',
+    'The session is additionally allowed to write these directories outside the session workspace, for the purposes stated:',
     ...lines,
-    'Every other location outside the session workspace remains read-only; a denied write reports the sandbox denial marker.',
   ].join('\n')
 }
+
 /**
  * Wire the sandbox allow-list onto the runtime.
  *
  * @param ctx - the plugin context.
  * @param getSessionSettingsStore - lazily loaded settings store accessor.
- * @returns the interceptor, so callers can invalidate its cache after a save.
+ * @returns the interceptor, so callers can re-apply after a save.
  */
 export function registerSandboxInterceptor(
   ctx: Context,
@@ -388,38 +398,29 @@ export function registerSandboxInterceptor(
   const interceptor = new SandboxInterceptor(ctx, getSessionSettingsStore)
   interceptor.start()
 
-  // Prime the cache from the two places a session's settings can become
-  // relevant: a new agent (its first prompt is about to ask for a policy) and
-  // every assembly (a setting may have changed between turns).
-  ctx.on('agent/created', async ({ agent }) => {
+  // Install grants when an Agent appears. This is the authoritative point: a
+  // resumed Session gets a NEW Session object, and the host keys registrations
+  // by object, so re-registering here is what makes grants survive a resume.
+  // `agent/created` is serial and holds queued input until listeners settle, so
+  // the grants exist before the Agent's first confined call.
+  ctx.on('agent/created', async ({ agent }: { agent: Agent }) => {
     try {
-      const sessionId = resolveAgentSessionId(agent, ctx)
-      const workspaceRoot = agent?.session?.header?.cwd
-      await interceptor.prime(sessionId, workspaceRoot ?? process.cwd())
+      const workspaceRoot = agent.session.header.cwd ?? process.cwd()
+      await interceptor.applyForSession(agent.session, workspaceRoot)
     } catch {
-      // A resolution problem must never fail agent creation; the next
-      // assembly retries.
+      // A resolution problem must never fail agent creation; the next settings
+      // change or assembly retries.
     }
   })
 
-  ctx.on('system-prompt/assemble', async (_assembly, context, next) => {
-    try {
-      const agent = context?.agent
-      const sessionId = resolveAgentSessionId(agent, ctx)
-      const workspaceRoot =
-        agent?.session?.header?.cwd ??
-        (ctx.get('sandboxPolicy') as { workspaceRoot?: string } | undefined)
-          ?.workspaceRoot ??
-        process.cwd()
-      await interceptor.prime(sessionId, workspaceRoot)
-    } catch {
-      // A resolution problem must never fail assembly.
-    }
-    return next()
+  // End the grants with the Agent. The host's effect would unwind anyway, but
+  // relying on that leaves `skippedFor` reporting against a disposed Session.
+  ctx.on('agent/disposed', ({ agent }: { agent: Agent }) => {
+    interceptor.releaseSession(agent.session)
   })
 
   ctx.effect(
-    () => () => interceptor.restore(),
+    () => () => interceptor.releaseAll(),
     'session-settings: sandbox allow interceptor',
   )
   return interceptor

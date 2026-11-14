@@ -77,9 +77,12 @@ function mount(ctx: Context, stores: OpenStores): void {
   policyBus.subscribe('mcp-projection', () =>
     mcpPolicyProjection.notifyPolicyChanged(),
   )
-  policyBus.subscribe('sandbox-projection', () =>
-    sandboxInterceptor.notifyPolicyChanged(),
-  )
+  policyBus.subscribe('sandbox-projection', () => {
+    // Re-registration walks the live sessions and re-reads the settings ladder,
+    // so it is async; the bus is synchronous and must not await one surface
+    // while the others wait.
+    void sandboxInterceptor.notifyPolicyChanged().catch(() => {})
+  })
   policyBus.subscribe('skill-projection', () => {
     // Re-registration loads skill bodies, so it is async; the bus is
     // synchronous and must not await one surface while the others wait.
@@ -106,7 +109,7 @@ function mount(ctx: Context, stores: OpenStores): void {
       getSessionSettingsStore,
       stores.persistSessionSettings,
       invalidatePolicies,
-      (sessionId) => sandboxInterceptor.detectCapability(sessionId),
+      (sessionId) => sandboxInterceptor.capabilityFor(sessionId),
       (sessionId) => sandboxInterceptor.skippedFor(sessionId),
       (sessionId) => skillPolicyProjection.failuresForSession(sessionId),
     )

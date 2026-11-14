@@ -65,9 +65,9 @@ Paste that text into **Manage presets → Import from clipboard** to store it as
 
 | Plugin Branch | Compatible DeepSeek Harness (DSH) Mainline | Architecture & Features |
 | :--- | :--- | :--- |
-| **`main` branch** | **`>= 0.2.2-rc.1`** | Native support for **Session Format V4**, **Cordis 4.1**, `@modelcontextprotocol/client` 2.2.0, the `agent.model.select()` routing API, the `SandboxPolicy.additionalWritableRoots` channel, the `settings.section.icon` slot, and the `ui-primitives` icon set. |
+| **`main` branch** | **`>= 0.2.2-rc.3`** | Native support for **Session Format V4**, **Cordis 4.1**, `@modelcontextprotocol/client` 2.2.0, the `agent.model.select()` routing API, the `sandboxPolicy.registerWritableRoot()` channel, `connectionStatusOf()` MCP connection state, the `settings.section.icon` slot, and the `ui-primitives` icon set. |
 
-> **⚠️ Note**: The `main` branch targets DSH 0.2.2-rc.1 and above natively. It keeps **no backward-compatibility shims** and does not support earlier DSH lines. The host does not read `engines.dsh`; compatibility is enforced through the `peerDependencies` range on `@deepseek-ai/dsh`, so an incompatible host refuses the plugin instead of loading it half-broken.
+> **⚠️ Note**: The `main` branch targets DSH 0.2.2-rc.3 and above natively. It keeps **no backward-compatibility shims** and does not support earlier DSH lines. Compatibility is declared twice on purpose: `engines.dsh` is what the Host reads first (since DSH 0.2.1-alpha.3 an own `engines.dsh` range decides alone and the `@deepseek-ai/dsh` peer range is ignored), and `peerDependencies` is the fallback for package managers. An incompatible host refuses the plugin instead of loading it half-broken.
 
 ---
 

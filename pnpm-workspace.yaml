@@ -4,6 +4,6 @@ packages:
 allowBuilds: {}
 autoInstallPeers: false
 minimumReleaseAgeExclude:
-  - '@deepseek-ai/dsh-client-ui-primitives@0.2.0-rc.1'
+  - '@deepseek-ai/dsh-client-ui-primitives@0.2.2-rc.3'
   - '@deepseek-ai/cordis@4.0.5 || 4.1.0'
   - '@deepseek-ai/cosmokit@1.8.6 || 1.9.0'

@@ -25,10 +25,11 @@
     "LICENSE"
   ],
   "engines": {
-    "node": "^22.19 || >=24"
+    "node": ">=24.9.0",
+    "dsh": ">=0.2.2-rc.3"
   },
   "peerDependencies": {
-    "@deepseek-ai/dsh": ">=0.2.2-rc.1"
+    "@deepseek-ai/dsh": ">=0.2.2-rc.3"
   },
   "peerDependenciesMeta": {
     "@deepseek-ai/dsh": {
@@ -65,7 +66,7 @@
   ],
   "devDependencies": {
     "@deepseek-ai/cordis": "~4.1.0",
-    "@deepseek-ai/dsh-client-ui-primitives": "0.2.0-rc.1",
+    "@deepseek-ai/dsh-client-ui-primitives": "0.2.2-rc.3",
     "@eslint/js": "^9.39.5",
     "@types/node": "^26.6.2",
     "@types/react": "^18.3.1",
