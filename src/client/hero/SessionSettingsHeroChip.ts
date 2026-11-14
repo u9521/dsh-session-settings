@@ -29,6 +29,15 @@ const EMPTY_SESSIONS: SessionsState = { byId: {} }
 const EMPTY_WORKSPACES: WorkspacesState = { items: [] }
 
 /**
+ * The selector that asks a standard slot hook for the whole snapshot.
+ *
+ * The framework's selector hooks always take a selector function; there is no
+ * zero-argument overload. Passing this is what makes "give me the raw state"
+ * explicit instead of a silent `selector is not a function` throw.
+ */
+const identity = <T>(state: T): T => state
+
+/**
  * Props the chip receives.
  *
  * `conversation.hero.options` is a session-scoped list slot, so the framework
@@ -89,9 +98,14 @@ export function SessionSettingsHeroChip({
   // is deliberately no direct-store fallback: the seat always provides them,
   // and a second identity path is what let the chip disagree with the
   // conversation it sits in.
-  const sessionsState = (useSessions ?? (() => undefined))() as
-    SessionsState | undefined
-  const workspacesState = (useWorkspaces ?? (() => undefined))() as
+  //
+  // The selector argument is REQUIRED: the framework synthesizes these as
+  // `useSyncExternalStoreWithSelector(subscribe, getSnapshot, undefined, sel)`,
+  // which calls `sel(state)` on every render. Calling one with no argument
+  // throws "selector is not a function" and takes the whole chip down with it.
+  // `identity` is what reads the bare snapshot.
+  const sessionsState = useSessions?.(identity) as SessionsState | undefined
+  const workspacesState = useWorkspaces?.(identity) as
     WorkspacesState | undefined
 
   // The slot's own session is the identity. Deriving it from the store instead
@@ -202,14 +216,14 @@ export function SessionSettingsHeroChip({
                 sessionId: currentSessionId,
                 workspaceId: currentWorkspaceId,
                 workspaceTitle: currentWorkspaceTitle,
-                useSessions: (selector) => {
-                  const state = sessionsState ?? EMPTY_SESSIONS
-                  return selector ? selector(state) : state
-                },
-                useWorkspaces: (selector) => {
-                  const state = workspacesState ?? EMPTY_WORKSPACES
-                  return selector ? selector(state) : state
-                },
+                // The page reads through the same contract as the host
+                // hooks: a selector is always supplied. The chip already holds
+                // the snapshot, so this applies it directly instead of opening a
+                // second subscription.
+                useSessions: (selector) =>
+                  selector(sessionsState ?? EMPTY_SESSIONS),
+                useWorkspaces: (selector) =>
+                  selector(workspacesState ?? EMPTY_WORKSPACES),
                 onClose: () => setModalOpen(false),
                 onSave: () => {
                   checkOverride()

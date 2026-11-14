@@ -118,12 +118,20 @@ export interface WorkspacesState {
   items?: WorkspaceInfo[]
 }
 
-export type UseSessionsHook = (
-  selector?: (state: SessionsState) => unknown,
-) => unknown
-export type UseWorkspacesHook = (
-  selector?: (state: WorkspacesState) => unknown,
-) => unknown
+/**
+ * The framework's selector hook over the session/workspace snapshots.
+ *
+ * The selector is REQUIRED, not optional. The host synthesizes these as
+ * `useSyncExternalStoreWithSelector(subscribe, getSnapshot, undefined, sel)`,
+ * which invokes `sel(state)` on every render; a zero-argument call therefore
+ * throws `selector is not a function`. Declaring it optional here would let
+ * exactly that bug type-check, so the parameter is mandatory and generically
+ * typed.
+ */
+export type UseSessionsHook = <T>(selector: (state: SessionsState) => T) => T
+export type UseWorkspacesHook = <T>(
+  selector: (state: WorkspacesState) => T,
+) => T
 
 export interface ClientPageProps {
   remote?: ClientRemoteServiceRef
